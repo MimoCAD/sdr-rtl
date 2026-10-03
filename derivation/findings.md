@@ -2,7 +2,7 @@
 
 Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
-Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**; confirm of p1 0x92 bit 6 reads 0 B alone; the plain byte scan over pages 0–2 is complete (**no single byte streams**); the byte scan with restart is stopped at 5097 candidates (resumable). The bulk detector was checked on the wire (below): it polled endpoint 0x81 without a gap; a halted endpoint would have blinded it silently, which it now detects, clears and records.
+Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**; confirm of p1 0x92 bit 6 reads 0 B alone; the plain byte scan over pages 0–2 is complete (**no single byte streams**); the byte scan with restart is paused at 28976 of 196608 tested (through page 0 0x71 value 0xA1), 0 streams, wedges/errors only at page 0 0x10 and 0x20 (resume: `harness bytescan --restart --limit 15000`, repeated). The complete plain byte-scan record is stored gzip-compressed (`data/step3-bytescan.jsonl.gz`, 52 MB raw); `gunzip -k` it before re-running the plain scan. The bulk detector was checked on the wire (below): it polled endpoint 0x81 without a gap; a halted endpoint would have blinded it silently, which it now detects, clears and records.
 
 ## Step 0 — recovery: PROVEN — `data/step0-recovery.json` — `harness recovery`
 
