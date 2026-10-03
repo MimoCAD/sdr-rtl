@@ -216,6 +216,30 @@ fn done_keys() -> HashSet<(u8, u8, u8)> {
     set
 }
 
+/// The baseline's demodulator and system settings still in place: the
+/// names of any that a candidate disturbed (empty = intact).
+fn baseline_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
+    let word = (rsamp_ratio(rate) & ((1 << RSAMP_BITS) - 1)) << RSAMP_SHIFT;
+    let b = word.to_be_bytes();
+    let mut checks: Vec<(String, Option<bool>)> = vec![
+        (
+            "DEMOD_CTL".into(),
+            rtl.sys_read8(DEMOD_CTL).ok().map(|v| {
+                let want = DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE;
+                v & want == want
+            }),
+        ),
+        ("AD_EN".into(), rtl.demod_read8(AD_EN_PAGE, AD_EN_OFF).ok().map(|v| v & (AD_EN_REG | AD_EN_REG1) == AD_EN_REG | AD_EN_REG1)),
+        ("en_bbin".into(), rtl.demod_read8(BBIN_PAGE, BBIN_OFF).ok().map(|v| v & EN_BBIN == EN_BBIN)),
+    ];
+    let masks = [0x0F, 0xFF, 0xFF, 0xFC];
+    for k in 0..4 {
+        let ok = rtl.demod_read8(RSAMP_PAGE, RSAMP_MSB + k as u8).ok().map(|v| v & masks[k] == b[k] & masks[k]);
+        checks.push((format!("rsamp_ratio byte {k}"), ok));
+    }
+    checks.into_iter().filter(|(_, ok)| *ok != Some(true)).map(|(n, _)| n).collect()
+}
+
 /// The chip answers if a system read succeeds.
 fn alive(rtl: &Rtl) -> bool {
     rtl.sys_read8(DEMOD_CTL).is_ok()
@@ -267,7 +291,21 @@ pub fn scan() -> Result<(), String> {
                         line.set("restore_verified", back.as_ref().ok() == Some(&o));
                     }
                 }
-                if !alive(&rtl) {
+                let mut wedged = !alive(&rtl);
+                if !wedged {
+                    let disturbed = baseline_disturbed(&rtl, RATE_HZ);
+                    if !disturbed.is_empty() {
+                        // The candidate (or its restore) changed a baseline
+                        // setting: log which, and apply the baseline again;
+                        // if that does not hold, power-cycle as for a wedge.
+                        line.set("baseline_disturbed", J::Arr(disturbed.into_iter().map(J::from).collect()));
+                        line.set("baseline_reapplied", apply_baseline(&rtl, RATE_HZ, &[]));
+                        let still = baseline_disturbed(&rtl, RATE_HZ);
+                        wedged = !still.is_empty();
+                        line.set("baseline_still_disturbed", J::Arr(still.into_iter().map(J::from).collect()));
+                    }
+                }
+                if wedged {
                     line.set("wedged", true);
                     writeln!(out, "{}", line.render()).map_err(|e| e.to_string())?;
                     drop(bulk);

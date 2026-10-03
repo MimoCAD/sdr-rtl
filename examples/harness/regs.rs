@@ -132,6 +132,8 @@ pub const IIC_REPEAT_PAGE: u8 = 1;
 pub const IIC_REPEAT_OFF: u8 = 0x01;
 pub const IIC_REPEAT_BIT_TABLE3: u8 = 1 << 3;
 pub const IIC_REPEAT_BIT_NOTE2: u8 = 1 << 7;
+/// Note2's "7th bit" with bits counted from 1.
+pub const IIC_REPEAT_BIT_NOTE2_FROM1: u8 = 1 << 6;
 
 /// AD_EN_reg (ADC_I) page 0, 0x08[7]; AD_EN_reg1 (ADC_Q) 0x08[6] (Table 4).
 pub const AD_EN_PAGE: u8 = 0;

@@ -65,11 +65,19 @@ impl DemodForm {
 }
 
 /// The demodulator wValue encoding the bench established in step 1
-/// (data/step1-demod-encoding.json). None until step 1 has run.
-pub const DEMOD_FORM: Option<DemodForm> = None;
+/// (data/step1-demod-encoding.json): with the demodulator PLL enabled
+/// (DEMOD_CTL bit 7, Table 15), wValue = offset << 8 | 0x20 reads 58 of
+/// the 59 non-zero documented reset bytes (100 of 101 in all); of the
+/// 512 forms only | 0x20 and | 0x21 score above 3, tied. 0x20 is taken:
+/// the write-address placement Table 27 uses for "IICAdd" (the tuner's
+/// 0x34), and the form step 1D's writes verified by read-back
+/// (data/step1-writes.json). The demodulator's own I2C slave of Fig. 5.
+pub const DEMOD_FORM: Option<DemodForm> = Some(DemodForm::High(0x20));
 /// Byte order of multi-byte system/USB registers established in step 1
-/// (data/step1-sys-usb-encoding.json): true = little-endian. None until then.
-pub const REG32_LITTLE_ENDIAN: Option<bool> = None;
+/// (data/step1-sys-usb-encoding.json): true = little-endian. After a power
+/// cycle I2CMSTR, USB_SYSCTL and USB_EPA_CTL match their documented resets
+/// little-endian (3); big-endian matches only USB_EPA_CTL's zero (1).
+pub const REG32_LITTLE_ENDIAN: Option<bool> = Some(true);
 
 pub struct Rtl {
     pub dev: nusb::Device,
@@ -402,12 +410,13 @@ pub fn wait_count(want: usize, limit: Duration) -> Option<Duration> {
     None
 }
 
-/// Power-cycle the dongle; returns a record of the cycle.
-pub fn power_cycle() -> Result<J, String> {
+/// One off/on cycle with `off_time` between the device leaving and power
+/// returning.
+fn cycle_once(off_time: Duration) -> Result<(J, bool), String> {
     let before = matching().len();
     let off = vbus(false)?;
     let gone = wait_count(0, Duration::from_secs(8));
-    std::thread::sleep(Duration::from_millis(500));
+    std::thread::sleep(off_time);
     let on = vbus(true)?;
     let back = wait_count(1, Duration::from_secs(15));
     // Enumeration settle time.
@@ -417,10 +426,26 @@ pub fn power_cycle() -> Result<J, String> {
         .with("devices_before", before)
         .with("vbus_off_reply", off)
         .with("disappeared_after_ms", gone.map(|d| d.as_millis() as u64))
+        .with("off_time_ms", off_time.as_millis() as u64)
         .with("vbus_on_reply", on)
         .with("reappeared_after_ms", back.map(|d| d.as_millis() as u64))
         .with("devices_after_settle", after);
-    if gone.is_none() || back.is_none() || after != 1 {
+    let ok = gone.is_some() && back.is_some() && after == 1;
+    Ok((rec, ok))
+}
+
+/// Power-cycle the dongle; returns a record of the cycle. Power is off
+/// for 500 ms; once (step 2's first ablation cycle) the dongle did not
+/// return after that and did after 3 s off, so a failed cycle is retried
+/// once with 3 s off, and the record says so.
+pub fn power_cycle() -> Result<J, String> {
+    let (rec, ok) = cycle_once(Duration::from_millis(500))?;
+    if ok {
+        return Ok(rec);
+    }
+    let (retry, ok) = cycle_once(Duration::from_secs(3))?;
+    let rec = retry.with("retry_after_failed_cycle", rec);
+    if !ok {
         return Err(format!("power cycle did not complete: {}", rec.render()));
     }
     Ok(rec)

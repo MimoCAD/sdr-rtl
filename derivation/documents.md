@@ -194,6 +194,12 @@ Polarity is per field and NOT uniform — read each one.
 - Tuner: wValue = (offset << 8) + I²C address — yet the note under
   Table 28 says "the command is issued within the DATA stage, ignoring
   the 'wValue' field". Contradiction; the bench decides.
+- Fig. 5 (§8.3, p. 15): the demodulator is drawn as its own I²C slave
+  ("Demod I2C") on the bus that carries "I2C commands from driver via
+  USB interface"; with the repeater on, a command "will be heard by the
+  tuner and the RTL2832U at the same time", and the two "distinguish
+  the origin of the command by the I²C address". The address is not
+  printed.
 - Before any tuner access set `IIC_repeat` — page 1, 0x01, bit 3
   (Table 3, p. 15; the note under Table 27 says "the 7th bit of the
   first byte", contradicting Table 3). Not cleared by a STOP.

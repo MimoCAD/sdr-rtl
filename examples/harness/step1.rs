@@ -170,6 +170,9 @@ fn sys_usb(rtl: &Rtl) -> (J, Option<usize>, Option<bool>) {
     (rec, best.map(|(i, _)| i), best_endian)
 }
 
+/// Wait after each DEMOD_CTL enable before the search repeats.
+const SETTLE: Duration = Duration::from_millis(50);
+
 fn all_demod_forms() -> Vec<DemodForm> {
     let mut v: Vec<DemodForm> = (0..=255u8).map(DemodForm::Low).collect();
     v.extend((0..=255u8).map(DemodForm::High));
@@ -336,26 +339,59 @@ pub fn run() -> Result<(), String> {
     b.set("as_booted", b_booted);
     let top = ranked[0];
     println!("demod as booted: best {} nonzero score {}/{}", top.0.describe(), top.2, nz_total);
-    let mut chosen = top.0;
-    if top.2 * 10 < nz_total * 9 {
-        // Phase C: enable the demodulator PLL (DEMOD_CTL bit 7, Table 15)
-        // with the system encoding just established, verify, and repeat.
+    // A form fits when it reads back at least 90 % of the non-zero
+    // documented reset bytes.
+    let fits = |nz: usize| nz * 10 >= nz_total * 9;
+    b.set("fit_criterion", format!("score_nonzero_oracles >= 90% of {nz_total}"));
+    let mut chosen = fits(top.2).then_some(top.0);
+    if chosen.is_none() {
+        // Phase C: the DEMOD_CTL enables of Table 15, cumulatively, with
+        // the system encoding just established: first the demodulator PLL
+        // (bit 7), then, only if no form fits yet, ADC_I and ADC_Q (bits 6
+        // and 3). Each write is verified by read-back, given a settle time
+        // well above the tuner's 5 ms PLL lock time ([R820T] Table 1-2; the
+        // RTL2832U prints none), and the full search is repeated.
         let v = (SYS_FORMS[sys_form].f)(SYS_BASE, DEMOD_CTL).unwrap();
-        let old = rtl.get(v, windex(BLOCK_SYS, ACCESS_GET, 0), 1).map_err(|e| e.to_string())?[0];
-        let new = old | DEMOD_CTL_PLL_EN;
-        rtl.set(v, windex(BLOCK_SYS, ACCESS_SET, 0), &[new]).map_err(|e| e.to_string())?;
-        let back = rtl.get(v, windex(BLOCK_SYS, ACCESS_GET, 0), 1).map_err(|e| e.to_string())?[0];
-        let (b_pll, ranked2) = demod_search(&rtl, "after DEMOD_CTL |= PLL enable (bit 7)");
-        b.set(
-            "pll_enable_write",
-            J::obj().with("before", hex8(old)).with("written", hex8(new)).with("readback", hex8(back)),
-        );
-        b.set("after_pll_enable", b_pll);
-        println!("demod after PLL enable: best {} nonzero score {}/{}", ranked2[0].0.describe(), ranked2[0].2, nz_total);
-        chosen = ranked2[0].0;
+        let mut stages = J::Arr(Vec::new());
+        for (name, bits) in [
+            ("DEMOD_CTL |= PLL enable (bit 7)", DEMOD_CTL_PLL_EN),
+            ("DEMOD_CTL |= ADC_I enable (bit 6) | ADC_Q enable (bit 3)", DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN),
+        ] {
+            let old = rtl.get(v, windex(BLOCK_SYS, ACCESS_GET, 0), 1).map_err(|e| e.to_string())?[0];
+            let new = old | bits;
+            rtl.set(v, windex(BLOCK_SYS, ACCESS_SET, 0), &[new]).map_err(|e| e.to_string())?;
+            std::thread::sleep(SETTLE);
+            let back = rtl.get(v, windex(BLOCK_SYS, ACCESS_GET, 0), 1).map_err(|e| e.to_string())?[0];
+            println!("{name}: DEMOD_CTL 0x{old:02X} -> wrote 0x{new:02X}, reads 0x{back:02X}");
+            let (res, ranked2) = demod_search(&rtl, &format!("after {name}"));
+            let best = ranked2[0];
+            println!("demod after {name}: best {} nonzero score {}/{}", best.0.describe(), best.2, nz_total);
+            stages.push(
+                J::obj()
+                    .with("stage", name)
+                    .with(
+                        "write",
+                        J::obj()
+                            .with("before", hex8(old))
+                            .with("written", hex8(new))
+                            .with("readback", hex8(back))
+                            .with("verified", back == new)
+                            .with("settle_ms", SETTLE.as_millis() as u64),
+                    )
+                    .with("search", res),
+            );
+            if fits(best.2) {
+                chosen = Some(best.0);
+                break;
+            }
+        }
+        b.set("enable_stages", stages);
     }
-    b.set("chosen_form", chosen.describe());
+    b.set("chosen_form", chosen.map(|c| c.describe()));
     crate::write_record("step1-demod-encoding.json", &b);
+    let Some(chosen) = chosen else {
+        return Err("no demodulator form fits the documented reset values after the Table 15 enables; Phase D not run".into());
+    };
 
     // Phase D: writes, each verified by read-back and restored.
     rtl.demod_form = Some(chosen);

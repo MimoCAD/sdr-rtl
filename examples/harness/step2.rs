@@ -22,8 +22,11 @@ enum Prep {
     TunerPower,
     /// IIC_repeat at page 1, 0x01 bit 3 (Table 3).
     RepeatBit3,
-    /// IIC_repeat read as "the 7th bit of the first byte" (Note2, Table 27).
+    /// IIC_repeat read as "the 7th bit of the first byte" (Note2, Table 27),
+    /// bits counted from 0.
     RepeatBit7,
+    /// The same Note2 phrase with bits counted from 1 (the 7th bit = bit 6).
+    RepeatBit6,
 }
 
 const ORDER: [Prep; 6] =
@@ -67,8 +70,12 @@ fn apply(rtl: &Rtl, p: Prep) -> J {
                     .with("GPOE", J::obj().with("before", hex8(gpoe)).with("after", rtl.sys_read8(GPOE).ok().map(hex8)))
                     .with("GPO", J::obj().with("before", hex8(gpo)).with("after", rtl.sys_read8(GPO).ok().map(hex8))))
             }
-            Prep::RepeatBit3 | Prep::RepeatBit7 => {
-                let bit = if p == Prep::RepeatBit3 { IIC_REPEAT_BIT_TABLE3 } else { IIC_REPEAT_BIT_NOTE2 };
+            Prep::RepeatBit3 | Prep::RepeatBit7 | Prep::RepeatBit6 => {
+                let bit = match p {
+                    Prep::RepeatBit3 => IIC_REPEAT_BIT_TABLE3,
+                    Prep::RepeatBit7 => IIC_REPEAT_BIT_NOTE2,
+                    _ => IIC_REPEAT_BIT_NOTE2_FROM1,
+                };
                 let (old, back) = rtl.demod_rmw(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, bit, bit).map_err(e)?;
                 Ok(J::obj().with("register", "page 1 0x01").with("before", hex8(old)).with("after", hex8(back)))
             }
@@ -120,6 +127,51 @@ fn probe(rtl: &Rtl) -> (J, Option<u16>) {
     (out, hit)
 }
 
+/// Every 7-bit I2C address through the tuner block, in the two 8-bit
+/// placements Table 27's "IICAdd" can mean (address << 1 for write and
+/// address << 1 | 1 for read, the convention the configuration EEPROM's
+/// 0xA0/0xA1 answered to in step 1), offset 0, 1 byte. Addresses that
+/// answer are read again with 5 bytes. The EEPROM's addresses are
+/// answered-but-redacted (RR).
+fn address_sweep(rtl: &Rtl) -> (J, Vec<u8>) {
+    let mut out = J::Arr(Vec::new());
+    let mut answered = Vec::new();
+    for addr7 in 0..0x80u8 {
+        let mut forms = J::Arr(Vec::new());
+        let mut any = false;
+        for (name, v) in [("addr<<1", (addr7 as u16) << 1), ("addr<<1|1", (addr7 as u16) << 1 | 1)] {
+            let redact = eeprom_addressed(v);
+            let show = |b: &[u8]| if redact { J::from("RR") } else { hex_bytes(b) };
+            let r1 = rtl.tuner_get(v, 1);
+            let mut f = J::obj().with("form", name).with("wValue", hex16(v));
+            match &r1 {
+                Ok(b) => {
+                    any = true;
+                    f.set("read1", show(b));
+                    if !redact {
+                        f.set("first_byte_bit_reversed", hex8(b[0].reverse_bits()));
+                        f.set("r0_check_0x96", b[0].reverse_bits() == TUNER_R0_CHECK);
+                    }
+                    let r5 = rtl.tuner_get(v, 5);
+                    f.set("read5", match &r5 {
+                        Ok(b) => show(b),
+                        Err(e) => J::from(format!("error: {e}")),
+                    });
+                }
+                Err(e) => {
+                    f.set("read1", format!("error: {e}"));
+                }
+            }
+            forms.push(f);
+        }
+        if any {
+            answered.push(addr7);
+        }
+        out.push(J::obj().with("address_7bit", hex8(addr7)).with("answered", any).with("forms", forms));
+    }
+    (out, answered)
+}
+
 fn fresh() -> Result<(Rtl, J), String> {
     let cyc = usb::power_cycle()?;
     Ok((Rtl::open()?, cyc))
@@ -132,7 +184,7 @@ pub fn run() -> Result<(), String> {
         "candidate_space",
         J::obj()
             .with("preparation_steps", J::Arr(ORDER.iter().map(|p| J::from(format!("{p:?}"))).collect()))
-            .with("repeater_bit_variants", "page 1 0x01 bit 3 (Table 3) | bit 7 (Note2 under Table 27)")
+            .with("repeater_bit_variants", "page 1 0x01 bit 3 (Table 3) | bit 7 (Note2 under Table 27, counted from 0) | bit 6 (Note2, counted from 1)")
             .with("read_wvalues", J::Arr(READ_WVALUES.iter().map(|v| hex16(*v)).collect()))
             .with("read_lengths", "1, 5"),
     );
@@ -156,6 +208,17 @@ pub fn run() -> Result<(), String> {
     rec.set("cumulative", cumulative);
     let (_, full_hit) = probe(&rtl);
 
+    // Every 7-bit address with the full preparation (repeater open).
+    let (sweep_open, answered_open) = address_sweep(&rtl);
+    println!("address sweep, repeater open: answered {:02X?}", answered_open);
+    rec.set(
+        "address_sweep_repeater_open",
+        J::obj()
+            .with("candidate_space", "7-bit address 0x00..=0x7F x wValue {addr<<1, addr<<1|1}, offset 0, len 1 (5 when answered)")
+            .with("answered_7bit", J::Arr(answered_open.iter().map(|a| hex8(*a)).collect()))
+            .with("results", sweep_open),
+    );
+
     // Phase 4 (on the fully prepared chip): the write path. R19 is all
     // fixed-0 cells ([R820T2] Table 1-2), so 0x00 is the documented value.
     let mut writes = J::Arr(Vec::new());
@@ -171,6 +234,16 @@ pub fn run() -> Result<(), String> {
     let (pc, hc) = probe(&rtl);
     writes.push(J::obj().with("read_probe_with_repeater_cleared", pc).with("hit", hc.map(hex16)));
     rec.set("write_path", writes);
+    // Control: the same sweep with the repeater bit cleared, so devices on
+    // the host bus are told apart from devices behind the repeater.
+    let (sweep_closed, answered_closed) = address_sweep(&rtl);
+    println!("address sweep, repeater cleared: answered {:02X?}", answered_closed);
+    rec.set(
+        "address_sweep_repeater_cleared",
+        J::obj()
+            .with("answered_7bit", J::Arr(answered_closed.iter().map(|a| hex8(*a)).collect()))
+            .with("results", sweep_closed),
+    );
     drop(rtl);
 
     // Phase 2: ablation, each step removed from the full set.
@@ -196,7 +269,11 @@ pub fn run() -> Result<(), String> {
 
     // Phase 3: the repeater bit variants.
     let mut variants = J::Arr(Vec::new());
-    for (name, reps) in [("bit 7 only", vec![Prep::RepeatBit7]), ("bit 3 and bit 7", vec![Prep::RepeatBit3, Prep::RepeatBit7])] {
+    for (name, reps) in [
+        ("bit 7 only", vec![Prep::RepeatBit7]),
+        ("bit 6 only", vec![Prep::RepeatBit6]),
+        ("bit 3 and bit 7", vec![Prep::RepeatBit3, Prep::RepeatBit7]),
+    ] {
         let (rtl, _) = fresh()?;
         let mut steps = J::Arr(Vec::new());
         for p in ORDER.into_iter().filter(|p| *p != Prep::RepeatBit3).chain(reps) {
