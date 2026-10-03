@@ -18,8 +18,11 @@
 //!   baseline    step 3: the documented-only streaming baseline
 //!   scan        step 3: the exhaustive single-bit scan (resumable)
 //!   confirm P O B   step 3: confirm a scan hit (page, offset, bit)
+//!   bytescan [--limit N]  step 3: every byte value of demodulator pages
+//!               0-2 (resumable; at most N new candidates per run)
 //! ```
 
+mod bytescan;
 mod json;
 mod regs;
 mod step0;
@@ -93,7 +96,8 @@ fn main() {
         Some("baseline") => step3::baseline(),
         Some("scan") => step3::scan(),
         Some("confirm") => step3::confirm(&args[1..]),
-        _ => Err("usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT".into()),
+        Some("bytescan") => bytescan::run(&args[1..]),
+        _ => Err("usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--limit N]".into()),
     };
     if let Err(e) = result {
         eprintln!("harness: {e}");

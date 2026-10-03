@@ -14,9 +14,9 @@ use crate::usb::{self, BulkCounter, Rtl};
 
 pub const RATE_HZ: f64 = 2.4e6;
 pub const CONFIRM_RATES_HZ: [f64; 3] = [2.4e6, 1.2e6, 2.048e6];
-const WINDOW: Duration = Duration::from_millis(100);
-const BUF_LEN: usize = 16 * 1024;
-const TOLERANCE: f64 = 0.20;
+pub const WINDOW: Duration = Duration::from_millis(100);
+pub const BUF_LEN: usize = 16 * 1024;
+pub const TOLERANCE: f64 = 0.20;
 const PAGES: u8 = 5;
 
 pub fn expected_bytes_per_s(rate: f64) -> f64 {
@@ -156,7 +156,7 @@ pub fn apply_baseline(rtl: &Rtl, rate: f64, skip: &[Item]) -> J {
     log
 }
 
-fn window_record(w: &usb::Window, rate: f64) -> J {
+pub fn window_record(w: &usb::Window, rate: f64) -> J {
     J::obj()
         .with("bytes", w.bytes)
         .with("elapsed_s", w.elapsed.as_secs_f64())
@@ -164,11 +164,12 @@ fn window_record(w: &usb::Window, rate: f64) -> J {
         .with("expected_bytes_per_s", expected_bytes_per_s(rate))
         .with("streams", streams(w.rate(), rate))
         .with("completions", w.completions)
+        .with("completion_sizes_first", J::Arr(w.sizes.iter().map(|n| J::from(*n)).collect()))
         .with("stale_bytes_discarded", w.stale_bytes)
         .with("errors", J::Arr(w.errors.iter().map(|e| J::from(e.as_str())).collect()))
 }
 
-fn fresh_with_baseline(rate: f64, skip: &[Item]) -> Result<(Rtl, BulkCounter, J), String> {
+pub fn fresh_with_baseline(rate: f64, skip: &[Item]) -> Result<(Rtl, BulkCounter, J), String> {
     let cyc = usb::power_cycle()?;
     let rtl = Rtl::open()?;
     let log = apply_baseline(&rtl, rate, skip);
@@ -218,7 +219,7 @@ fn done_keys() -> HashSet<(u8, u8, u8)> {
 
 /// The baseline's demodulator and system settings still in place: the
 /// names of any that a candidate disturbed (empty = intact).
-fn baseline_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
+pub fn baseline_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
     let word = (rsamp_ratio(rate) & ((1 << RSAMP_BITS) - 1)) << RSAMP_SHIFT;
     let b = word.to_be_bytes();
     let mut checks: Vec<(String, Option<bool>)> = vec![
@@ -241,7 +242,7 @@ fn baseline_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
 }
 
 /// The chip answers if a system read succeeds.
-fn alive(rtl: &Rtl) -> bool {
+pub fn alive(rtl: &Rtl) -> bool {
     rtl.sys_read8(DEMOD_CTL).is_ok()
 }
 
@@ -327,6 +328,40 @@ pub fn scan() -> Result<(), String> {
     Ok(())
 }
 
+/// The 188-byte block size of [RTL2832U] Table 34 (USB_EPA_FIFO_CFG
+/// counts dropped data in 188-byte blocks).
+pub const BLOCK: usize = 188;
+
+/// Block structure of a capture: its length modulo 188, and, laid out as
+/// rows of 188 bytes, for every column the most common byte and the
+/// fraction of rows holding it. A fixed marker at a fixed column shows
+/// as a column near 1.0; noise-like samples give no such column.
+fn block_structure(data: &[u8]) -> J {
+    let rows = data.len() / BLOCK;
+    let mut cols = J::Arr(Vec::new());
+    let mut constant = J::Arr(Vec::new());
+    if rows > 0 {
+        for c in 0..BLOCK {
+            let mut hist = [0usize; 256];
+            for r in 0..rows {
+                hist[data[r * BLOCK + c] as usize] += 1;
+            }
+            let (v, n) = hist.iter().enumerate().max_by_key(|(_, n)| **n).map(|(v, n)| (v, *n)).unwrap_or((0, 0));
+            let frac = n as f64 / rows as f64;
+            if frac >= 0.9 {
+                constant.push(J::obj().with("column", c).with("byte", hex8(v as u8)).with("fraction", frac));
+            }
+            cols.push(J::obj().with("column", c).with("mode", hex8(v as u8)).with("fraction", frac));
+        }
+    }
+    J::obj()
+        .with("bytes", data.len())
+        .with("bytes_mod_188", data.len() % BLOCK)
+        .with("rows_of_188", rows)
+        .with("columns_with_one_byte_in_90pct_of_rows", constant)
+        .with("columns", cols)
+}
+
 /// I/Q statistics over interleaved unsigned 8-bit samples.
 fn iq_stats(data: &[u8]) -> J {
     let mut ch = J::Arr(Vec::new());
@@ -377,22 +412,37 @@ pub fn confirm(args: &[String]) -> Result<(), String> {
             Err(e) => J::obj().with("error", e.to_string()),
         }
     };
-    // (a) rate tracking, (b) sample statistics.
+    // (a) rate tracking, (b) sample statistics. A 100 ms control window
+    // before the flip, then ten consecutive 100 ms windows starting right
+    // after it, all bytes kept: a one-shot burst at the flip shows in the
+    // first window, a sustained stream in all ten.
     let mut rates = J::Arr(Vec::new());
     for rate in CONFIRM_RATES_HZ {
         let (rtl, mut bulk, setup) = fresh_with_baseline(rate, &[])?;
+        let control = bulk.measure(WINDOW, None);
         let f = flip(&rtl);
-        let _ = bulk.measure(Duration::from_millis(200), None);
         let mut data = Vec::new();
-        let w = bulk.measure(Duration::from_secs(1), Some(&mut data));
+        let mut windows = J::Arr(Vec::new());
+        let (mut total, mut secs) = (0usize, 0f64);
+        for _ in 0..10 {
+            let w = bulk.measure(WINDOW, Some(&mut data));
+            total += w.bytes + w.stale_bytes;
+            secs += w.elapsed.as_secs_f64();
+            windows.push(window_record(&w, rate));
+        }
+        let sustained = total as f64 / secs;
         rates.push(
             J::obj()
                 .with("rate_hz", rate)
                 .with("rsamp_ratio", hex32(rsamp_ratio(rate)))
                 .with("setup", setup)
+                .with("control_window_before_flip", window_record(&control, rate))
                 .with("flip", f)
-                .with("window", window_record(&w, rate))
-                .with("ratio_to_expected", w.rate() / expected_bytes_per_s(rate))
+                .with("windows_after_flip", windows)
+                .with("bytes_after_flip", total)
+                .with("bytes_per_s_after_flip", sustained)
+                .with("ratio_to_expected", sustained / expected_bytes_per_s(rate))
+                .with("block_structure", block_structure(&data))
                 .with("stats", iq_stats(&data)),
         );
         bulk.close();
@@ -403,7 +453,6 @@ pub fn confirm(args: &[String]) -> Result<(), String> {
     for item in ITEMS {
         let (rtl, mut bulk, setup) = fresh_with_baseline(RATE_HZ, &[item])?;
         let f = flip(&rtl);
-        let _ = bulk.measure(Duration::from_millis(200), None);
         let w = bulk.measure(Duration::from_millis(500), None);
         mini.push(
             J::obj()
@@ -411,7 +460,8 @@ pub fn confirm(args: &[String]) -> Result<(), String> {
                 .with("setup", setup)
                 .with("flip", f)
                 .with("window", window_record(&w, RATE_HZ))
-                .with("necessary", !streams(w.rate(), RATE_HZ)),
+                .with("necessary", !streams(w.rate(), RATE_HZ))
+                .with("necessary_for_any_bytes", w.bytes == 0),
         );
         bulk.close();
     }

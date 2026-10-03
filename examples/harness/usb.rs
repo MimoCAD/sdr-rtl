@@ -302,9 +302,13 @@ pub struct Window {
     pub completions: usize,
     pub errors: Vec<String>,
     pub stale_bytes: usize,
+    /// The first [`Window::SIZES_KEPT`] completion lengths, in order.
+    pub sizes: Vec<usize>,
 }
 
 impl Window {
+    pub const SIZES_KEPT: usize = 64;
+
     pub fn rate(&self) -> f64 {
         self.bytes as f64 / self.elapsed.as_secs_f64()
     }
@@ -345,6 +349,7 @@ impl BulkCounter {
         let mut bytes = 0;
         let mut completions = 0;
         let mut errors = Vec::new();
+        let mut sizes = Vec::new();
         loop {
             let now = Instant::now();
             if now >= deadline {
@@ -353,6 +358,9 @@ impl BulkCounter {
             if let Some(c) = self.ep.wait_next_complete(deadline - now) {
                 completions += 1;
                 bytes += c.actual_len;
+                if sizes.len() < Window::SIZES_KEPT {
+                    sizes.push(c.actual_len);
+                }
                 if let Some(k) = keep.as_deref_mut() {
                     k.extend_from_slice(&c.buffer[..c.actual_len]);
                 }
@@ -369,7 +377,7 @@ impl BulkCounter {
                 self.ep.submit(b);
             }
         }
-        Window { bytes, elapsed: start.elapsed(), completions, errors, stale_bytes: stale }
+        Window { bytes, elapsed: start.elapsed(), completions, errors, stale_bytes: stale, sizes }
     }
 
     /// Cancel and drain every queued transfer.

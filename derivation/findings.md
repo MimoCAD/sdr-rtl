@@ -2,7 +2,7 @@
 
 Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
-Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**. Stopped there (no multi-bit search).
+Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**; confirm of p1 0x92 bit 6 reads 0 B alone; the byte scan over pages 0–2 is in progress (2000 of 196608).
 
 ## Step 0 — recovery: PROVEN — `data/step0-recovery.json` — `harness recovery`
 
@@ -153,4 +153,42 @@ detector. Page 4 writes at 0x08, 0x10, 0x20, 0xA7 act like page 0's
 (same effects), while page 4 reads differ from page 0 (106/256 bytes
 equal at bit 0; page 4 reads 0x00 at all but 6 offsets).
 
-Not run: `confirm` (no hit meets the streaming criterion).
+## Step 3 — confirm p1 0x92 bit 6: not reproducible alone — `data/step3-confirm-p1-92-b6.json` — `harness confirm 1 0x92 6`
+
+From a fresh power-on + baseline at each rate, then the flip (0x00 →
+0x40, read back 0x40 every time):
+
+| rate | rsamp_ratio | control 100 ms before flip | 10 × 100 ms right after flip | bytes/s vs 2·rate |
+|---|---|---|---|---|
+| 2.4 Msps | 0x3000000 | 0 B | 0 B in every window | 0 / 4.8e6 |
+| 1.2 Msps | 0x6000000 | 0 B | 0 B in every window | 0 / 2.4e6 |
+| 2.048 Msps | 0x3840000 | 0 B | 0 B in every window | 0 / 4.096e6 |
+
+No bytes, so no 188-byte structure or I/Q statistics to report.
+Minimisation (each baseline item removed, flip kept, 500 ms right after
+the flip): 0 B in all 10 (with DEMOD_CTL removed the flip itself stalls).
+An earlier run of the same command (200 ms discarded after the flip,
+then 1 s; record overwritten by the run above) also read 0 B everywhere.
+So the scan's 45 blocks came from the chip's state at that point in the
+scan (1170 candidates since the last power cycle), not from bit 6 alone.
+
+## Step 3 — byte scan (in progress) — `data/step3-bytescan.jsonl` — `harness bytescan [--limit N]`
+
+Every value of every register on pages 0–2 (3 × 256 × 256 = 196608,
+minus each register's current value, logged as skips), page / offset /
+value ascending. Pages 3 and 4 excluded (live readbacks; page 4 writes
+mirror page 0's). 50 ms window right after the write; any byte, counted
+or stale, triggers a 200 ms follow-up, and the candidate streams if
+either window is within 20 % of 4.8 MB/s. The window choice is justified
+in the record header. The scan does not stop on a hit.
+
+Smoke test, `--limit 2000`: page 0 0x00 value 0x01 → 0x07 value 0xD7,
+2000 tested + 8 skipped in 166.1 s = **12.04 tested/s** (83 ms each);
+0 streams, 0 wedges, 0 disturbed baselines, 0 failed restores.
+Projected rest: 194600 candidates ≈ **4.5 h** plus power cycles
+(~3.5 s each; the bit scan wedged on p0 0x20 and 0xA7).
+
+Seen so far: page 0 0x07 (holds 0x3C) values 0xC0–0xCB each released a
+one-shot burst of 5–14 whole 188-byte blocks (940–2632 B, every count
+≡ 0 mod 188), mostly before the window opened (stale); the 200 ms
+follow-up read 0 every time. 0xCC–0xD7: nothing.
