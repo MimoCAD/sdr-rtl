@@ -1,0 +1,66 @@
+analyzer gateware v1.1 · state 0x88
+capture started (host unix time 1791045806.509) — timestamps below are analyzer-relative
+[  0.000000s] capture start
+[  1.739076s] target endpoint: device 11 EP 0x81 IN (the device receiving vendor requests)
+t=   2.0s ·  0.000 MB/s ·  37016 IN ·      0 DATA ·  37016 NAK · 0 STALL
+[  2.154498s] STALL on 11.1
+[  2.154498s] DEVICE QUIET  312373 µs (79658 NAKs — endpoint had no data; ended by a host-quiet gap)
+[  2.167820s] HOST QUIET   13322 µs (no IN tokens scheduled; 2 SETUPs to the device during it)
+[  2.911832s] STALL on 11.1
+t=   3.0s ·  0.000 MB/s · 231516 IN ·      0 DATA · 231514 NAK · 2 STALL
+[  2.911831s] DEVICE QUIET  744011 µs (188872 NAKs — endpoint had no data; ended by a host-quiet gap)
+[  3.342438s] HOST QUIET  430606 µs (no IN tokens scheduled; 7 SETUPs to the device during it)
+t=   4.0s ·  0.000 MB/s ·  53515 IN ·      0 DATA ·  53515 NAK · 0 STALL
+t=   5.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+t=   6.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+t=   7.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+[  3.552217s] DEVICE QUIET  209778 µs (53515 NAKs — endpoint had no data; ended by the end of the capture)
+(the capture ended 3394419 µs after the target's last IN token; not counted)
+
+per-endpoint totals (device.endpoint IN; other devices on the tapped bus omitted):
+   11.0      25592 IN ·       82 DATA (       143 B) ·     25510 NAK ·    0 STALL
+   11.1     322047 IN ·        0 DATA (         0 B) ·    322045 NAK ·    2 STALL
+
+target 11.1 histograms:
+host-quiet gaps (no IN tokens): 2 spans, 443.9 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      1 spans       13.3 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      1 spans      430.6 ms
+  of which with SETUPs to the device during the gap (control phases): 2 spans, 443.9 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      1 spans       13.3 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      1 spans      430.6 ms
+  of which with no SETUP during the gap: 0 spans, 0.0 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      0 spans        0.0 ms
+device-quiet NAK runs: 3 spans, 1266.2 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      1 spans      209.8 ms
+    250.0+        ms      2 spans     1056.4 ms
+
+session: 2 host-quiet events (worst 430606 µs) · 3 device-quiet events (worst 744011 µs)

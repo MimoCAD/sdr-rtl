@@ -167,10 +167,15 @@ pub fn window_record(w: &usb::Window, rate: f64) -> J {
         .with("completion_sizes_first", J::Arr(w.sizes.iter().map(|n| J::from(*n)).collect()))
         .with("stale_bytes_discarded", w.stale_bytes)
         .with("errors", J::Arr(w.errors.iter().map(|e| J::from(e.as_str())).collect()))
+        .with("bulk_check", w.check.record())
 }
 
 pub fn fresh_with_baseline(rate: f64, skip: &[Item]) -> Result<(Rtl, BulkCounter, J), String> {
-    let cyc = usb::power_cycle()?;
+    let cyc = if crate::no_cycle() {
+        J::obj().with("skipped", "--no-cycle: the dongle was opened as found, not power-cycled")
+    } else {
+        usb::power_cycle()?
+    };
     let rtl = Rtl::open()?;
     let log = apply_baseline(&rtl, rate, skip);
     let bulk = BulkCounter::open(&rtl, BUF_LEN)?;
@@ -193,6 +198,58 @@ pub fn baseline() -> Result<(), String> {
     rec.set("windows", windows);
     bulk.close();
     crate::write_record("step3-baseline.json", &rec);
+    Ok(())
+}
+
+/// The bulk detector's own check: windows from the baseline with the
+/// endpoint left alone, with the chip's stall bit set (USB_EPA_CTL bit 4,
+/// Table 32), with it cleared again, and after a FIFO reset pulse (bit 9),
+/// each with its self-check. A stalled endpoint must show as halts with
+/// their ClearFeature(ENDPOINT_HALT) results, and the queue must be back
+/// to full in flight once the bit is cleared. A last pair of phases does
+/// the same with the halt left uncleared (completions only resubmitted),
+/// then clears it.
+pub fn detector_check() -> Result<(), String> {
+    usb::guard()?;
+    let mut rec = crate::header("3-detector-check", "the bulk IN detector's self-check across a deliberately stalled endpoint")
+        .with("detector", BulkCounter::describe(BUF_LEN, "each window carries bulk_check (the span since the previous window's end)"));
+    let (rtl, mut bulk, setup) = fresh_with_baseline(RATE_HZ, &[])?;
+    rec.set("setup", setup);
+    let epa = |rtl: &Rtl| rtl.usb_read32(USB_EPA_CTL).map(hex32).map_err(|e| e.to_string());
+    let mut phases = J::Arr(Vec::new());
+    let mut phase = |name: &str, action: J, bulk: &mut BulkCounter, n: usize| {
+        let mut w = J::Arr(Vec::new());
+        for _ in 0..n {
+            w.push(window_record(&bulk.measure(WINDOW, None), RATE_HZ));
+        }
+        phases.push(J::obj().with("phase", name).with("action", action).with("USB_EPA_CTL_after", epa(&rtl).ok()).with("windows", w));
+    };
+    phase("idle", J::from("none"), &mut bulk, 3);
+    let set = rmw_usb32(&rtl, USB_EPA_CTL, 0, EPA_CTL_STALL).unwrap_or_else(|e| J::from(format!("error: {e}")));
+    phase("stall bit set", J::obj().with("USB_EPA_CTL bit 4 = 1", set), &mut bulk, 2);
+    let clr = rmw_usb32(&rtl, USB_EPA_CTL, EPA_CTL_STALL, 0).unwrap_or_else(|e| J::from(format!("error: {e}")));
+    phase("stall bit cleared", J::obj().with("USB_EPA_CTL bit 4 = 0", clr), &mut bulk, 3);
+    let fifo = (|| {
+        let a = rmw_usb32(&rtl, USB_EPA_CTL, 0, EPA_CTL_FIFO_RESET)?;
+        let b = rmw_usb32(&rtl, USB_EPA_CTL, EPA_CTL_FIFO_RESET, 0)?;
+        Ok::<J, usb::Fail>(J::Arr(vec![a, b]))
+    })()
+    .unwrap_or_else(|e| J::from(format!("error: {e}")));
+    phase("after FIFO reset pulse", J::obj().with("USB_EPA_CTL bit 9 = 1 then 0", fifo), &mut bulk, 2);
+    // What a detector that only resubmits does after a halt (the harness's
+    // counter before the self-check): the halt is NOT cleared here.
+    bulk.clear_halts = false;
+    let set = rmw_usb32(&rtl, USB_EPA_CTL, 0, EPA_CTL_STALL).unwrap_or_else(|e| J::from(format!("error: {e}")));
+    phase("stall bit set, halt not cleared (resubmit only)", J::obj().with("USB_EPA_CTL bit 4 = 1", set), &mut bulk, 2);
+    let clr = rmw_usb32(&rtl, USB_EPA_CTL, EPA_CTL_STALL, 0).unwrap_or_else(|e| J::from(format!("error: {e}")));
+    phase("stall bit cleared, halt still not cleared (resubmit only)", J::obj().with("USB_EPA_CTL bit 4 = 0", clr), &mut bulk, 2);
+    bulk.clear_halts = true;
+    bulk.force_clear_halt();
+    phase("after ClearFeature(ENDPOINT_HALT)", J::from("cancel, clear, queue again"), &mut bulk, 2);
+    rec.set("phases", phases);
+    rec.set("chip_answers_at_end", alive(&rtl));
+    bulk.close();
+    crate::write_record("step3-detector-check.json", &rec);
     Ok(())
 }
 
@@ -285,6 +342,7 @@ pub fn scan() -> Result<(), String> {
                         if !w.errors.is_empty() {
                             line.set("transfer_errors", J::Arr(w.errors.iter().map(|e| J::from(e.as_str())).collect()));
                         }
+                        line.set("bulk_check", w.check.compact());
                         let rs = rtl.demod_write8(page, off, o);
                         let back = rtl.demod_read8(page, off);
                         line.set("restore_error", rs.err().map(|e| e.to_string()));

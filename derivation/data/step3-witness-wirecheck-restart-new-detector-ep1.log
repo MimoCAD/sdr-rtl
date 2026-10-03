@@ -1,0 +1,95 @@
+analyzer gateware v1.1 · state 0x88
+capture started (host unix time 1791045438.366) — timestamps below are analyzer-relative
+[  0.000000s] capture start
+[  1.665241s] target endpoint: device 11 EP 0x81 IN (the device receiving vendor requests)
+t=   2.0s ·  0.000 MB/s ·  50600 IN ·      0 DATA ·  50600 NAK · 0 STALL
+[  2.887580s] DEVICE QUIET 1118935 µs (262253 NAKs — endpoint had no data; ended by DATA)
+t=   3.0s ·  0.002 MB/s · 232789 IN ·      4 DATA · 232785 NAK · 0 STALL
+[  3.203108s] DEVICE QUIET  315460 µs (75802 NAKs — endpoint had no data; ended by DATA)
+[  3.519217s] DEVICE QUIET  316028 µs (75941 NAKs — endpoint had no data; ended by DATA)
+[  3.837337s] DEVICE QUIET  318012 µs (76414 NAKs — endpoint had no data; ended by DATA)
+t=   4.0s ·  0.005 MB/s · 236950 IN ·     12 DATA · 236937 NAK · 0 STALL
+[  4.154132s] DEVICE QUIET  316733 µs (76116 NAKs — endpoint had no data; ended by DATA)
+[  4.472145s] DEVICE QUIET  317874 µs (76411 NAKs — endpoint had no data; ended by DATA)
+[  4.790098s] DEVICE QUIET  317866 µs (76392 NAKs — endpoint had no data; ended by DATA)
+t=   5.0s ·  0.006 MB/s · 237587 IN ·     14 DATA · 237573 NAK · 0 STALL
+[  5.106686s] DEVICE QUIET  316529 µs (76071 NAKs — endpoint had no data; ended by DATA)
+[  5.422416s] DEVICE QUIET  315634 µs (75846 NAKs — endpoint had no data; ended by DATA)
+[  5.741169s] DEVICE QUIET  318664 µs (76574 NAKs — endpoint had no data; ended by DATA)
+t=   6.0s ·  0.006 MB/s · 237614 IN ·     14 DATA · 237601 NAK · 0 STALL
+[  6.054110s] DEVICE QUIET  312845 µs (75100 NAKs — endpoint had no data; ended by DATA)
+[  6.371293s] DEVICE QUIET  317055 µs (76164 NAKs — endpoint had no data; ended by DATA)
+[  6.690269s] DEVICE QUIET  318880 µs (76647 NAKs — endpoint had no data; ended by DATA)
+t=   7.0s ·  0.006 MB/s · 237037 IN ·     14 DATA · 237022 NAK · 0 STALL
+[  7.005697s] DEVICE QUIET  315335 µs (75714 NAKs — endpoint had no data; ended by DATA)
+[  7.319785s] DEVICE QUIET  313998 µs (75413 NAKs — endpoint had no data; ended by DATA)
+[  7.639936s] DEVICE QUIET  320104 µs (76960 NAKs — endpoint had no data; ended by DATA)
+t=   8.0s ·  0.005 MB/s · 237652 IN ·     11 DATA · 237642 NAK · 0 STALL
+[  7.956034s] DEVICE QUIET  316012 µs (75903 NAKs — endpoint had no data; ended by DATA)
+[  8.275301s] DEVICE QUIET  319165 µs (76709 NAKs — endpoint had no data; ended by DATA)
+[  8.594023s] DEVICE QUIET  318620 µs (76589 NAKs — endpoint had no data; ended by DATA)
+[  8.604131s] DEVICE QUIET   10003 µs (1785 NAKs — endpoint had no data; ended by DATA)
+t=   9.0s ·  0.007 MB/s · 235338 IN ·     16 DATA · 235322 NAK · 0 STALL
+[  8.912428s] DEVICE QUIET  308288 µs (74718 NAKs — endpoint had no data; ended by DATA)
+[  9.230942s] DEVICE QUIET  318395 µs (76546 NAKs — endpoint had no data; ended by DATA)
+[  9.548012s] DEVICE QUIET  316940 µs (76142 NAKs — endpoint had no data; ended by DATA)
+[  9.868126s] DEVICE QUIET  320047 µs (76958 NAKs — endpoint had no data; ended by DATA)
+t=  10.0s ·  0.008 MB/s · 234930 IN ·     18 DATA · 234912 NAK · 0 STALL
+[ 10.186458s] DEVICE QUIET  318251 µs (76502 NAKs — endpoint had no data; ended by DATA)
+[ 10.503168s] DEVICE QUIET  316644 µs (76062 NAKs — endpoint had no data; ended by DATA)
+[ 10.513255s] DEVICE QUIET   10025 µs (1793 NAKs — endpoint had no data; ended by DATA)
+[ 10.816203s] DEVICE QUIET  302939 µs (73344 NAKs — endpoint had no data; ended by DATA)
+t=  11.0s ·  0.005 MB/s · 237246 IN ·     12 DATA · 237233 NAK · 0 STALL
+t=  12.0s ·  0.000 MB/s ·  59188 IN ·      0 DATA ·  59189 NAK · 0 STALL
+t=  13.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+t=  14.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+[ 11.098449s] DEVICE QUIET  282172 µs (69947 NAKs — endpoint had no data; ended by the end of the capture)
+(the capture ended 2742307 µs after the target's last IN token; not counted)
+
+per-endpoint totals (device.endpoint IN; other devices on the tapped bus omitted):
+   11.0     242020 IN ·     1053 DATA (       885 B) ·    240967 NAK ·    0 STALL
+   11.1    2236931 IN ·      115 DATA (     50196 B) ·   2236816 NAK ·    0 STALL
+
+target 11.1 histograms:
+host-quiet gaps (no IN tokens): 0 spans, 0.0 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      0 spans        0.0 ms
+  of which with SETUPs to the device during the gap (control phases): 0 spans, 0.0 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      0 spans        0.0 ms
+  of which with no SETUP during the gap: 0 spans, 0.0 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      0 spans        0.0 ms
+device-quiet NAK runs: 29 spans, 9327.5 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      2 spans       20.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms     27 spans     9307.4 ms
+
+session: 0 host-quiet events (worst 0 µs) · 29 device-quiet events (worst 1118935 µs)

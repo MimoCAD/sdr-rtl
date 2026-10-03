@@ -1,0 +1,93 @@
+analyzer gateware v1.1 · state 0x88
+capture started (host unix time 1791045515.316) — timestamps below are analyzer-relative
+[  0.000000s] capture start
+[  1.607808s] target endpoint: device 11 EP 0x81 IN (the device receiving vendor requests)
+t=   2.0s ·  0.000 MB/s ·  65052 IN ·      0 DATA ·  65051 NAK · 0 STALL
+[  2.031729s] DEVICE QUIET  322834 µs (74611 NAKs — endpoint had no data; ended by DATA)
+[  2.363202s] DEVICE QUIET  331371 µs (82968 NAKs — endpoint had no data; ended by DATA)
+[  2.618358s] DEVICE QUIET  255072 µs (65184 NAKs — endpoint had no data; ended by DATA)
+[  2.696086s] DEVICE QUIET   77719 µs (18142 NAKs — endpoint had no data; ended by DATA)
+t=   3.0s ·  0.006 MB/s · 246237 IN ·     15 DATA · 246222 NAK · 0 STALL
+[  3.030178s] DEVICE QUIET  333980 µs (83650 NAKs — endpoint had no data; ended by DATA)
+[  3.288491s] DEVICE QUIET  258211 µs (66028 NAKs — endpoint had no data; ended by DATA)
+[  3.366560s] DEVICE QUIET   78048 µs (18222 NAKs — endpoint had no data; ended by DATA)
+[  3.624210s] DEVICE QUIET  257592 µs (65830 NAKs — endpoint had no data; ended by DATA)
+[  3.698538s] DEVICE QUIET   74319 µs (17257 NAKs — endpoint had no data; ended by DATA)
+t=   4.0s ·  0.005 MB/s · 246798 IN ·     14 DATA · 246785 NAK · 0 STALL
+[  4.030540s] DEVICE QUIET  331923 µs (83097 NAKs — endpoint had no data; ended by DATA)
+[  4.090252s] DEVICE QUIET   59650 µs (15286 NAKs — endpoint had no data; ended by DATA)
+[  4.358959s] DEVICE QUIET  268699 µs (66950 NAKs — endpoint had no data; ended by DATA)
+[  4.695296s] DEVICE QUIET  336287 µs (84203 NAKs — endpoint had no data; ended by DATA)
+t=   5.0s ·  0.005 MB/s · 247336 IN ·     12 DATA · 247324 NAK · 0 STALL
+[  5.023943s] DEVICE QUIET  328570 µs (82238 NAKs — endpoint had no data; ended by DATA)
+[  5.352210s] DEVICE QUIET  328175 µs (82167 NAKs — endpoint had no data; ended by DATA)
+[  5.682788s] DEVICE QUIET  330412 µs (82716 NAKs — endpoint had no data; ended by DATA)
+t=   6.0s ·  0.007 MB/s · 246732 IN ·     15 DATA · 246717 NAK · 0 STALL
+[  6.017599s] DEVICE QUIET  334738 µs (83836 NAKs — endpoint had no data; ended by DATA)
+[  6.354161s] DEVICE QUIET  336414 µs (84244 NAKs — endpoint had no data; ended by DATA)
+[  6.687934s] DEVICE QUIET  333703 µs (83557 NAKs — endpoint had no data; ended by DATA)
+t=   7.0s ·  0.007 MB/s · 247437 IN ·     16 DATA · 247421 NAK · 0 STALL
+[  7.019514s] DEVICE QUIET  331465 µs (83001 NAKs — endpoint had no data; ended by DATA)
+[  7.351067s] DEVICE QUIET  331481 µs (83017 NAKs — endpoint had no data; ended by DATA)
+[  7.687842s] DEVICE QUIET  336681 µs (84311 NAKs — endpoint had no data; ended by DATA)
+t=   8.0s ·  0.005 MB/s · 246828 IN ·     12 DATA · 246816 NAK · 0 STALL
+[  8.021860s] DEVICE QUIET  333956 µs (83660 NAKs — endpoint had no data; ended by DATA)
+[  8.280508s] DEVICE QUIET  258573 µs (66101 NAKs — endpoint had no data; ended by DATA)
+[  8.358541s] DEVICE QUIET   78025 µs (18212 NAKs — endpoint had no data; ended by DATA)
+[  8.691660s] DEVICE QUIET  333039 µs (83392 NAKs — endpoint had no data; ended by DATA)
+t=   9.0s ·  0.005 MB/s · 246824 IN ·     12 DATA · 246812 NAK · 0 STALL
+t=  10.0s ·  0.000 MB/s · 120431 IN ·      0 DATA · 120431 NAK · 0 STALL
+t=  11.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+t=  12.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+t=  13.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+t=  14.0s ·  0.000 MB/s ·      0 IN ·      0 DATA ·      0 NAK · 0 STALL
+[  9.406034s] DEVICE QUIET  714254 µs (171699 NAKs — endpoint had no data; ended by the end of the capture)
+(the capture ended 4448892 µs after the target's last IN token; not counted)
+
+per-endpoint totals (device.endpoint IN; other devices on the tapped bus omitted):
+   11.0     133725 IN ·      414 DATA (       366 B) ·    133311 NAK ·    0 STALL
+   11.1    1913675 IN ·       96 DATA (     40796 B) ·   1913579 NAK ·    0 STALL
+
+target 11.1 histograms:
+host-quiet gaps (no IN tokens): 0 spans, 0.0 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      0 spans        0.0 ms
+  of which with SETUPs to the device during the gap (control phases): 0 spans, 0.0 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      0 spans        0.0 ms
+  of which with no SETUP during the gap: 0 spans, 0.0 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      0 spans        0.0 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms      0 spans        0.0 ms
+device-quiet NAK runs: 27 spans, 7695.2 ms total
+      1.0–2.0     ms      0 spans        0.0 ms
+      2.0–5.0     ms      0 spans        0.0 ms
+      5.0–10.0    ms      0 spans        0.0 ms
+     10.0–50.0    ms      0 spans        0.0 ms
+     50.0–100.0   ms      5 spans      367.8 ms
+    100.0–150.0   ms      0 spans        0.0 ms
+    150.0–190.0   ms      0 spans        0.0 ms
+    190.0–250.0   ms      0 spans        0.0 ms
+    250.0+        ms     22 spans     7327.4 ms
+
+session: 0 host-quiet events (worst 0 µs) · 27 device-quiet events (worst 714254 µs)

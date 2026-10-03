@@ -290,20 +290,124 @@ pub fn to_bytes32(v: u32) -> [u8; 4] {
     if little() { v.to_le_bytes() } else { v.to_be_bytes() }
 }
 
-/// Keeps a few bulk IN transfers queued and counts what arrives.
+/// Keeps [`BulkCounter::QUEUED`] bulk IN transfers in flight at all times
+/// and counts what arrives.
+///
+/// The host polls a bulk IN endpoint only while it has a transfer queued
+/// for it; with none queued the bus shows no IN tokens and a stream would
+/// go unseen. So every completion is resubmitted at once, the queue is
+/// topped up at the start of each window, and the [`Check`] records what
+/// the host did. A completion with `Stall` means the endpoint answered
+/// STALL and the host halted its pipe: per USB 2.0 §9.4.5 a halted
+/// endpoint stays halted until the host sends ClearFeature(ENDPOINT_HALT)
+/// (§9.4.1), which also resets the data toggle, so the counter cancels
+/// what is still queued (nusb: no transfers pending while clearing),
+/// sends the clear, records its result and queues again.
 pub struct BulkCounter {
     _iface: Interface,
     ep: Endpoint<Bulk, In>,
+    buf_len: usize,
+    check: Check,
+    /// Clear a halt when one is seen (always, except in detector-check's
+    /// phase that shows what resubmitting into a halted pipe does).
+    pub clear_halts: bool,
+    /// A Stall was seen and no ClearFeature(ENDPOINT_HALT) has succeeded
+    /// since. While halted the host sends no IN tokens (measured:
+    /// data/step3-detector-check.json) and transfers resubmitted into the
+    /// pipe neither complete nor fail, so a window looks empty, not broken.
+    halted: bool,
+}
+
+/// The detector's self-check over one span (from the previous window's
+/// end to this window's end, so the control phase before a window is
+/// covered too).
+#[derive(Clone, Debug, Default)]
+pub struct Check {
+    /// Transfers submitted (resubmissions and top-ups).
+    pub submitted: usize,
+    /// Completions taken, with or without error.
+    pub completed: usize,
+    /// Completions whose status was an error.
+    pub errored: usize,
+    /// (error, count) in order of first appearance; none is dropped.
+    pub errors: Vec<(String, usize)>,
+    /// `Stall` completions: the endpoint was halted.
+    pub halts: usize,
+    /// The result of each ClearFeature(ENDPOINT_HALT) sent.
+    pub clears: Vec<String>,
+    /// A `Disconnected` completion was seen; nothing is resubmitted after it.
+    pub disconnected: bool,
+    /// The endpoint was halted (a Stall not yet cleared) at any point in
+    /// the span, including at its start or end.
+    pub halted: bool,
+    /// Transfers in flight when the span began, the fewest seen at any
+    /// moment (a completion taken, before its resubmission), and at the end.
+    pub in_flight_start: usize,
+    pub in_flight_min: usize,
+    pub in_flight_end: usize,
+}
+
+impl Check {
+    fn note(&mut self, e: TransferError) {
+        self.errored += 1;
+        let k = format!("{e:?}");
+        match self.errors.iter_mut().find(|(n, _)| *n == k) {
+            Some((_, c)) => *c += 1,
+            None => self.errors.push((k, 1)),
+        }
+    }
+
+    /// The host kept at least one transfer queued throughout, with no
+    /// error, halt or disconnection.
+    pub fn clean(&self) -> bool {
+        self.errored == 0 && self.halts == 0 && !self.halted && !self.disconnected && self.in_flight_min > 0
+    }
+
+    /// "Stall x2", one entry per error kind.
+    pub fn error_list(&self) -> Vec<String> {
+        self.errors.iter().map(|(k, n)| if *n == 1 { k.clone() } else { format!("{k} x{n}") }).collect()
+    }
+
+    /// Compact form for the scan records: [submitted, completed,
+    /// errored, halts, fewest in flight, halted (0/1)].
+    pub fn compact(&self) -> J {
+        J::Arr(vec![
+            J::from(self.submitted),
+            J::from(self.completed),
+            J::from(self.errored),
+            J::from(self.halts),
+            J::from(self.in_flight_min),
+            J::from(self.halted as u8),
+        ])
+    }
+
+    pub fn record(&self) -> J {
+        J::obj()
+            .with("submitted", self.submitted)
+            .with("completed", self.completed)
+            .with("errored", self.errored)
+            .with("errors", J::Arr(self.error_list().into_iter().map(J::from).collect()))
+            .with("halts", self.halts)
+            .with("halt_clears", J::Arr(self.clears.iter().map(|c| J::from(c.as_str())).collect()))
+            .with("disconnected", self.disconnected)
+            .with("halted", self.halted)
+            .with("in_flight_start", self.in_flight_start)
+            .with("in_flight_min", self.in_flight_min)
+            .with("in_flight_end", self.in_flight_end)
+            .with("clean", self.clean())
+    }
 }
 
 pub struct Window {
     pub bytes: usize,
     pub elapsed: Duration,
     pub completions: usize,
+    /// The check's errors, one entry per kind.
     pub errors: Vec<String>,
     pub stale_bytes: usize,
     /// The first [`Window::SIZES_KEPT`] completion lengths, in order.
     pub sizes: Vec<usize>,
+    pub check: Check,
 }
 
 impl Window {
@@ -314,8 +418,27 @@ impl Window {
     }
 }
 
+/// The first-byte wait's result.
+pub struct FirstByte {
+    /// From the call to the first non-empty completion (zero if one had
+    /// already completed); None when nothing arrived before the deadline.
+    pub latency: Option<Duration>,
+    /// The bytes of every completion taken, the first non-empty one last.
+    pub bytes: usize,
+    pub check: Check,
+}
+
 impl BulkCounter {
     pub const QUEUED: usize = 4;
+
+    /// The detector in words, for a record's setup line; `fields` says
+    /// how the line carries the self-check.
+    pub fn describe(buf_len: usize, fields: &str) -> String {
+        format!(
+            "{} bulk IN transfers of {buf_len} bytes kept in flight: every completion resubmitted at once, topped up before each wait; a Stall completion = endpoint halted -> queued transfers cancelled, ClearFeature(ENDPOINT_HALT) sent (USB 2.0 9.4.1, 9.4.5), its result recorded, queue refilled; every error completion counted by kind. {fields}",
+            Self::QUEUED
+        )
+    }
 
     pub fn open(rtl: &Rtl, buf_len: usize) -> Result<BulkCounter, String> {
         let (ifn, addr, _mps) = rtl.bulk_in().ok_or("no bulk IN endpoint in the descriptors")?;
@@ -324,102 +447,213 @@ impl BulkCounter {
             .claim_interface(ifn)
             .wait()
             .map_err(|e| format!("claim interface {ifn}: {e}"))?;
-        let mut ep = iface
+        let ep = iface
             .endpoint::<Bulk, In>(addr)
             .map_err(|e| format!("endpoint 0x{addr:02X}: {e}"))?;
-        for _ in 0..Self::QUEUED {
-            let b = ep.allocate(buf_len);
-            ep.submit(b);
-        }
-        Ok(BulkCounter { _iface: iface, ep })
+        let mut c = BulkCounter { _iface: iface, ep, buf_len, check: Check::default(), clear_halts: true, halted: false };
+        c.top_up();
+        c.check = c.fresh_check();
+        Ok(c)
     }
 
-    /// Discard whatever completed before now, then count bytes for `window`.
-    /// If `keep` is given, received bytes are appended to it.
-    pub fn measure(&mut self, window: Duration, mut keep: Option<&mut Vec<u8>>) -> Window {
-        let mut stale = 0;
-        while let Some(c) = self.ep.wait_next_complete(Duration::ZERO) {
-            stale += c.actual_len;
+    fn fresh_check(&self) -> Check {
+        let n = self.ep.pending();
+        Check { in_flight_start: n, in_flight_min: n, halted: self.halted, ..Check::default() }
+    }
+
+    /// Queue new transfers until [`Self::QUEUED`] are in flight.
+    fn top_up(&mut self) {
+        while !self.check.disconnected && self.ep.pending() < Self::QUEUED {
+            let b = self.ep.allocate(self.buf_len);
+            self.ep.submit(b);
+            self.check.submitted += 1;
+        }
+    }
+
+    /// Before a wait: retry the clear of a halt that a failed clear left in
+    /// place, then top up. Returns the bytes of transfers cancelled for it.
+    fn ready(&mut self) -> usize {
+        let n = if self.halted && self.clear_halts { self.clear_halt(None) } else { 0 };
+        self.top_up();
+        n
+    }
+
+    /// The check since the previous one was taken; a new span starts.
+    pub fn take_check(&mut self) -> Check {
+        self.top_up();
+        let mut c = std::mem::take(&mut self.check);
+        c.in_flight_end = self.ep.pending();
+        c.halted |= self.halted;
+        self.check = self.fresh_check();
+        c
+    }
+
+    /// Account one completion and resubmit its buffer; on a halt, clear
+    /// it. Returns the bytes received (the completion's, plus any held by
+    /// transfers cancelled for the clear).
+    fn take(&mut self, c: nusb::transfer::Completion, mut keep: Option<&mut Vec<u8>>, sizes: Option<&mut Vec<usize>>) -> usize {
+        self.check.completed += 1;
+        self.check.in_flight_min = self.check.in_flight_min.min(self.ep.pending());
+        let mut n = c.actual_len;
+        if let Some(k) = keep.as_deref_mut() {
+            k.extend_from_slice(&c.buffer[..n]);
+        }
+        if let Some(s) = sizes
+            && s.len() < Window::SIZES_KEPT
+        {
+            s.push(n);
+        }
+        let mut halted = false;
+        if let Err(e) = c.status {
+            self.check.note(e);
+            match e {
+                TransferError::Stall => {
+                    self.check.halts += 1;
+                    self.check.halted = true;
+                    self.halted = true;
+                    halted = true;
+                }
+                TransferError::Disconnected => self.check.disconnected = true,
+                _ => {}
+            }
+        }
+        if halted && self.clear_halts {
+            n += self.clear_halt(keep);
+        } else if !self.check.disconnected {
             let mut b = c.buffer;
             b.clear();
             self.ep.submit(b);
+            self.check.submitted += 1;
+        }
+        n
+    }
+
+    /// Cancel, clear the halt and queue again, whether or not one was seen.
+    pub fn force_clear_halt(&mut self) -> usize {
+        self.clear_halt(None)
+    }
+
+    /// Cancel what is queued, take every cancelled transfer (counted, bytes
+    /// kept), send ClearFeature(ENDPOINT_HALT), record its result, and
+    /// queue again.
+    fn clear_halt(&mut self, mut keep: Option<&mut Vec<u8>>) -> usize {
+        let mut n = 0;
+        self.ep.cancel_all();
+        let end = Instant::now() + Duration::from_secs(1);
+        while self.ep.pending() > 0 {
+            let now = Instant::now();
+            if now >= end {
+                break;
+            }
+            if let Some(c) = self.ep.wait_next_complete(end - now) {
+                self.check.completed += 1;
+                n += c.actual_len;
+                if let Some(k) = keep.as_deref_mut() {
+                    k.extend_from_slice(&c.buffer[..c.actual_len]);
+                }
+                if let Err(e) = c.status {
+                    self.check.note(e);
+                    match e {
+                        TransferError::Stall => {
+                            self.check.halts += 1;
+                            self.check.halted = true;
+                        }
+                        TransferError::Disconnected => self.check.disconnected = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        self.check.in_flight_min = self.check.in_flight_min.min(self.ep.pending());
+        let left = self.ep.pending();
+        let r = self.ep.clear_halt().wait();
+        let mut what = match r {
+            Ok(()) => {
+                self.halted = false;
+                "ok".to_string()
+            }
+            Err(e) => format!("error: {e}"),
+        };
+        if left > 0 {
+            what.push_str(&format!(" ({left} transfers still pending at the clear)"));
+        }
+        self.check.clears.push(what);
+        self.top_up();
+        n
+    }
+
+    /// Wait up to `timeout` for a completion; None when nothing completed
+    /// or nothing is in flight (after a disconnection), in which case the
+    /// wait is slept out so a window keeps its length.
+    fn next(&mut self, timeout: Duration) -> Option<nusb::transfer::Completion> {
+        if self.ep.pending() == 0 {
+            std::thread::sleep(timeout);
+            return None;
+        }
+        self.ep.wait_next_complete(timeout)
+    }
+
+    /// Discard whatever completed before now, then count bytes for `window`.
+    /// If `keep` is given, received bytes are appended to it. The window's
+    /// [`Check`] covers the span since the previous window ended.
+    pub fn measure(&mut self, window: Duration, mut keep: Option<&mut Vec<u8>>) -> Window {
+        let mut stale = self.ready();
+        while let Some(c) = self.next(Duration::ZERO) {
+            stale += self.take(c, None, None);
         }
         let start = Instant::now();
         let deadline = start + window;
         let mut bytes = 0;
         let mut completions = 0;
-        let mut errors = Vec::new();
         let mut sizes = Vec::new();
         loop {
             let now = Instant::now();
             if now >= deadline {
                 break;
             }
-            if let Some(c) = self.ep.wait_next_complete(deadline - now) {
+            if let Some(c) = self.next(deadline - now) {
                 completions += 1;
-                bytes += c.actual_len;
-                if sizes.len() < Window::SIZES_KEPT {
-                    sizes.push(c.actual_len);
-                }
-                if let Some(k) = keep.as_deref_mut() {
-                    k.extend_from_slice(&c.buffer[..c.actual_len]);
-                }
-                if let Err(e) = c.status {
-                    if errors.len() < 8 {
-                        errors.push(format!("{e:?}"));
-                    }
-                    if matches!(e, TransferError::Disconnected) {
-                        break;
-                    }
-                }
-                let mut b = c.buffer;
-                b.clear();
-                self.ep.submit(b);
+                bytes += self.take(c, keep.as_deref_mut(), Some(&mut sizes));
             }
         }
-        Window { bytes, elapsed: start.elapsed(), completions, errors, stale_bytes: stale, sizes }
+        let elapsed = start.elapsed();
+        let check = self.take_check();
+        Window { bytes, elapsed, completions, errors: check.error_list(), stale_bytes: stale, sizes, check }
     }
 
-    /// Take every transfer that has already completed, resubmit it, and
-    /// return the bytes it held (discarded).
+    /// Take every transfer that has already completed (counted in the
+    /// check, resubmitted) and return the bytes it held (discarded).
     pub fn drain(&mut self) -> usize {
-        let mut n = 0;
-        while let Some(c) = self.ep.wait_next_complete(Duration::ZERO) {
-            n += c.actual_len;
-            let mut b = c.buffer;
-            b.clear();
-            self.ep.submit(b);
+        let mut n = self.ready();
+        while let Some(c) = self.next(Duration::ZERO) {
+            n += self.take(c, None, None);
         }
         n
     }
 
     /// Count bytes from now until the first non-empty completion or
-    /// `deadline`: (latency of the first byte, bytes, errors). Completions
-    /// already waiting count, with latency zero.
-    pub fn first_byte(&mut self, deadline: Duration) -> (Option<Duration>, usize, Vec<String>) {
+    /// `deadline`. Completions already waiting count, with latency zero.
+    /// The check covers the span since the previous window ended.
+    pub fn first_byte(&mut self, deadline: Duration) -> FirstByte {
+        let mut bytes = self.ready();
         let start = Instant::now();
         let end = start + deadline;
-        let mut errors = Vec::new();
+        let mut latency = None;
         loop {
             let now = Instant::now();
             if now >= end {
-                return (None, 0, errors);
+                break;
             }
-            if let Some(c) = self.ep.wait_next_complete(end - now) {
-                let n = c.actual_len;
-                if let Err(e) = c.status
-                    && errors.len() < 4
-                {
-                    errors.push(format!("{e:?}"));
-                }
-                let mut b = c.buffer;
-                b.clear();
-                self.ep.submit(b);
+            if let Some(c) = self.next(end - now) {
+                let n = self.take(c, None, None);
+                bytes += n;
                 if n > 0 {
-                    return (Some(start.elapsed()), n, errors);
+                    latency = Some(start.elapsed());
+                    break;
                 }
             }
         }
+        FirstByte { latency, bytes, check: self.take_check() }
     }
 
     /// Cancel and drain every queued transfer.

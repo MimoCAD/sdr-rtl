@@ -204,14 +204,15 @@ pub const FIRST_BYTE: Duration = Duration::from_millis(200);
 pub const JUDGE: Duration = Duration::from_millis(200);
 const AFTER_RESTORE: Duration = Duration::from_millis(50);
 
-fn path() -> std::path::PathBuf {
-    crate::data_dir().join("step3-bytescan-restart.jsonl")
-}
+/// What the line's self-check fields mean, for the setup line.
+const CHECK_FIELDS: &str = "Line fields q / qj = [submitted, completed, errored, halts, fewest in flight, halted at any point 0/1]";
+
+const RECORD: &str = "step3-bytescan-restart.jsonl";
 
 /// (page, offset, value) of every candidate or skip line ("k":"c" / "s").
-fn done() -> HashSet<(u8, u8, u8)> {
+fn done(path: &std::path::Path) -> HashSet<(u8, u8, u8)> {
     let mut set = HashSet::new();
-    if let Ok(text) = std::fs::read_to_string(path()) {
+    if let Ok(text) = std::fs::read_to_string(path) {
         for line in text.lines() {
             if !line.starts_with("{\"k\":\"c\"") && !line.starts_with("{\"k\":\"s\"") {
                 continue;
@@ -230,6 +231,29 @@ fn capture_base(rtl: &Rtl) -> Result<Vec<(u8, u8, u8)>, String> {
         .iter()
         .map(|&(p, o)| rtl.demod_read8(p, o).map(|v| (p, o, v)).map_err(|e| format!("baseline read p{p} 0x{o:02X}: {e}")))
         .collect()
+}
+
+/// A window's bulk errors, halts and halt clears as events of the line;
+/// on a halt also USB_EPA_CTL (bit 4 is the chip's stall bit, Table 32).
+fn bulk_events(c: &usb::Check, which: &str, rtl: &Rtl, e: &mut Vec<String>) {
+    for k in c.error_list() {
+        e.push(format!("{which}bulk: {k}"));
+    }
+    for r in &c.clears {
+        e.push(format!("{which}bulk halt cleared: {r}"));
+    }
+    if c.halted && c.clears.iter().all(|r| !r.starts_with("ok")) {
+        e.push(format!("{which}bulk: endpoint halted and not cleared"));
+    }
+    if c.halts > 0 {
+        e.push(match rtl.usb_read32(USB_EPA_CTL) {
+            Ok(v) => format!("{which}USB_EPA_CTL after the clear 0x{v:08X}"),
+            Err(x) => format!("{which}USB_EPA_CTL after the clear: {x}"),
+        });
+    }
+    if c.in_flight_min == 0 && !c.disconnected {
+        e.push(format!("{which}bulk: no transfer in flight at some point"));
+    }
 }
 
 /// The restart sequence of [`ORDER`] up to and including the FIFO reset.
@@ -281,13 +305,15 @@ fn restart(rtl: &Rtl, base: &[(u8, u8, u8)], page: u8, off: u8, value: u8, e: &m
     ok
 }
 
-pub fn run(limit: Option<usize>) -> Result<(), String> {
+pub fn run(opts: &crate::bytescan::Opts) -> Result<(), String> {
     use crate::bytescan::PAGES;
+    let limit = opts.limit;
+    let path = opts.path(RECORD);
     usb::guard()?;
-    let done = done();
+    let done = done(&path);
     let total = PAGES.len() * 256 * 256;
-    let fresh_file = std::fs::metadata(path()).map(|m| m.len() == 0).unwrap_or(true);
-    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(path()).map_err(|e| e.to_string())?;
+    let fresh_file = std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
+    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
     let w = |out: &mut std::fs::File, j: J| writeln!(out, "{}", j.render()).map_err(|e| e.to_string());
     if fresh_file {
         let hdr = crate::header("3-bytescan-restart", "bulk IN bytes after writing one demodulator byte value, then the documented demodulator and FIFO restarts")
@@ -318,7 +344,7 @@ pub fn run(limit: Option<usize>) -> Result<(), String> {
             .with("streams_criterion", format!("the further {} ms window within {}% of 2 x {RATE_HZ} bytes/s", JUDGE.as_millis(), step3::TOLERANCE * 100.0))
             .with(
                 "line_legend",
-                "k: c candidate / s skip (the register's current value) / setup / recovery; p page; o offset; v value; orig the register's value before the candidate (all decimal); rst the restart sequence accepted and read back as intended; in the candidate read back in place after the restart; b bytes (first completion + the further window); lat ms from the end of the FIFO reset to the first byte (null = none within the deadline); bps the further window's bytes/s; s streams; e errors and events (absent when none); w wedged -> power cycle and re-baseline (next line k=recovery)",
+                "k: c candidate / s skip (the register's current value) / setup / recovery; p page; o offset; v value; orig the register's value before the candidate (all decimal); rst the restart sequence accepted and read back as intended; in the candidate read back in place after the restart; b bytes (first completion + the further window); lat ms from the end of the FIFO reset to the first byte (null = none within the deadline); bps the further window's bytes/s; s streams; d bytes completed between candidates, discarded before the restart (absent when 0); q the bulk detector's self-check from the previous candidate's last window to the end of the first-byte wait, qj the same for the further window: [transfers submitted, completed, completed with an error, halts (Stall completions, each cleared by ClearFeature ENDPOINT_HALT), fewest transfers in flight, endpoint halted at any point 0/1] (lines written before this field existed lack it); e errors and events (absent when none); w wedged -> power cycle and re-baseline (next line k=recovery)",
             )
             .with(
                 "procedure",
@@ -326,17 +352,17 @@ pub fn run(limit: Option<usize>) -> Result<(), String> {
             );
         w(&mut out, hdr)?;
     }
-    println!("bytescan --restart: {} of {} candidates already logged; limit {:?}", done.len(), total, limit);
+    println!("bytescan --restart: {} of {} candidates already logged in {}; limit {:?}", done.len(), total, path.display(), limit);
 
     let (mut rtl, mut bulk, setup) = step3::fresh_with_baseline(RATE_HZ, &[])?;
     let mut base = capture_base(&rtl)?;
-    w(&mut out, setup.with("k", "setup"))?;
+    w(&mut out, setup.with("k", "setup").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)))?;
     let start = Instant::now();
     let (mut tested, mut skipped, mut hits) = (0usize, 0usize, 0usize);
     'scan: for page in PAGES {
         for off in 0..=255u8 {
             for value in 0..=255u8 {
-                if done.contains(&(page, off, value)) {
+                if done.contains(&(page, off, value)) || opts.before_start(page, off, value) {
                     continue;
                 }
                 if limit.is_some_and(|n| tested >= n) {
@@ -360,16 +386,21 @@ pub fn run(limit: Option<usize>) -> Result<(), String> {
                 tested += 1;
                 let mut line = line.with("orig", orig);
                 if let Some(o) = orig {
-                    bulk.drain();
+                    let stale = bulk.drain();
                     let rst = restart(&rtl, &base, page, off, value, &mut e);
                     let back = rtl.demod_read8(page, off);
                     let inplace = back.as_ref().ok() == Some(&value);
-                    let (lat, b0, errs) = bulk.first_byte(FIRST_BYTE);
-                    e.extend(errs);
+                    let fb = bulk.first_byte(FIRST_BYTE);
+                    let (lat, b0) = (fb.latency, fb.bytes);
+                    bulk_events(&fb.check, "", &rtl, &mut e);
                     let mut bytes = b0;
                     let mut streams = false;
                     line.set("rst", rst);
                     line.set("in", inplace);
+                    if stale > 0 {
+                        line.set("d", stale);
+                    }
+                    line.set("q", fb.check.compact());
                     if !inplace {
                         e.push(match &back {
                             Ok(b) => format!("candidate read back {b}"),
@@ -381,7 +412,8 @@ pub fn run(limit: Option<usize>) -> Result<(), String> {
                         bytes += f.bytes + f.stale_bytes;
                         streams = step3::streams(f.rate(), RATE_HZ);
                         line.set("bps", f.rate().round());
-                        e.extend(f.errors.iter().cloned());
+                        line.set("qj", f.check.compact());
+                        bulk_events(&f.check, "judge window ", &rtl, &mut e);
                     }
                     line.set("b", bytes);
                     line.set("lat", lat.map(|d| (d.as_secs_f64() * 1e4).round() / 10.0));
@@ -393,6 +425,7 @@ pub fn run(limit: Option<usize>) -> Result<(), String> {
                     }
                     if b0 > 0 {
                         let a = bulk.measure(AFTER_RESTORE, None);
+                        bulk_events(&a.check, "after-restore window ", &rtl, &mut e);
                         if step3::streams(a.rate(), RATE_HZ) {
                             e.push("stream persisted after restore".into());
                             recover = true;
@@ -432,7 +465,7 @@ pub fn run(limit: Option<usize>) -> Result<(), String> {
                     rtl = r;
                     bulk = b;
                     base = capture_base(&rtl)?;
-                    w(&mut out, setup.with("k", "recovery").with("after", J::obj().with("p", page).with("o", off).with("v", value)))?;
+                    w(&mut out, setup.with("k", "recovery").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)).with("after", J::obj().with("p", page).with("o", off).with("v", value)))?;
                     continue;
                 }
                 w(&mut out, line)?;
@@ -441,7 +474,7 @@ pub fn run(limit: Option<usize>) -> Result<(), String> {
     }
     bulk.close();
     let secs = start.elapsed().as_secs_f64();
-    let remaining = total - done.len() - tested - skipped;
+    let remaining = total.saturating_sub(done.len() + tested + skipped);
     let per_s = tested as f64 / secs;
     println!(
         "bytescan --restart: tested {tested}, skipped {skipped}, streaming hits {hits}, in {secs:.1} s ({per_s:.2} tested/s); {remaining} candidates left (~{:.2} h at this rate)",

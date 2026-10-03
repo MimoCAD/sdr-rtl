@@ -22,8 +22,17 @@
 //!               0-2 (resumable; at most N new candidates per run)
 //!   bytescan --restart [--limit N]  the same, each candidate followed by
 //!               the documented demodulator and FIFO restarts
+//!   bytescan options: --out PATH writes (and resumes) PATH instead of the
+//!               record under derivation/data (a scratch run); --from P OFF
+//!               [VAL] starts at page P, offset OFF, value VAL (hex with
+//!               0x, else decimal)
+//!   --no-cycle  (any step) open the dongle as found instead of power-
+//!               cycling it first; the record says so. For runs under the
+//!               USB witness, which holds the analyzer that switches power
 //!   restart-probe  step 3: what each documented restart does to the
 //!               demodulator's registers (fixes the --restart order)
+//!   detector-check  step 3: the bulk detector's self-check across a
+//!               deliberately stalled endpoint (USB_EPA_CTL bit 4)
 //! ```
 
 mod bytescan;
@@ -38,9 +47,17 @@ mod usb;
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use json::J;
+
+static NO_CYCLE: AtomicBool = AtomicBool::new(false);
+
+/// True when `--no-cycle` was given: setups open the dongle as found.
+pub fn no_cycle() -> bool {
+    NO_CYCLE.load(Ordering::Relaxed)
+}
 
 pub fn data_dir() -> PathBuf {
     let p = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/derivation/data"));
@@ -92,7 +109,11 @@ pub fn write_record(name: &str, rec: &J) {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(i) = args.iter().position(|a| a == "--no-cycle") {
+        args.remove(i);
+        NO_CYCLE.store(true, Ordering::Relaxed);
+    }
     let result = match args.first().map(String::as_str) {
         Some("recovery") => step0::run(),
         Some("protocol") => step1::run(),
@@ -103,7 +124,8 @@ fn main() {
         Some("confirm") => step3::confirm(&args[1..]),
         Some("bytescan") => bytescan::run(&args[1..]),
         Some("restart-probe") => restart::probe(),
-        _ => Err("usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] | restart-probe".into()),
+        Some("detector-check") => step3::detector_check(),
+        _ => Err("usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | restart-probe | detector-check; any step: --no-cycle".into()),
     };
     if let Err(e) = result {
         eprintln!("harness: {e}");

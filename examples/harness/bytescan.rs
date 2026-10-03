@@ -21,7 +21,9 @@
 //! ~50 ms after the write is still caught by the follow-up.
 //!
 //! Resumable: candidates already in the file are skipped. `--limit N`
-//! stops after N new tested candidates.
+//! stops after N new tested candidates. `--out PATH` writes (and resumes)
+//! PATH instead of the record (a scratch run); `--from P OFF [VAL]` skips
+//! every candidate before page P, offset OFF (value VAL).
 
 use std::collections::HashSet;
 use std::io::Write as _;
@@ -29,15 +31,82 @@ use std::time::{Duration, Instant};
 
 use crate::json::{J, hex8};
 use crate::step3::{self, RATE_HZ};
-use crate::usb::BulkCounter;
+use crate::usb::{self, BulkCounter};
 
 pub const PAGES: [u8; 3] = [0, 1, 2];
 pub const WINDOW: Duration = Duration::from_millis(50);
 pub const FOLLOW_UP: Duration = Duration::from_millis(200);
 
-fn path() -> std::path::PathBuf {
-    crate::data_dir().join("step3-bytescan.jsonl")
+/// The command line of either byte scan.
+pub struct Opts {
+    pub restart: bool,
+    pub limit: Option<usize>,
+    /// A scratch file written instead of the record.
+    pub out: Option<std::path::PathBuf>,
+    /// The first (page, offset, value) tested; earlier candidates are not run.
+    pub from: Option<(u8, u8, u8)>,
 }
+
+impl Opts {
+    pub fn parse(args: &[String]) -> Result<Opts, String> {
+        const USAGE: &str = "usage: harness bytescan [--restart] [--limit N] [--out PATH] [--from PAGE OFFSET [VALUE]]";
+        let num = |s: Option<&String>| -> Result<u32, String> {
+            let s = s.ok_or(USAGE)?;
+            match s.strip_prefix("0x") {
+                Some(h) => u32::from_str_radix(h, 16),
+                None => s.parse(),
+            }
+            .map_err(|e| format!("{s}: {e}"))
+        };
+        let mut o = Opts { restart: false, limit: None, out: None, from: None };
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--restart" => o.restart = true,
+                "--limit" => {
+                    o.limit = Some(num(args.get(i + 1))? as usize);
+                    i += 1;
+                }
+                "--out" => {
+                    o.out = Some(args.get(i + 1).ok_or(USAGE)?.into());
+                    i += 1;
+                }
+                "--from" => {
+                    let p = num(args.get(i + 1))?;
+                    let off = num(args.get(i + 2))?;
+                    i += 2;
+                    let mut v = 0;
+                    if let Some(a) = args.get(i + 1).filter(|a| !a.starts_with("--")) {
+                        v = num(Some(a))?;
+                        i += 1;
+                    }
+                    if p > 255 || !PAGES.contains(&(p as u8)) || off > 255 || v > 255 {
+                        return Err(format!("--from {p} {off} {v}: page must be one of {PAGES:?}, offset and value 0..=255"));
+                    }
+                    o.from = Some((p as u8, off as u8, v as u8));
+                }
+                _ => return Err(USAGE.into()),
+            }
+            i += 1;
+        }
+        Ok(o)
+    }
+
+    /// The scratch file if given, else the record `name` under data/.
+    pub fn path(&self, name: &str) -> std::path::PathBuf {
+        self.out.clone().unwrap_or_else(|| crate::data_dir().join(name))
+    }
+
+    /// True for a candidate before `--from`.
+    pub fn before_start(&self, page: u8, off: u8, value: u8) -> bool {
+        self.from.is_some_and(|f| (page, off, value) < f)
+    }
+}
+
+const RECORD: &str = "step3-bytescan.jsonl";
+
+/// What the line's self-check fields mean, for the setup line.
+const CHECK_FIELDS: &str = "bulk_check = [submitted, completed, errored, halts, fewest in flight, halted at any point 0/1] from the previous window's end to this window's end; the follow-up and after-restore windows carry the full check object";
 
 /// An integer field `"k":N` of a JSONL line.
 pub fn field(line: &str, k: &str) -> Option<u32> {
@@ -47,9 +116,9 @@ pub fn field(line: &str, k: &str) -> Option<u32> {
 }
 
 /// (page, offset, value) of every candidate line (tested or skipped).
-fn done() -> HashSet<(u8, u8, u8)> {
+fn done(path: &std::path::Path) -> HashSet<(u8, u8, u8)> {
     let mut set = HashSet::new();
-    if let Ok(text) = std::fs::read_to_string(path()) {
+    if let Ok(text) = std::fs::read_to_string(path) {
         for line in text.lines() {
             if !line.contains("\"kind\":\"candidate\"") && !line.contains("\"kind\":\"skip\"") {
                 continue;
@@ -62,24 +131,18 @@ fn done() -> HashSet<(u8, u8, u8)> {
     set
 }
 
-fn parse_limit(args: &[String]) -> Result<Option<usize>, String> {
-    match args {
-        [] => Ok(None),
-        [flag, n] if flag == "--limit" => n.parse().map(Some).map_err(|e| format!("--limit {n}: {e}")),
-        _ => Err("usage: harness bytescan [--restart] [--limit N]".into()),
-    }
-}
-
 pub fn run(args: &[String]) -> Result<(), String> {
-    if args.first().map(String::as_str) == Some("--restart") {
-        return crate::restart::run(parse_limit(&args[1..])?);
+    let opts = Opts::parse(args)?;
+    if opts.restart {
+        return crate::restart::run(&opts);
     }
-    let limit = parse_limit(args)?;
+    let limit = opts.limit;
+    let path = opts.path(RECORD);
     crate::usb::guard()?;
-    let done = done();
+    let done = done(&path);
     let total = PAGES.len() * 256 * 256;
-    let fresh_file = std::fs::metadata(path()).map(|m| m.len() == 0).unwrap_or(true);
-    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(path()).map_err(|e| e.to_string())?;
+    let fresh_file = std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
+    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
     let w = |out: &mut std::fs::File, j: J| writeln!(out, "{}", j.render()).map_err(|e| e.to_string());
     if fresh_file {
         let hdr = crate::header("3-bytescan", "bulk IN bytes after writing one demodulator byte value on top of the baseline")
@@ -113,16 +176,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
             );
         w(&mut out, hdr)?;
     }
-    println!("bytescan: {} of {} candidates already logged; limit {:?}", done.len(), total, limit);
+    println!("bytescan: {} of {} candidates already logged in {}; limit {:?}", done.len(), total, path.display(), limit);
 
     let (mut rtl, mut bulk, setup) = step3::fresh_with_baseline(RATE_HZ, &[])?;
-    w(&mut out, setup.with("kind", "setup"))?;
+    w(&mut out, setup.with("kind", "setup").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)))?;
     let start = Instant::now();
     let (mut tested, mut skipped, mut hits) = (0usize, 0usize, 0usize);
     'scan: for page in PAGES {
         for off in 0..=255u8 {
             for value in 0..=255u8 {
-                if done.contains(&(page, off, value)) {
+                if done.contains(&(page, off, value)) || opts.before_start(page, off, value) {
                     continue;
                 }
                 if limit.is_some_and(|n| tested >= n) {
@@ -174,6 +237,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
                         if !win.errors.is_empty() {
                             line.set("transfer_errors", J::Arr(win.errors.iter().map(|e| J::from(e.as_str())).collect()));
                         }
+                        line.set("bulk_check", win.check.compact());
+                        if !win.check.clears.is_empty() {
+                            line.set("bulk_halt_clears", J::Arr(win.check.clears.iter().map(|c| J::from(c.as_str())).collect()));
+                        }
                         let mut streams = step3::streams(win.rate(), RATE_HZ);
                         let any = win.bytes > 0 || win.stale_bytes > 0;
                         if any {
@@ -190,6 +257,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                         if any {
                             let after = bulk.measure(WINDOW, None);
                             line.set("after_restore_bytes", after.bytes + after.stale_bytes);
+                            line.set("after_restore_bulk_check", after.check.record());
                             if step3::streams(after.rate(), RATE_HZ) {
                                 line.set("stream_persisted_after_restore", true);
                                 recover = true;
@@ -221,7 +289,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     drop(rtl);
                     let (r, b, setup) = step3::fresh_with_baseline(RATE_HZ, &[])?;
                     let after = J::obj().with("page", page).with("offset", hex8(off)).with("value", hex8(value));
-                    w(&mut out, setup.with("kind", "recovery").with("after_candidate", after))?;
+                    w(&mut out, setup.with("kind", "recovery").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)).with("after_candidate", after))?;
                     rtl = r;
                     bulk = b;
                     continue;
@@ -232,7 +300,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     bulk.close();
     let secs = start.elapsed().as_secs_f64();
-    let remaining = total - done.len() - tested - skipped;
+    let remaining = total.saturating_sub(done.len() + tested + skipped);
     let per_s = tested as f64 / secs;
     println!(
         "bytescan: tested {tested}, skipped {skipped}, streaming hits {hits}, in {secs:.1} s ({per_s:.2} tested/s); {remaining} candidates left (~{:.2} h at this rate)",
