@@ -2,11 +2,12 @@
 
 Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
-Status: step 0 failed (the analyzer's power-control interface 1d50:615b
-is absent; only 1209:000a enumerates), so no register has been written.
-1A/1B ran read-only.
+Status: recovery proven; 1A/1B ran read-only; 1C onward not yet run.
 
-## Step 0 — recovery: NOT PROVEN — `data/step0-recovery.json` — `harness recovery`
+## Step 0 — recovery: PROVEN — `data/step0-recovery.json` — `harness recovery`
+
+3/3 power cycles: the dongle is gone within ~60 ms of power-off and
+enumerates again within ~530 ms of power-on (now as 0bda:2832).
 
 ## Step 1A — system/USB: wValue = base+offset, little-endian — `data/step1-readonly-sys-usb-encoding.json` — `harness protocol-readonly`
 
