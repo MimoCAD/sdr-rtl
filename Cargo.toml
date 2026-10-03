@@ -1,0 +1,23 @@
+[package]
+name = "sdr-rtl"
+version = "0.1.0"
+edition = "2024"
+description = "A pure-Rust RTL-SDR driver over nusb (RTL2832U + R820T/R820T2/R828D): tuning, per-stage gain, EEPROM, no libusb, no librtlsdr"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MimoCAD/sdr-rtl"
+readme = "README.md"
+keywords = ["sdr", "rtl-sdr", "rtl2832u", "radio", "usb"]
+categories = ["hardware-support"]
+
+[lib]
+doctest = false
+
+# An RTL-SDR driver (RTL2832U + R820T2/R828D) and its EEPROM
+# reader/writer. No libusb, no librtlsdr: this crate → nusb → the OS.
+[dependencies]
+sdr-core = { version = "0.1", features = ["usb"] }
+# Pure-Rust userspace USB (IOKit/usbfs directly, no libusb).
+# Runtime-agnostic like everything else here.
+nusb = "0.2"
+
+[dev-dependencies]
