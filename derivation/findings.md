@@ -172,7 +172,7 @@ then 1 s; record overwritten by the run above) also read 0 B everywhere.
 So the scan's 45 blocks came from the chip's state at that point in the
 scan (1170 candidates since the last power cycle), not from bit 6 alone.
 
-## Step 3 — byte scan (in progress) — `data/step3-bytescan.jsonl` — `harness bytescan [--limit N]`
+## Step 3 — byte scan: NO single byte streams — `data/step3-bytescan.jsonl` — `harness bytescan [--limit N]`
 
 Every value of every register on pages 0–2 (3 × 256 × 256 = 196608,
 minus each register's current value, logged as skips), page / offset /
@@ -192,3 +192,52 @@ Seen so far: page 0 0x07 (holds 0x3C) values 0xC0–0xCB each released a
 one-shot burst of 5–14 whole 188-byte blocks (940–2632 B, every count
 ≡ 0 mod 188), mostly before the window opened (stale); the 200 ms
 follow-up read 0 every time. 0xCC–0xD7: nothing.
+
+Complete: 196608 candidates covered (195840 tested + 768 skipped as the
+register's current value), 65280 tested per page, in four chunks
+(9.35–12.15 tested/s). **0 streams.** Any bytes at all: page 0 0x07
+(2 candidates, the one-shot 188-byte bursts above) and page 1 0x92
+(4 candidates). 320 candidates logged a write error (the write stalled;
+the scan recovered and continued). From the documented baseline, raw IQ
+is not one register value away.
+
+
+## Step 3 — restart probe — `data/step3-restart-probe.json` — `harness restart-probe`
+
+From a fresh baseline, test register page 1 0x0B (rf_agc_max, reset
+0x7F) written 0x7E:
+
+| action | effect on the demodulator's registers |
+|---|---|
+| DEMOD_CTL bit 5 pulse (0xE8 → 0xC8 → 0xE8) | every watched register back to its power-on value: test 0x7E → 0x7F, AD_EN 0xCD → 0x0D, pset_iffreq 0 → `35 D7 5D`, rsamp `FC 00 00 00` → `F3 26 66 64`; IIC_repeat, opt_adc_iq, Spec_inv, en_bbin unchanged (already at reset) |
+| demodulator access while held in reset | reads and writes stall |
+| USB_EPA_CTL bit 9 pulse (0x200 then 0) | no watched register changes |
+
+So the demodulator reset discards a candidate written before it, and
+nothing can be written during it. Restart order used:
+**demodulator reset pulse → the baseline's 9 demodulator bytes rewritten
+→ candidate written → FIFO reset pulse → candidate read back → measure.**
+Every candidate runs from the same state (power-on values + baseline +
+the candidate alone), with no history from earlier candidates.
+
+## Step 3 — byte scan with restart (in progress) — `data/step3-bytescan-restart.jsonl` — `harness bytescan --restart [--limit N]`
+
+Same candidate space and order as the plain byte scan (pages 0–2 ×
+offsets × values ascending, current value logged as a skip, pages 3/4
+excluded). After the restart: first-byte deadline 200 ms; on any bytes a
+further 200 ms window, streaming = within 20 % of 4.8 MB/s. Compact
+lines (legend in the header): ~89 bytes per candidate, ~17.5 MB for the
+whole space.
+
+Smoke test, `--restart --limit 2000`: page 0 0x00 value 0x01 → 0x07 value
+0xD7, 2000 tested + 8 skipped in 545.2 s = **3.67 tested/s** (272 ms
+each: the 200 ms deadline + ~72 ms of control transfers). Restart
+accepted and the candidate in place for 2000/2000; 0 streams, 0 wedges,
+0 errors. Projected rest: 194600 candidates ≈ **14.7 h** (plus power
+cycles).
+
+Seen: page 0 0x07 (holds 0x3C) values 0xC0–0xD7 — all 24 tested so far
+— each give a one-shot burst of 5–16 whole 188-byte blocks (940–3008 B)
+within 0.1 ms of the FIFO reset, then 0 B/s in the 200 ms window. In the
+plain scan only 0xC0–0xCB did; with the restart every value from 0xC0
+does.

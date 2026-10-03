@@ -40,7 +40,7 @@ fn path() -> std::path::PathBuf {
 }
 
 /// An integer field `"k":N` of a JSONL line.
-fn field(line: &str, k: &str) -> Option<u32> {
+pub fn field(line: &str, k: &str) -> Option<u32> {
     let key = format!("\"{k}\":");
     let i = line.find(&key)? + key.len();
     line[i..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
@@ -66,11 +66,14 @@ fn parse_limit(args: &[String]) -> Result<Option<usize>, String> {
     match args {
         [] => Ok(None),
         [flag, n] if flag == "--limit" => n.parse().map(Some).map_err(|e| format!("--limit {n}: {e}")),
-        _ => Err("usage: harness bytescan [--limit N]".into()),
+        _ => Err("usage: harness bytescan [--restart] [--limit N]".into()),
     }
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
+    if args.first().map(String::as_str) == Some("--restart") {
+        return crate::restart::run(parse_limit(&args[1..])?);
+    }
     let limit = parse_limit(args)?;
     crate::usb::guard()?;
     let done = done();

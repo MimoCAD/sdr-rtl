@@ -20,11 +20,16 @@
 //!   confirm P O B   step 3: confirm a scan hit (page, offset, bit)
 //!   bytescan [--limit N]  step 3: every byte value of demodulator pages
 //!               0-2 (resumable; at most N new candidates per run)
+//!   bytescan --restart [--limit N]  the same, each candidate followed by
+//!               the documented demodulator and FIFO restarts
+//!   restart-probe  step 3: what each documented restart does to the
+//!               demodulator's registers (fixes the --restart order)
 //! ```
 
 mod bytescan;
 mod json;
 mod regs;
+mod restart;
 mod step0;
 mod step1;
 mod step2;
@@ -97,7 +102,8 @@ fn main() {
         Some("scan") => step3::scan(),
         Some("confirm") => step3::confirm(&args[1..]),
         Some("bytescan") => bytescan::run(&args[1..]),
-        _ => Err("usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--limit N]".into()),
+        Some("restart-probe") => restart::probe(),
+        _ => Err("usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] | restart-probe".into()),
     };
     if let Err(e) = result {
         eprintln!("harness: {e}");

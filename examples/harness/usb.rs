@@ -380,6 +380,48 @@ impl BulkCounter {
         Window { bytes, elapsed: start.elapsed(), completions, errors, stale_bytes: stale, sizes }
     }
 
+    /// Take every transfer that has already completed, resubmit it, and
+    /// return the bytes it held (discarded).
+    pub fn drain(&mut self) -> usize {
+        let mut n = 0;
+        while let Some(c) = self.ep.wait_next_complete(Duration::ZERO) {
+            n += c.actual_len;
+            let mut b = c.buffer;
+            b.clear();
+            self.ep.submit(b);
+        }
+        n
+    }
+
+    /// Count bytes from now until the first non-empty completion or
+    /// `deadline`: (latency of the first byte, bytes, errors). Completions
+    /// already waiting count, with latency zero.
+    pub fn first_byte(&mut self, deadline: Duration) -> (Option<Duration>, usize, Vec<String>) {
+        let start = Instant::now();
+        let end = start + deadline;
+        let mut errors = Vec::new();
+        loop {
+            let now = Instant::now();
+            if now >= end {
+                return (None, 0, errors);
+            }
+            if let Some(c) = self.ep.wait_next_complete(end - now) {
+                let n = c.actual_len;
+                if let Err(e) = c.status
+                    && errors.len() < 4
+                {
+                    errors.push(format!("{e:?}"));
+                }
+                let mut b = c.buffer;
+                b.clear();
+                self.ep.submit(b);
+                if n > 0 {
+                    return (Some(start.elapsed()), n, errors);
+                }
+            }
+        }
+    }
+
     /// Cancel and drain every queued transfer.
     pub fn close(mut self) {
         self.ep.cancel_all();
