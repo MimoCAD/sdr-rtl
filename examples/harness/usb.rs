@@ -667,17 +667,33 @@ impl BulkCounter {
     }
 }
 
-/// TARGET-A power through the analyzer's own tool.
+/// TARGET-A power through the analyzer's own tool. If the analyzer's
+/// control pipe has stopped answering (seen once after ~2,000 power
+/// cycles: it still enumerates, but every state write fails with
+/// NotResponding), the analyzer itself is port-reset and the command
+/// retried once.
 pub fn vbus(on: bool) -> Result<String, String> {
+    match analyzer_command(&["vbus", if on { "on" } else { "off" }]) {
+        Ok(text) => Ok(text),
+        Err(first) => {
+            let reset = analyzer_command(&["reset"]).unwrap_or_else(|e| e);
+            std::thread::sleep(Duration::from_secs(4));
+            analyzer_command(&["vbus", if on { "on" } else { "off" }])
+                .map(|text| format!("{text} (after analyzer reset: {reset}; first attempt: {first})"))
+        }
+    }
+}
+
+fn analyzer_command(args: &[&str]) -> Result<String, String> {
     let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/Cargo.toml");
     let out = Command::new("cargo")
-        .args(["run", "--quiet", "--manifest-path", manifest, "--release", "--bin", "cynthion-witness", "--", "vbus"])
-        .arg(if on { "on" } else { "off" })
+        .args(["run", "--quiet", "--manifest-path", manifest, "--release", "--bin", "cynthion-witness", "--"])
+        .args(args)
         .output()
         .map_err(|e| format!("spawn cargo: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() {
-        return Err(format!("vbus {}: {} {}", on, text, String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!("{}: {} {}", args.join(" "), text, String::from_utf8_lossy(&out.stderr).trim()));
     }
     Ok(text)
 }
