@@ -1,0 +1,16 @@
+[package]
+name = "sdr-rtl-derived"
+version = "0.1.0"
+edition = "2024"
+description = "An RTL2832U + R820T-family receiver driver written from the vendor documents and the bench records under ../derivation"
+license = "MIT OR Apache-2.0"
+
+[lib]
+doctest = false
+
+# Its own root: the package is built, tested and linted on its own.
+[workspace]
+
+[dependencies]
+sdr-core = { path = "../../core", features = ["usb"] }
+nusb = "0.2"
