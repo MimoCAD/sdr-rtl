@@ -2,7 +2,7 @@
 
 Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
-Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**; confirm of p1 0x92 bit 6 reads 0 B alone; the plain byte scan over pages 0–2 is complete (**no single byte streams**); the byte scan with restart is paused at 28976 of 196608 tested (through page 0 0x71 value 0xA1), 0 streams, wedges/errors only at page 0 0x10 and 0x20 (resume: `harness bytescan --restart --limit 15000`, repeated). The complete plain byte-scan record is stored gzip-compressed (`data/step3-bytescan.jsonl.gz`, 52 MB raw); `gunzip -k` it before re-running the plain scan. The bulk detector was checked on the wire (below): it polled endpoint 0x81 without a gap; a halted endpoint would have blinded it silently, which it now detects, clears and records.
+Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**; confirm of p1 0x92 bit 6 reads 0 B alone; the plain byte scan over pages 0–2 is complete (**no single byte streams**); the byte scan with restart is paused at 28976 of 196608 tested (through page 0 0x71 value 0xA1), 0 streams, wedges/errors only at page 0 0x10 and 0x20 (resume: `harness bytescan --restart --limit 15000`, repeated). The complete plain byte-scan record is stored gzip-compressed (`data/step3-bytescan.jsonl.gz`, 52 MB raw); `gunzip -k` it before re-running the plain scan. The bulk detector was checked on the wire (below): it polled endpoint 0x81 without a gap; a halted endpoint would have blinded it silently, which it now detects, clears and records. Block scan (2026-10-08, `harness blockscan --block sys|usb|p3|p4 --limit N`): the single-write spaces the byte scans had not covered — the system block 0x3000–0x30FF, the USB block 0x2000–0x21FF, demodulator pages 3 and 4 — are declared and smoke-tested, 300 candidates each, **0 streams**; the chunks are pending (section below).
 
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
 Results: the demodulator is clocked from the tuner's clock output (4a);
@@ -619,6 +619,64 @@ plain scan only 0xC0–0xCB did; with the restart every value from 0xC0
 does.
 
 
+## Step 3 — block scan: the system block, the USB block, pages 3 and 4 (smoke-tested, chunks pending) — `data/step3-blockscan-{sys,usb,p3,p4}.jsonl` — `harness blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]]`
+
+Every byte value at every address of the register spaces no single-write
+scan had covered, plain method (no restart, as the plain byte scan), one
+record per block, each resumable by (offset, value), offset then value
+ascending, the address's current value logged as a skip. Per candidate:
+read the original; write; read back (`in`, with `rb` when it differs — a
+register that does not take the byte is still measured); 50 ms window;
+200 ms follow-up on any byte; restore and verify; 50 ms after-restore
+window on any byte; chip answering; the baseline re-checked (the
+demodulator items plus USB_SYSCTL DMA, USB_EPA_CFG, USB_EPA_CTL,
+USB_EPA_MAXPKT), reapplied if disturbed, power cycle if it does not
+hold. Windows and the streams criterion are the plain byte scan's. Every
+line carries the detector's self-check (`q`, `qf`, `qa`).
+
+The spaces and their bounds, from the documented maps (each record's
+header carries the full statement):
+
+| block | space | bound, and what lies outside |
+|---|---|---|
+| `sys` | request block 2, wValue 0x3000 + offset, offsets 0x00–0xFF: 65,536 | Table 14 (pp. 27–28) maps 0x0000–0x000C and the I²C master 0x0040–0x0053; 0x00–0xFF covers both and the gaps 0x0D–0x3F, 0x54–0xFF. **Deferred**: the IrDA registers of the same table (IR_RX_BUFF 0xFC00–0xFC7F, a 128-byte buffer; IR_RX_IE … IR_RESUME_MASK_T_LEN 0xFD00–0xFD19) — 0x3000 + 0xFC00 does not fit a 16-bit wValue, Table 28 names a separate IR request block (5) with no base given, and it is an infrared receiver's buffer and control: a larger, separately addressed space to declare on its own if this one is empty |
+| `usb` | request block 1, wValue 0x2000 + offset, offsets 0x000–0x1FF: 131,072 | Table 29 (p. 38): USB_SYSCTL 0x0000, USB_EPA_CFG 0x0144, USB_EPA_CTL 0x0148, USB_EPA_MAXPKT 0x0158, USB_EPA_FIFO_CFG 0x0160, reserved 0x0004–0x0140, 0x014C–0x0154, 0x015C, 0x0164–0x0FFF; the bound covers every named register, the gaps among them and 0x0164–0x01FF; outside lies only the reserved 0x0200–0x0FFF (3584 bytes) |
+| `p3` | demodulator page 3, offsets 0x00–0xFF: 65,536 | the readback page (Tables 2, 9–12, all read-only); the bit scan's 60 live offsets listed in the header |
+| `p4` | demodulator page 4, offsets 0x00–0xFF: 65,536 | undocumented; the bit scan's page-0-like offsets (0x08, 0x10, 0x20, 0xA7) and the read comparison (106/256 equal at bit 0; non-zero only at 6 offsets) in the header; covered whole regardless |
+
+USB and system registers are 32-bit little-endian words (step 1A/1D);
+each candidate is one byte with wLength 1 at one address, and whether the
+chip takes a one-byte write into a 32-bit register is what `in` / `rb`
+record. Declared hazards (headers): DEMOD_CTL bit 5 / bit 7, GPO bit 3
+(tuner power) and bits 1/5 (clock latches), I2CMCR bit 30 "Command
+Start" with I2CMFR as its FIFO byte (Tables 23, 26: a candidate at
+0x44–0x53 can start an I²C transaction on the bus that carries the tuner,
+the demodulator's slave and the configuration EEPROM); USB_SYSCTL bit 10
+SIE reset, USB_EPA_CFG, USB_EPA_CTL bit 4 (a halt the detector clears).
+
+Smoke tests, `--limit 300` each (offsets 0x00 whole and 0x01 to value
+0x2D), 2026-10-08:
+
+| block | tested/s | streams | wedges | what the first two offsets did |
+|---|---|---|---|---|
+| `sys` | 7.07 (42.4 s) | 0 | 0 | DEMOD_CTL (0x00, holds 0xE8): bit 2 never reads back (128 values `rb` = v with bit 2 clear), 128 values with bit 5 clear reset the demodulator (AD_EN and rsamp_ratio back to power-on; baseline reapplied, held every time); GPO (0x01, 0x10): all 45 values read back, nothing else |
+| `usb` | 1.90 (158.0 s) | 0 | **22** | USB_SYSCTL byte 0 (0x00, holds 0x01): only 7 of 255 values read back (values with bit 1 set read 0; others keep bits 0 and 2), and the restore of 0x01 read 0 for 128 values until the baseline reapply set DMA again; byte 1 (0x01, holds 0): no value reads back, and every value with bit 2 set — bit 10, the SIE reset — ends the session: "read back: Cancelled, restore: Stall", chip gone, power cycle (22 cycles, 59–64 ms to disappear, 499–567 ms to return; one needed the 3 s retry) |
+| `p3` | 10.91 (27.5 s) | 0 | 0 | 0x00 (holds 0x03) takes every value; 0x01 (holds 0x77) takes none |
+| `p4` | 10.90 (27.5 s) | 0 | 0 | 0x00 (holds 0x04) takes every value; 0x01 (holds 0x02) takes none |
+
+0 bytes on the bulk endpoint in all 1200 candidates; every `q` is
+[submitted, completed, 0, 0, ≥ 1 in flight, 0] — no error, no halt, the
+queue never empty. Lines are ~78 bytes (demodulator pages) to ~140 bytes
+(system block, with its events); projected records ≈ 5 MB (p3, p4),
+9 MB (sys), 16 MB (usb, the recovery lines included).
+
+Projection per block, from the plain rate (~11 tested/s) with the wedge
+cost (~6 s per power cycle) counted per register, not from the chunk's
+average: `p3`, `p4` ≈ 1.7 h each; `sys` ≈ 1.7 h plus reapplies at
+whatever else resets the demodulator; `usb` ≈ 3.3 h plus 106 more SIE
+resets at offset 0x01 (~11 min) plus whatever USB_EPA_CFG / USB_EPA_CTL
+cost. Resume with the same command; `--limit` bounds a chunk.
+
 ## Step 3 — the bulk detector on the wire — `harness detector-check`, `cynthion-witness watch S --ep 1`
 
 The alarm: `data/step3-witness-restart-scan.log` (30 s during the restart
@@ -699,6 +757,7 @@ session received bytes (a halted pipe delivers none until re-enumeration):
 | step3-bytescan.jsonl (plain byte scan) | 195,840 | 325 | 42,605 (21.8 %) | 153,235 (78.2 %; longest 45,000) | same |
 | step3-bytescan-restart.jsonl (stopped) | 5,097 | 3 | 2,040 (40.0 %) | 3,057 (60.0 %; longest 1,597) | same; lines appended from now on carry `q` |
 | step3-witness-restart-scan.log | — | — | — | — | watched EP 0; **not evidence about EP 0x81** |
+| step3-blockscan-{sys,usb,p3,p4}.jsonl (smoke, 300 each) | 1,200 | 1 / 23 / 1 / 1 | — | none needed: written with the new detector, every line's `q` shows 0 halts and ≥ 1 transfer in flight | **valid** |
 
 The windows themselves (50 ms + 200 ms follow-up; 200 ms first-byte +
 200 ms judge) were polled throughout: the old detector and the new one

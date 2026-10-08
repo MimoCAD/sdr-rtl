@@ -97,6 +97,20 @@ provenance rules; this file is the working method behind them.
   order the steps accordingly.
 - **Run long scans in chunks** (`--limit N`), under a time limit, so an
   interrupted run loses at most one candidate.
+- **Bound every declared space from the documented map, in the header.**
+  Say which documented registers the bound covers, what lies outside it
+  and why that is deferred (ours: the IrDA registers sit at 0xFC00 in the
+  system table, beyond a 16-bit wValue's reach through base 0x3000 and
+  named as a separate request block — a space of its own, declared later
+  if this one is empty).
+- **A read-back that differs from the write is data.** Record the value
+  read back; a register that will not take the byte is still measured,
+  because the write may have acted before it was undone.
+- **Budget wedges per register, not from a chunk's average.** A
+  documented bit that resets the interface (the USB SIE reset) costs a
+  power cycle for every value that sets it — 128 of 255 at that byte,
+  ~6 s each — so the first chunk's rate says nothing about the rest.
+  Project from the plain rate plus the wedge count per offset.
 
 ## 6. Measurements must be able to see
 

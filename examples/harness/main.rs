@@ -29,6 +29,11 @@
 //!   --no-cycle  (any step) open the dongle as found instead of power-
 //!               cycling it first; the record says so. For runs under the
 //!               USB witness, which holds the analyzer that switches power
+//!   blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]]
+//!               step 3: every byte value at every address of the system
+//!               block (0x3000-0x30FF), the USB block (0x2000-0x21FF) or
+//!               demodulator page 3 / 4, plain method, one record per
+//!               block (resumable; at most N new candidates per run)
 //!   restart-probe  step 3: what each documented restart does to the
 //!               demodulator's registers (fixes the --restart order)
 //!   detector-check  step 3: the bulk detector's self-check across a
@@ -60,6 +65,7 @@
 //!               --if-step HZ --if-max HZ --snapshots N --limit N
 //! ```
 
+mod blockscan;
 mod bytescan;
 mod json;
 mod meter;
@@ -169,6 +175,7 @@ fn main() {
         Some("scan") => step3::scan(),
         Some("confirm") => step3::confirm(&args[1..]),
         Some("bytescan") => bytescan::run(&args[1..]),
+        Some("blockscan") => blockscan::run(&args[1..]),
         Some("restart-probe") => restart::probe(),
         Some("detector-check") => step3::detector_check(),
         Some("clkout-check") => step4::clkout_check(&args[1..]),
@@ -181,7 +188,7 @@ fn main() {
         Some("filter") => step4::filter(&args[1..]),
         Some("if-choice") => step4::if_choice(&args[1..]),
         _ => Err(format!(
-            "usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
+            "usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
             step4::USAGE
         )),
     };

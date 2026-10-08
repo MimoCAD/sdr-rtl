@@ -235,7 +235,7 @@ fn capture_base(rtl: &Rtl) -> Result<Vec<(u8, u8, u8)>, String> {
 
 /// A window's bulk errors, halts and halt clears as events of the line;
 /// on a halt also USB_EPA_CTL (bit 4 is the chip's stall bit, Table 32).
-fn bulk_events(c: &usb::Check, which: &str, rtl: &Rtl, e: &mut Vec<String>) {
+pub fn bulk_events(c: &usb::Check, which: &str, rtl: &Rtl, e: &mut Vec<String>) {
     for k in c.error_list() {
         e.push(format!("{which}bulk: {k}"));
     }

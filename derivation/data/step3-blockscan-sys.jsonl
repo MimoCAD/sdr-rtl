@@ -1,0 +1,304 @@
+{"step":"3-blockscan-sys","measured":"bulk IN bytes after writing one byte value at one address of a register space the byte scans had not covered, on top of the baseline","harness":{"crates_rtl_head":"387a74c","harness_uncommitted":true},"unix_time":1791428193,"bench":"RTL2832U + R820T-family tuner, 28.8 MHz crystal, behind a USB analyzer with switchable TARGET-A power; no signal source, antenna input sees noise only","k":"header","block":"sys","candidate_space":"system block (request block 2, Table 28), wValue = 0x3000 + offset (step 1A): offset 0x00..=0xFF (wValue 0x3000..=0x30FF) x value 0x00..=0xFF, except the value the address holds when its candidate comes up (logged as kind s); iterated offset, value in ascending order with no reordering; 65536 candidates","bound":"[RTL2832U] Table 14 (p. 27-28) maps the system block at 0x0000-0x000C (DEMOD_CTL, GPO, GPI, GPOE, GPD, SYSINTE, SYSINTS, GP_CFG0, GP_CFG1, SYSINTE_1, SYSINTS_1, DEMOD_CTL_1, IR_SUSPEND) and the I2C master at 0x0040-0x0053 (I2CCR, I2CMCR, I2CMSTR, I2CMSR, I2CMFR; Tables 22-26); 0x00-0xFF covers both, the gap 0x0D-0x3F between them and 0x54-0xFF after them, the room an 8051 system's unmapped registers would occupy. Deferred: the IrDA registers of the same table, IR_RX_BUFF 0xFC00-0xFC7F (a 128-byte receive buffer) and IR_RX_IE..IR_RESUME_MASK_T_LEN 0xFD00-0xFD19 (26 control registers): 0x3000 + 0xFC00 does not fit a 16-bit wValue, Table 28 names a separate request block (5, IR) and gives no base for it, and they are an infrared receiver's buffer and control, a larger and separately addressed space to be declared on its own if this one is empty","byte_addressing":"USB and system registers are 32-bit little-endian words (step 1A, data/step1-sys-usb-encoding.json; step 1D, data/step1-writes.json); byte reads inside them work (step 1A); each candidate is one byte written with wLength 1 at one address, and whether the chip takes a one-byte write into a 32-bit register is what the read-back (in / rb) records; demodulator pages are byte registers","already_known":"step 1A (data/step1-sys-usb-encoding.json): power-on values DEMOD_CTL 0x20, GPO 0x18, GPOE 0x19, GPD 0x06, GP_CFG0 0x96, GP_CFG1 0x55, I2CCR 0x17, I2CMCR 0x02000028, I2CMSTR 0x00930910; the baseline writes DEMOD_CTL 0xE8 and GPO 0x10 (data/step3-baseline.json). Step 2: GPIO3 does not switch the tuner's supply on this board; step 4a: the demodulator is clocked from the tuner's clock output","hazards":"DEMOD_CTL (0x00): values with bit 5 clear hold the demodulator in reset (its registers return to power-on values; the baseline check reapplies after the restore), bit 7 clear stops its PLL, bits 6/3 the ADCs (Table 15). GPO (0x01): bit 3 is the tuner power pin, bits 1 and 5 the clock-select latches (Tables 16-19). I2CMCR (0x44-0x47): bit 30 'Command Start' begins an I2C transaction with I2CMFR (0x50) as its FIFO byte (Tables 23, 26) on the bus that carries the tuner, the demodulator's own slave and the configuration EEPROM (Fig. 5, Fig. 9; step 2's address sweep); the documents do not say what a one-byte transaction started with arbitrary length and address bits does to those devices. A chip that stops answering is power-cycled","method":"plain, as data/step3-bytescan.jsonl: the value is written into the running chip with no restart between candidates (METHODS.md section 5: every declared space covered once before any is repeated with a variant)","settings_held_fixed":"documented-only baseline at 2400000 Hz; 4 x 16384 byte bulk transfers queued; window 50 ms right after the read-back, then a 200 ms follow-up window if any byte arrived, then a 50 ms window after the restore","window_justification":"the plain byte scan's (data/step3-bytescan.jsonl header): 4.8 MB/s fills a 16 KiB transfer every 3.4 ms, so 50 ms expects ~14.6 transfers (one-transfer quantisation 6.8 % < 20 % tolerance); any byte triggers the 200 ms follow-up, so a stream that starts up to ~50 ms after the write is still judged","streams_criterion":"within 20% of 2 x 2400000 bytes/s in the window or the follow-up","line_legend":"k: c candidate / s skip (the address's current value) / setup / recovery; o offset in the block (decimal); v value; orig the byte read before the write (null = the read failed); in the read-back after the write equals v; rb the read-back when it differs (absent when in); d bytes completed between candidates, discarded before the write (absent when 0); b bytes from the write to the end of the last window (window + follow-up); bps the follow-up window's bytes/s (absent without bytes); s streams; q the bulk detector's self-check from the previous candidate's last window to the end of the window, qf the same for the follow-up, qa for the after-restore window: [transfers submitted, completed, completed with an error, halts (Stall completions, each cleared by ClearFeature ENDPOINT_HALT), fewest transfers in flight, endpoint halted at any point 0/1]; e errors and events (absent when none); w wedged -> power cycle and re-baseline (next line k=recovery)","procedure":"read the byte (skip if equal); discard completed transfers; write the value; read it back; window; on bytes the follow-up; restore the original and verify by read-back; on bytes the after-restore window; chip answering?; baseline re-checked (DEMOD_CTL, AD_EN, en_bbin, rsamp_ratio, USB_SYSCTL DMA, USB_EPA_CFG, USB_EPA_CTL, USB_EPA_MAXPKT): reapplied if disturbed, power cycle if it does not hold; a chip that stops answering or keeps streaming after the restore is power-cycled and re-baselined; the scan does not stop on a hit"}
+{"power_cycle":{"devices_before":1,"vbus_off_reply":"TARGET A vbus off (discharging)","disappeared_after_ms":65,"off_time_ms":500,"vbus_on_reply":"TARGET A vbus on","reappeared_after_ms":498,"devices_after_settle":1},"baseline_writes":[{"write":"DEMOD_CTL |= PLL|ADC_I|ADC_Q|reset-release (Table 15)","result":{"before":"0x20","after":"0xE8"},"item":"DemodCtl"},{"write":"GPIO3: GPD[3]=0 output, GPOE[3]=1, GPO[3]=0 power on (Tables 16-19)","result":{"GPD":{"before":"0x06","after":"0x06"},"GPOE":{"before":"0x19","after":"0x19"},"GPO":{"before":"0x18","after":"0x10"}},"item":"TunerPower"},{"write":"page 0 0x08[7:6] = 11 AD_EN_reg, AD_EN_reg1 (Table 4, zero-IF §9.1)","result":{"before":"0x0D","after":"0xCD","verified":true},"item":"AdEn"},{"write":"page 1 0xB1[0] = 1 en_bbin (Table 4, zero-IF §9.1)","result":{"before":"0x1F","after":"0x1F","verified":true},"item":"EnBbin"},{"write":"pset_iffreq = 0 (Table 6, §9.3 zero IF)","result":[{"before":"0x35","after":"0x00","verified":true},{"before":"0xD7","after":"0x00","verified":true},{"before":"0x5D","after":"0x00","verified":true}],"item":"IfFreqZero"},{"write":"rsamp_ratio = 0x3000000 for 2400000 Hz (Table 7, §9.4)","result":[{"before":"0xF3","after":"0xFC","verified":true},{"before":"0x26","after":"0x00","verified":true},{"before":"0x66","after":"0x00","verified":true},{"before":"0x64","after":"0x00","verified":true}],"item":"Rsamp"},{"write":"USB_EPA_MAXPKT = descriptor wMaxPacketSize (Table 33)","result":{"before":"0x00000200","after":"0x00000200"},"item":"EpaMaxPkt"},{"write":"USB_EPA_CFG: enable, type bulk, number from the descriptor (Table 31)","result":{"before":"0x000000D1","after":"0x000000D1"},"item":"EpaCfg"},{"write":"USB_EPA_CTL: FIFO reset 1 then 0, stall 0 (Table 32)","result":[{"before":"0x00000000","after":"0x00000200"},{"before":"0x00000200","after":"0x00000000"}],"item":"EpaFifoReset"},{"write":"USB_SYSCTL[0] = 1 DMA enable (Table 30)","result":{"before":"0x00000001","after":"0x00000001"},"item":"Dma"}],"k":"setup","detector":"4 bulk IN transfers of 16384 bytes kept in flight: every completion resubmitted at once, topped up before each wait; a Stall completion = endpoint halted -> queued transfers cancelled, ClearFeature(ENDPOINT_HALT) sent (USB 2.0 9.4.1, 9.4.5), its result recorded, queue refilled; every error completion counted by kind. Line fields q / qf / qa = [submitted, completed, errored, halts, fewest in flight, halted at any point 0/1]"}
+{"k":"c","o":0,"v":0,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":1,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":2,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":3,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":4,"orig":232,"in":false,"rb":0,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":5,"orig":232,"in":false,"rb":1,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":6,"orig":232,"in":false,"rb":2,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":7,"orig":232,"in":false,"rb":3,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":8,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":9,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":10,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":11,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":12,"orig":232,"in":false,"rb":8,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":13,"orig":232,"in":false,"rb":9,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":14,"orig":232,"in":false,"rb":10,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":15,"orig":232,"in":false,"rb":11,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":16,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":17,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":18,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":19,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":20,"orig":232,"in":false,"rb":16,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":21,"orig":232,"in":false,"rb":17,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":22,"orig":232,"in":false,"rb":18,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":23,"orig":232,"in":false,"rb":19,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":24,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":25,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":26,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":27,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":28,"orig":232,"in":false,"rb":24,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":29,"orig":232,"in":false,"rb":25,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":30,"orig":232,"in":false,"rb":26,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":31,"orig":232,"in":false,"rb":27,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":32,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":33,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":34,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":35,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":36,"orig":232,"in":false,"rb":32,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":37,"orig":232,"in":false,"rb":33,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":38,"orig":232,"in":false,"rb":34,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":39,"orig":232,"in":false,"rb":35,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":40,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":41,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":42,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":43,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":44,"orig":232,"in":false,"rb":40,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":45,"orig":232,"in":false,"rb":41,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":46,"orig":232,"in":false,"rb":42,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":47,"orig":232,"in":false,"rb":43,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":48,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":49,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":50,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":51,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":52,"orig":232,"in":false,"rb":48,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":53,"orig":232,"in":false,"rb":49,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":54,"orig":232,"in":false,"rb":50,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":55,"orig":232,"in":false,"rb":51,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":56,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":57,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":58,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":59,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":60,"orig":232,"in":false,"rb":56,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":61,"orig":232,"in":false,"rb":57,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":62,"orig":232,"in":false,"rb":58,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":63,"orig":232,"in":false,"rb":59,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":64,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":65,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":66,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":67,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":68,"orig":232,"in":false,"rb":64,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":69,"orig":232,"in":false,"rb":65,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":70,"orig":232,"in":false,"rb":66,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":71,"orig":232,"in":false,"rb":67,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":72,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":73,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":74,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":75,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":76,"orig":232,"in":false,"rb":72,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":77,"orig":232,"in":false,"rb":73,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":78,"orig":232,"in":false,"rb":74,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":79,"orig":232,"in":false,"rb":75,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":80,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":81,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":82,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":83,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":84,"orig":232,"in":false,"rb":80,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":85,"orig":232,"in":false,"rb":81,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":86,"orig":232,"in":false,"rb":82,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":87,"orig":232,"in":false,"rb":83,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":88,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":89,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":90,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":91,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":92,"orig":232,"in":false,"rb":88,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":93,"orig":232,"in":false,"rb":89,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":94,"orig":232,"in":false,"rb":90,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":95,"orig":232,"in":false,"rb":91,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":96,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":97,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":98,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":99,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":100,"orig":232,"in":false,"rb":96,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":101,"orig":232,"in":false,"rb":97,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":102,"orig":232,"in":false,"rb":98,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":103,"orig":232,"in":false,"rb":99,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":104,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":105,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":106,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":107,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":108,"orig":232,"in":false,"rb":104,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":109,"orig":232,"in":false,"rb":105,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":110,"orig":232,"in":false,"rb":106,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":111,"orig":232,"in":false,"rb":107,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":112,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":113,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":114,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":115,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":116,"orig":232,"in":false,"rb":112,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":117,"orig":232,"in":false,"rb":113,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":118,"orig":232,"in":false,"rb":114,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":119,"orig":232,"in":false,"rb":115,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":120,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":121,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":122,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":123,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":124,"orig":232,"in":false,"rb":120,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":125,"orig":232,"in":false,"rb":121,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":126,"orig":232,"in":false,"rb":122,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":127,"orig":232,"in":false,"rb":123,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":128,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":129,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":130,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":131,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":132,"orig":232,"in":false,"rb":128,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":133,"orig":232,"in":false,"rb":129,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":134,"orig":232,"in":false,"rb":130,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":135,"orig":232,"in":false,"rb":131,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":136,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":137,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":138,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":139,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":140,"orig":232,"in":false,"rb":136,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":141,"orig":232,"in":false,"rb":137,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":142,"orig":232,"in":false,"rb":138,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":143,"orig":232,"in":false,"rb":139,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":144,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":145,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":146,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":147,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":148,"orig":232,"in":false,"rb":144,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":149,"orig":232,"in":false,"rb":145,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":150,"orig":232,"in":false,"rb":146,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":151,"orig":232,"in":false,"rb":147,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":152,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":153,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":154,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":155,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":156,"orig":232,"in":false,"rb":152,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":157,"orig":232,"in":false,"rb":153,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":158,"orig":232,"in":false,"rb":154,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":159,"orig":232,"in":false,"rb":155,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":160,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":161,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":162,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":163,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":164,"orig":232,"in":false,"rb":160,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":165,"orig":232,"in":false,"rb":161,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":166,"orig":232,"in":false,"rb":162,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":167,"orig":232,"in":false,"rb":163,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":168,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":169,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":170,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":171,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":172,"orig":232,"in":false,"rb":168,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":173,"orig":232,"in":false,"rb":169,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":174,"orig":232,"in":false,"rb":170,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":175,"orig":232,"in":false,"rb":171,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":176,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":177,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":178,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":179,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":180,"orig":232,"in":false,"rb":176,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":181,"orig":232,"in":false,"rb":177,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":182,"orig":232,"in":false,"rb":178,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":183,"orig":232,"in":false,"rb":179,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":184,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":185,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":186,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":187,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":188,"orig":232,"in":false,"rb":184,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":189,"orig":232,"in":false,"rb":185,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":190,"orig":232,"in":false,"rb":186,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":191,"orig":232,"in":false,"rb":187,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":192,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":193,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":194,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":195,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":196,"orig":232,"in":false,"rb":192,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":197,"orig":232,"in":false,"rb":193,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":198,"orig":232,"in":false,"rb":194,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":199,"orig":232,"in":false,"rb":195,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":200,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":201,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":202,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":203,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":204,"orig":232,"in":false,"rb":200,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":205,"orig":232,"in":false,"rb":201,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":206,"orig":232,"in":false,"rb":202,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":207,"orig":232,"in":false,"rb":203,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":208,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":209,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":210,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":211,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":212,"orig":232,"in":false,"rb":208,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":213,"orig":232,"in":false,"rb":209,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":214,"orig":232,"in":false,"rb":210,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":215,"orig":232,"in":false,"rb":211,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":216,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":217,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":218,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":219,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":220,"orig":232,"in":false,"rb":216,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":221,"orig":232,"in":false,"rb":217,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":222,"orig":232,"in":false,"rb":218,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":223,"orig":232,"in":false,"rb":219,"q":[0,0,0,0,4,0],"b":0,"s":false,"e":["baseline disturbed: AD_EN, rsamp_ratio byte 0, rsamp_ratio byte 1, rsamp_ratio byte 2, rsamp_ratio byte 3","baseline reapplied"]}
+{"k":"c","o":0,"v":224,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":225,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":226,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":227,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":228,"orig":232,"in":false,"rb":224,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":229,"orig":232,"in":false,"rb":225,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":230,"orig":232,"in":false,"rb":226,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":231,"orig":232,"in":false,"rb":227,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"s","o":0,"v":232}
+{"k":"c","o":0,"v":233,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":234,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":235,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":236,"orig":232,"in":false,"rb":232,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":237,"orig":232,"in":false,"rb":233,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":238,"orig":232,"in":false,"rb":234,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":239,"orig":232,"in":false,"rb":235,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":240,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":241,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":242,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":243,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":244,"orig":232,"in":false,"rb":240,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":245,"orig":232,"in":false,"rb":241,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":246,"orig":232,"in":false,"rb":242,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":247,"orig":232,"in":false,"rb":243,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":248,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":249,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":250,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":251,"orig":232,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":252,"orig":232,"in":false,"rb":248,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":253,"orig":232,"in":false,"rb":249,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":254,"orig":232,"in":false,"rb":250,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":0,"v":255,"orig":232,"in":false,"rb":251,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":0,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":1,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":2,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":3,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":4,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":5,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":6,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":7,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":8,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":9,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":10,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":11,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":12,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":13,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":14,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":15,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"s","o":1,"v":16}
+{"k":"c","o":1,"v":17,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":18,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":19,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":20,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":21,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":22,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":23,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":24,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":25,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":26,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":27,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":28,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":29,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":30,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":31,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":32,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":33,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":34,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":35,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":36,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":37,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":38,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":39,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":40,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":41,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":42,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":43,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":44,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
+{"k":"c","o":1,"v":45,"orig":16,"in":true,"q":[0,0,0,0,4,0],"b":0,"s":false}
