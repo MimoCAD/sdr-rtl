@@ -33,16 +33,45 @@
 //!               demodulator's registers (fixes the --restart order)
 //!   detector-check  step 3: the bulk detector's self-check across a
 //!               deliberately stalled endpoint (USB_EPA_CTL bit 4)
+//!
+//!   Step 4, the tuner against a cabled tone (every one of these needs
+//!   --source-cmd "<command line>", the tone source driven over stdin):
+//!   clkout-check  no source: is the demodulator clocked from the tuner's
+//!               clock output (R15 CLK_OUT_ENB) — alive with 0, with 1,
+//!               after a power cycle
+//!   meter       every documented level readback: tone off, on, and across
+//!               source levels, per tuner configuration; a probe of every
+//!               SEL_DIV code first
+//!   pll-sweep   SEL_DIV x Nint: R0-R4 after each, the readbacks with the
+//!               tone where each divider hypothesis predicts the LO
+//!   lo-find --div CODE [--nint N]  the tone stepped across the source's
+//!               range with the PLL held: where the receiver answers is
+//!               the LO (no divider hypothesis)
+//!   tune HZ     one frequency: PLL words, status, readbacks off and on
+//!   gain-ladder LNA_GAIN, MIX_GAIN, VGA_CODE 0..=15, the meter re-levelled
+//!   band-table  a frequency grid x RFFILT x RFMUX x TF_NCH x TF_LP
+//!   filter      FILT_CODE, FILT_BW, HPF: the tone stepped across the IF
+//!   if-choice   the DDC IF x Spec_inv x tone side: which readback finds it
+//!   step 4 options (step4::USAGE): --freq HZ --div CODE --ref-div2 0|1
+//!               --if HZ --lo-side high|low --config manual|vagc|auto
+//!               --txvga N --backoff N --meter NAME LO HI up|down --page3
+//!               --out PATH --grid-mhz N --full --nint-step N
+//!               --ddc track|fixed --r30b6 0|1 --lna N --mix N --vga N
+//!               --if-step HZ --if-max HZ --snapshots N --limit N
 //! ```
 
 mod bytescan;
 mod json;
+mod meter;
 mod regs;
 mod restart;
+mod source;
 mod step0;
 mod step1;
 mod step2;
 mod step3;
+mod step4;
+mod tuner;
 mod usb;
 
 use std::path::PathBuf;
@@ -102,6 +131,14 @@ pub fn header(step: &str, what: &str) -> J {
         )
 }
 
+/// The header for the step-4 records: the bench now has the cabled source.
+pub fn header_with_source(step: &str, what: &str) -> J {
+    header(step, what).with(
+        "bench",
+        "RTL2832U + R820T-family tuner, 28.8 MHz crystal, behind a USB analyzer with switchable TARGET-A power; a signal source's transmit port cabled to the antenna input through a 20 dB fixed attenuator, nothing radiating; source levels relative only",
+    )
+}
+
 pub fn write_record(name: &str, rec: &J) {
     let path = data_dir().join(name);
     std::fs::write(&path, rec.render() + "\n").expect("write record");
@@ -114,6 +151,15 @@ fn main() {
         args.remove(i);
         NO_CYCLE.store(true, Ordering::Relaxed);
     }
+    if let Some(i) = args.iter().position(|a| a == "--source-cmd") {
+        if i + 1 >= args.len() {
+            eprintln!("harness: --source-cmd needs a command line");
+            std::process::exit(2);
+        }
+        source::set_command(args.remove(i + 1));
+        args.remove(i);
+    }
+    source::catch_interrupt();
     let result = match args.first().map(String::as_str) {
         Some("recovery") => step0::run(),
         Some("protocol") => step1::run(),
@@ -125,7 +171,19 @@ fn main() {
         Some("bytescan") => bytescan::run(&args[1..]),
         Some("restart-probe") => restart::probe(),
         Some("detector-check") => step3::detector_check(),
-        _ => Err("usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | restart-probe | detector-check; any step: --no-cycle".into()),
+        Some("clkout-check") => step4::clkout_check(&args[1..]),
+        Some("meter") => step4::meter(&args[1..]),
+        Some("pll-sweep") => step4::pll_sweep(&args[1..]),
+        Some("lo-find") => step4::lo_find(&args[1..]),
+        Some("tune") => step4::tune(&args[1..]),
+        Some("gain-ladder") => step4::gain_ladder(&args[1..]),
+        Some("band-table") => step4::band_table(&args[1..]),
+        Some("filter") => step4::filter(&args[1..]),
+        Some("if-choice") => step4::if_choice(&args[1..]),
+        _ => Err(format!(
+            "usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
+            step4::USAGE
+        )),
     };
     if let Err(e) = result {
         eprintln!("harness: {e}");

@@ -161,6 +161,20 @@ Polarity is per field and NOT uniform — read each one.
 - R30 `PDET_CLK` detector timing 111111 max … 000000 min (no units) ·
   `FILTER_EXT` "filter extension under weak signal" 0 off / 1 on.
 
+### Signal path ([R820T] Figure D, p. 7; §4.3, p. 20)
+
+- Figure D: RF_IN (pin 24) → LNA → RF_Filter → mixer → IF_Filter → VGA →
+  VOP / VON (pins 13 / 12): one differential IF output, not I/Q. `pdet1`
+  taps after the LNA and feeds back to it (also pin 4 Det1); `pdet2` taps
+  after the mixer (pin 5 Det2); VAGC (pin 14) drives the VGA; a buffer
+  from the LNA to pin 3 LT (loop-through). PLL: PFD → CP (pin 15) → VCO
+  → Div → mixer, with a second Div and an Sdm in the feedback; crystal on
+  pins 8 / 9, clk_out pin 10.
+- §4.3: "The mixer down-converts the RF signal to a low-IF frequency,
+  which depends on channel bandwidth"; "the standard IF filters are
+  implemented for 6/7/8 MHz channel bandwidths". So the demodulator's IF
+  mode (§9.1) is the documented pairing, not zero-IF.
+
 ### Hardware and electrical ([R820T])
 
 - Frequency range 42–1002 MHz; NF 3.5 dB at max gain; image rejection
@@ -254,8 +268,32 @@ Polarity is per field and NOT uniform — read each one.
   page 1, 0x11[0] (all reset on).
 - DC / IQ (Table 5): page 1, 0xB1 — `en_dc_est` [1], `en_iq_comp` [3],
   `en_iq_est` [4]; on by default with `en_bbin`.
-- Readbacks (page 3): `sfreq_off` {0x18,0x19}[13:0] (ppm =
-  sfreq_off/2²⁴·10⁶), `if_agc_val`, `rf_agc_val`, `dagc_val`.
+- Readbacks, all read-only (the only documented values that could
+  reflect signal level or a signal's presence):
+  - `if_agc_val` page 3 {0x59, 0x5A} [13:0] s(14,13f) "IF AAGC Value";
+    `rf_agc_val` page 3 {0x5B, 0x5C} [13:0] s(14,13f); `aagc_lock`
+    page 3 0x50 [0] (Table 2, p. 13; this table's offset column is
+    headed {LSB, MSB}).
+  - `dagc_val` page 3 0x05 [7:0] "Gain of DAGC"; "linear voltage gain
+    of DAGC = dagc_val/16"; `en_dagc` page 1 0x11[0] (Table 10, p. 22).
+  - `inc_det_cnt` page 3 {0x28, 0x29} [8:0] impulse-noise events;
+    `inc_det_cnt_rst` page 1 0x5E[6] (Table 9, p. 21).
+  - `Est_kq` page 1 {0x66, 0x67} [11:0] u(12,11f) "Estimated Gain for
+    IQ Gain Mismatch"; `Est_sin` page 1 {0x68, 0x69} [11:0] s(12,10f)
+    (Table 5, p. 18; zero-IF, with `en_iq_est`).
+  - `sfreq_off` page 3 {0x18, 0x19} [13:0] s(14,24f) (ppm =
+    sfreq_off/2²⁴·10⁶); `cfreq_off` page 3 {0x5F, 0x61} [17:0] s(18,7f),
+    in carrier spacings /2⁷ (Table 12, p. 24; §9.9, p. 23).
+  - `mode_gi_idx` page 3 0x51 [2:0] (Table 11, p. 22).
+- AGC (§8.1, pp. 12–13): `loop_gain2` 0–26, "recommended 20", "depends
+  on the tuner"; `if_agc_min/max`, `rf_agc_min/max` 8-bit two's
+  complement, "127 means maximum output voltage" (example: 10 %/90 % of
+  the pull-high voltage → −103 / 101); `vtop` u(6,6f) "take-over point of
+  RF VGA", 0 = RF gain always max, 63 = RF gain does not delay;
+  `polar_rf_agc` / `polar_if_agc` page 0 0x0E [1] / [0] "Inverse the
+  AGC_RF / AGC_IF Sigma-Delta Pin" (Table 2, p. 12). So the two analog
+  AGC loops end in two sigma-delta output pins; where they go on a board
+  is not the demodulator document's to say.
 - Byte order: Table 2 says {LSB, MSB}; every other table {MSB, LSB}.
 - There is **no** writable ppm-correction register, no soft-reset
   register, no SDR / raw-IQ mode and no FIR coefficient registers in

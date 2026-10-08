@@ -73,6 +73,15 @@ provenance rules; this file is the working method behind them.
 
 ## 5. Searches
 
+- **A datasheet documents the product the vendor sold.** A mode the
+  vendor never sold (raw samples out of a DVB-T demodulator) is, by
+  that logic, outside the documented map. The documented pages are the
+  natural first search space, but when they are exhausted the next
+  spaces are the ones the design has room for and does not describe:
+  request blocks the protocol names but never maps, the gaps and
+  "reserved" ranges around documented registers, pages that read as
+  mirrors. Cover every declared space once (breadth) before repeating
+  any space with a variant hypothesis (depth).
 - **Declare the candidate space up front, and cover it in plain order**
   (page, offset, value, ascending). Never reorder or cut by a hunch.
   - If time forces it, *reorder* by a mechanical rule written into the
@@ -115,7 +124,61 @@ provenance rules; this file is the working method behind them.
   its evidence file, the replay command.
 - Generated tables cite the record they came from and say "do not edit".
 
-## 8. Onboarding another tuner (checklist)
+## 8. Measuring with a source
+
+- **The meter is the positive control.** Before any gain table, show
+  that a documented readback responds to the tone — off, on, and up a
+  ladder of source levels — and record its direction, span, resolution
+  and reversals. If none responds, there is nothing to measure with;
+  stop and say so.
+- **Levels are relative; fix the source within a comparison.** When a
+  sweep would push the meter out of its range, move the source in exact
+  steps (digital backoff before the analog gain), log every move, and
+  read a gain difference as (meter difference) + (source difference).
+- **Break the circle with a probe.** Seeing the tone needs a locked PLL
+  and knowing the PLL locked needs the meter: probe every divider code
+  at one frequency with off/on readings, the undescribed codes under
+  declared hypotheses, and let the readbacks say which locked.
+- **Remove the instrument's own response.** The demodulator's channel
+  filter shapes every tuner-filter curve: either move its DDC with the
+  tone, or divide by a reference curve taken at the widest codes, and
+  say which was done.
+- **A staged search states what it could miss** and runs the full space
+  at sample points to check.
+- **Never switch a clock off before proving nothing hangs on it.** A
+  tuner's clock output may be the demodulator's crystal (the documents
+  allow it; the board decides). Ours stopped answering USB at the write
+  of that bit and needed a power cycle. "The demodulator answered before
+  the tuner was powered" proved only that the GPIO did not cut the
+  tuner's supply. Write power and clock bits last, one at a time, with a
+  liveness check after each.
+- **Take a level ladder in level order, and analyse it sorted.** A ladder
+  taken as (coarse knob outer, fine knob inner) is not monotonic in
+  level; reversal counts over it are artefacts. Sort by the relative
+  level before judging monotonicity, and let the loop settle (a reading's
+  spread taken too soon after a step shows it).
+- **When hypotheses do not fit, sweep the stimulus instead.** For an
+  undescribed divider code, placing the tone where each guessed divider
+  predicts gave scattered hits; holding the PLL and stepping the tone
+  across the whole source range found the LO directly (and showed two
+  codes with no clean LO at all). A hypothesis list is a shortcut; the
+  exhaustive sweep is the proof.
+- **The meter must be outside the loop it measures.** A gain stage inside
+  the closed AGC loop (the VGA) cannot be measured by the loop's own
+  control value; open the loop and use the control value as a comparator,
+  bisecting the source level to its flip. Say per stage which meter
+  applies.
+- **A probe below the detector's threshold proves nothing.** The divider
+  probe at −30 dB saw nothing for most codes because the manual-mode
+  readback is a comparator at about −8 dB; run probes at a level the
+  meter has been shown to resolve.
+- **The source's identity line is never recorded.** The client keeps the
+  numeric fields of `ready` and nothing else.
+- **The source must die unkeyed.** Run it in its own process group so a
+  Ctrl-C stops the harness first, send `off` and `quit` on every exit
+  path, and rely on EOF-unkeys as the backstop.
+
+## 9. Onboarding another tuner (checklist)
 
 1. Gather the documents; extract to a cited `documents.md`; list the
    gaps and contradictions.

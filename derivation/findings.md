@@ -4,6 +4,382 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**; confirm of p1 0x92 bit 6 reads 0 B alone; the plain byte scan over pages 0–2 is complete (**no single byte streams**); the byte scan with restart is paused at 28976 of 196608 tested (through page 0 0x71 value 0xA1), 0 streams, wedges/errors only at page 0 0x10 and 0x20 (resume: `harness bytescan --restart --limit 15000`, repeated). The complete plain byte-scan record is stored gzip-compressed (`data/step3-bytescan.jsonl.gz`, 52 MB raw); `gunzip -k` it before re-running the plain scan. The bulk detector was checked on the wire (below): it polled endpoint 0x81 without a gap; a halted endpoint would have blinded it silently, which it now detects, clears and records.
 
+Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
+Results: the demodulator is clocked from the tuner's clock output (4a);
+the meter is `if_agc_val` MSB-first with the IF loop closed through the
+VAGC pin, polarity 0 (4b); VCO 1.67–3.69 GHz, dividers /2 /4 /8 (/1
+untestable) confirmed, SEL_DIV 100 = /32, 101 = /64, 110/111 unusable,
+**LO 114–212 MHz unreachable** (4c, 4d); fractional tuning works (4e);
+band table over 87 frequencies (4f); IF filter corners per FILT_CODE
+and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
+sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
+gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 4 — the tuner from the documents, measured with a cabled tone: CODE BUILT, BENCH PENDING
+
+The bench gains a signal source: a transmitter's output through a 20 dB
+fixed attenuator into the antenna input, nothing radiating, driven by the
+harness over the source's stdin (`--source-cmd "<command line>"`; the
+protocol is in `examples/harness/source.rs`). Levels are relative only
+(txvga nominally 1 dB per step, backoff exact digital scaling down to
+about −40 dB); the source's `ready` line names the transmitter and is
+never recorded. The source runs in its own process group: Ctrl-C stops
+the harness, which unkeys and quits the source on its way out; a dead
+harness closes the pipe and the source unkeys on EOF.
+
+### What is written, and why (`examples/harness/tuner.rs`)
+
+- R5–R31: every fixed cell of [R820T2] Table 1-2 as printed (a unit test
+  checks every image against the 19 fixed masks); every other field a
+  choice from Table 1-3 with its reason in `IMAGE_NOTES`, copied into
+  every record. The bring-up front end: all three gain stages manual at
+  code 8, detectors off, FILT_CODE 0000 / FILT_BW 00 / HPF 1111 (widest),
+  RFMUX 01 (bypass) and RFFILT 00, TF corners 0000, R30 bit 6 at the
+  matrix's 1 (Table 1-3 reads it as FILTER_EXT; `--r30b6` tries 0).
+- PLL: Nint = 4·Ni2c + Si2c + 13, Nfra = SDM_IN[16:1]/2¹⁶, REF_DIV2 = 1
+  (28.8 MHz > 24 MHz, the document's rule; `--ref-div2 0` tests the
+  other), and the hypothesis the document implies but never states:
+  f_LO = f_ref · 2 · (Nint + Nfra) / div. Nint's range is 13..=268. The
+  VCO range (`tuner::VCO_RANGE_HZ`, None until measured) and the divider
+  rule are what `pll-sweep` measures; until then every step needs
+  `--div CODE`.
+- The demodulator in IF mode ([RTL2832U] §9.1: AD_EN_reg1 = 1,
+  AD_EN_reg = 0, en_bbin = 0), pset_iffreq for the IF (§9.3), Spec_inv = 1
+  for a high-side LO (§9.3), rsamp_ratio 0xC99999 (8 MHz, Table 7),
+  en_if_agc = en_rf_agc = 1, aagc_hold = 0, en_dagc = 1, the AGC pins'
+  polarity 0 — every write read back. IF 4.57 MHz by default ([R820T]
+  Table 4-1 row 5, the 8 MHz channel; `--if` for the others).
+- The tuner's I²C paths are step 2's; a 32-byte read after the image is
+  written records whether the register file reads back.
+
+### The meter (`examples/harness/meter.rs`)
+
+Every documented readback that could reflect level is read as one
+snapshot: `dagc_val` (p3 0x05, Table 10), `if_agc_val` / `rf_agc_val`
+(p3 0x59–0x5C, Table 2, decoded in both byte orders since Table 2's
+column is headed {LSB, MSB}), `aagc_lock` (p3 0x50), `sfreq_off`,
+`cfreq_off` (Table 12), `inc_det_cnt` (Table 9), `Est_kq` / `Est_sin`
+(p1 0x66–0x69, Table 5), the tuner's R1–R4 (R2 VCO_INDICATOR, R3
+RF_INDICATOR; named, never described), and with `--page3` the whole of
+page 3 so an undocumented byte that moves is seen (declared as
+`p3:0xNN` if ever used). A reading is 3 snapshots 60 ms apart (1 in the
+long sweeps); "moved" = |Δmedian| > 2 × (sum of spreads) + 1. The
+documented settings each needs: the two analog loops need their enables
+and aagc_hold = 0, dagc_val needs en_dagc; for the IF loop to close
+through the tuner the VGA must take its gain from the VAGC pin
+(VGA_MODE = 1) and the board must wire the pin — hence the
+configurations below.
+
+### The steps, their candidate spaces and records
+
+| step | candidate space (plain order) | record |
+|---|---|---|
+| `meter` | divider probe: SEL_DIV 0..=7 at `--freq` (documented codes under their divider; 100–111 under each of 1, 2, 4, 8, 16, 32), configs manual and vagc, tone off then on; then the ladder on the responding codes (all four documented ones if none): configs (manual), (vagc, polar 0), (vagc, polar 1), (auto) × source off, txvga {0, 5, 10, 15, 20} × backoff {−20, −12, −6, 0} ascending, off | `data/step4-meter.json`: every snapshot, medians, and per readback: per-level medians, span, up/down steps, reversals, off→top moved |
+| `pll-sweep` | SEL_DIV 0..=7 × Nint 13..=268 step 5 (268 included), Nfra 0: R0–R4 at 10 and 60 ms, tone off reading, then per divider hypothesis the tone at the RF that LO predicts | `data/step4-pll-sweep.jsonl`: one line per (code, Nint) with the status bytes and the readbacks off / per hypothesis |
+| `tune HZ` | one frequency | `data/step4-tune-<MHz>.json`: PLL words, status, readbacks off / on |
+| `gain-ladder` | LNA_GAIN, MIX_GAIN, VGA_CODE 0..=15, one stage at a time, the others at `--lna/--mix/--vga` (8); the meter (`--meter NAME LO HI up\|down`) kept in its window by 6 dB source moves (backoff first), every move logged | `data/step4-gain-ladder.json`: per code the reading, the source, the moves |
+| `band-table` | 42..=1002 MHz in `--grid-mhz` (10) steps × RFFILT 0..=3 × RFMUX 0..=3 × TF_NCH 0..=15 × TF_LP 0..=15; staged (16 paths at TF 0000/0000, then the best two × 256) or `--full` (4096); the source re-levelled once per frequency at the bypass path, then fixed | `data/step4-band-table.jsonl`, resumable by (f, rf, mx, n, l) |
+| `filter` | ref (0, 00, 1111), FILT_CODE 0..=15, FILT_BW 0..=3, HPF 0..=15, the tone's IF 0.1..=12 MHz in 100 kHz steps; LO fixed; source fixed after one re-level; `--ddc track` moves pset_iffreq 1 MHz below the tone so the demodulator's own filter does not shape the curve (`--ddc fixed` keeps it) | `data/step4-filter.jsonl` |
+| `if-choice` | tone below / above the LO × pset_iffreq IF in {3.57, 4.063, 4.07, 4.57, 32/7 (the chip's reset), 0} MHz × Spec_inv 0/1 × the tone's IF 0.25..=12 MHz in 250 kHz steps | `data/step4-if-choice.jsonl` |
+
+Why the staged band table loses nothing it cannot name: the band and
+mux fields select a path and the corner codes tune within it; stage A
+ranks the 16 paths with both corners at 0000 (highest, least attenuating
+for the low-pass), stage B covers every corner code on the best two. A
+path that wins only with a corner lowered would be missed; `--full` at
+sample frequencies is the check, and the record says which mode ran.
+
+How `if-choice` finds the tone: a readback taken after the demodulator's
+channel filter responds only while the tone's IF is within ~4 MHz of the
+DDC's IF (and on one side only if Spec_inv / the LO side matter); one
+taken before it responds wherever the tuner's IF filter passes the tone.
+The readback whose response against the tone's IF has those edges locates
+the tone and says where in the chain it is read.
+
+### Commands (from the repository root; the source command is the bench's)
+
+```
+SRC='--source-cmd "cargo run --release --example tone_source -- --cabled"'
+cargo run --release -p sdr-rtl --example harness -- meter $SRC [--freq 300e6] [--page3]
+cargo run --release -p sdr-rtl --example harness -- pll-sweep $SRC [--nint-step 5] [--ref-div2 0]
+cargo run --release -p sdr-rtl --example harness -- tune 300e6 $SRC --div CODE
+cargo run --release -p sdr-rtl --example harness -- gain-ladder $SRC --div CODE --meter NAME LO HI up|down
+cargo run --release -p sdr-rtl --example harness -- band-table $SRC --meter NAME LO HI up|down [--grid-mhz 10] [--full]
+cargo run --release -p sdr-rtl --example harness -- filter $SRC --div CODE --meter NAME LO HI up|down [--ddc fixed] [--r30b6 0]
+cargo run --release -p sdr-rtl --example harness -- if-choice $SRC --div CODE
+```
+(`--source-cmd` takes one argument: quote the command line. Every step
+accepts `--out PATH` for a scratch record and `--limit N`.)
+
+### Step 4a — the demodulator is clocked from the tuner's clock output: PROVEN — `data/step4-clkout-check.json` — `harness clkout-check`
+
+The first meter run (`data/step4-meter-run1-aborted-at-R15.json`) wrote
+the image with R15 = 0x38 (CLK_OUT_ENB = 1, clock output off, chosen on
+the reasoning that the demodulator had answered before the tuner was
+powered): R5–R14 were accepted, the write of R15 and every USB request
+after it failed with `Unknown(3758097133)` = 0xE00002ED
+(kIOReturnNotResponding), and the probe's "nothing moved" lines were
+read errors. Hypothesis: the demodulator's XI is driven by the tuner's
+clock output ([R820T] §6.3 "Share Crystal"; [RTL2832U] §9.10 "oscillator
+output should be connected to the XI pin"), and the step-2 observation
+only shows that GPIO3 does not switch the tuner's supply on this board.
+
+`clkout-check`, test and null: the whole image with CLK_OUT_ENB = 0 is
+written without error and the dongle answers (DEMOD_CTL 0xE8, R0 0x96);
+the single write R15 = 0x38 fails with kIOReturnNotResponding and so
+does every request after it (the device stays enumerated: 1 listed); a
+power cycle (gone in 58 ms, back in 540 ms) restores it. **R15 bit 4 =
+0 on this board**; the image's default is now clock output on, with the
+reason in `tuner::IMAGE_NOTES`.
+
+Also from this record: a 32-byte tuner read returns R0–R15 and then
+R0–R15 again (the read wraps after 16 registers), and R5–R15 read back
+exactly as written (`98 90 68 A0 20 90 0F E8 A5 A5 28`); R16–R31 cannot
+be verified by read-back. With the clock on and the PLL at the 300 MHz
+words, R1 = 0x80, R2 = 0x80 (bit 7 set, VCO_INDICATOR[6:0] = 0 — the
+matrix prints bit 7 as 0), R3 = 0xFF, R4 = 0xE0.
+
+### Step 4b — the meter: `if_agc_val` with the IF loop closed through the VAGC pin — `data/step4-meter.json` — `harness meter --txvga 0 --backoff -30 --page3`
+
+Setup: image with the clock output on, no write errors, R5–R15 read back
+exactly; SEL_DIV 010 (/8) with Nint 84 for a 304.57 MHz LO. Ladder:
+configs (manual), (vagc, polar 0), (vagc, polar 1), (auto) × off, txvga
+{0, 5, 10, 15, 20} × backoff {−20, −12, −6, 0}, off; 3 snapshots per
+state. The ladder is taken txvga outer, backoff inner, which is not
+ascending in level = txvga + backoff, so the record's `analysis`
+(computed in ladder order) overstates reversals; the numbers below are
+sorted by level.
+
+**Byte order (bench decision):** the AGC bytes read as {0x59, 0x5A} =
+{0x1F, 0xFF} or {0xE0, 0x00}. Read MSB-first ({MSB, LSB} like every
+other table) those are +8191 and −8192, the two rails of a 14-bit
+two's-complement integrator; LSB-first they are −225 and 224. **0x59 is
+the MSB; Table 2's {LSB, MSB} column header is wrong.** `if_agc_val` =
+s(14,13f) over {0x59 MSB, 0x5A LSB}; the same for `rf_agc_val`.
+
+| config | `if_agc_val` (MSB-first) vs level, sorted | verdict |
+|---|---|---|
+| manual (VGA_MODE 0) | +8191 at −20…−10 dB, −8192 at −7 dB and above (rf_agc_val identical) | a comparator: the loop's output pin drives nothing, the integrator rails; threshold ≈ −8.5 dB relative |
+| vagc, polar 0 | 5000, 3762, 3055, 2921, 2467, 2289, 2380, 2010, 1609, 1289/1511, 909, 600, 439, −205, −539, −749, −2150, −2384, −4031 at −20, −15, −12, −10, −7, −6, −5, −2, −1, 0, 3, 4, 5, 8, 9, 10, 14, 15, 20 dB | **monotonic** (one 91-count inversion at −6/−5 dB, inside the ~100-count reading spread); linear fit −207 counts/dB, zero at +5.4 dB, residuals up to 1000 counts (txvga steps are nominal); `rf_agc_val` 7792 → 60, −187 counts/dB |
+| vagc, polar 1 | +8191 everywhere but −8192 at four of the top levels | positive feedback: the wrong polarity |
+| auto (LNA/mixer AGC, detectors on) | −8192 throughout; `dagc_val` 52 → 5; R3 255 → 239 → 191 → 143 → 95 … 165, not monotonic in level | the demodulator's loops rail; R3 RF_INDICATOR follows the tuner's own gain state with hysteresis |
+
+So the board wires the demodulator's AGC_IF sigma-delta output to the
+tuner's VAGC pin with polar_if_agc = 0, and **the meter is
+`if_agc_val` (MSB-first) in the vagc configuration**: ≈ −207 counts per
+dB (it falls as the signal rises), rails at ±8191 (≈ 79 dB if the slope
+holds), reading spread ≈ 100 counts (≈ 0.5 dB), with spreads of
+1200–1500 counts in three readings taken 150 ms after a level change
+(the loop still settling: gain sweeps settle longer, `--settle`).
+`dagc_val` flips between 0 and 255 from snapshot to snapshot in every
+configuration and is not a meter. R1 went 0x80 → 0xB4/0xB5 after the
+first retune and stayed. R2 VCO_INDICATOR: 0 at Nint 21 and 42, 92–93
+at Nint 84, 63 at Nint 169 — it changes with the PLL words, a candidate
+lock indicator for the sweep.
+
+The divider probe at −30 dB (below the manual comparator's threshold)
+saw a readback move only at SEL_DIV 010 /8; that is not evidence against
+the other codes, which `pll-sweep` covers at +10 dB in the vagc
+configuration.
+
+Gain sweeps use `--meter if_agc_val_msb_first -3000 3000 down --config
+vagc` (the window is ±14 dB about the zero).
+
+### Step 4c — PLL: VCO 1.67–3.69 GHz, the documented dividers confirmed, R2 is a lock indicator — `data/step4-pll-sweep.jsonl` — `harness pll-sweep --config vagc --txvga 10 --backoff 0 --snapshots 1 --settle 300`
+
+416 settings: SEL_DIV 0..=7 × Nint 13..=268 step 5, Nfra 0, REF_DIV2 = 1
+(f_ref 14.4 MHz); per setting R0–R4 at 10 and 60 ms (identical in all
+416), a tone-off reading, then the tone at the RF each divider hypothesis
+predicts (RF = LO − 4.57 MHz), one snapshot each, source at +10 dB
+relative where the meter reads ≈ −1000 in band. "Received" =
+`if_agc_val` (MSB-first) well off the 8191 rail; full strength is
+−200…−1350, values of 2000–6000 are partial.
+
+| code | hypothesis | received at Nint (LO MHz) | reading |
+|---|---|---|---|
+| 000 | /2 | 63–93 (907–1339), fading at 98, 103 (1411, 1483: RF outside the tuner's range) | −412…−3, then 270, 633 |
+| 001 | /4 | 63–128 (454–922); 58 (418) marginal 2345 | −688…−99 |
+| 010 | /8 | 58–128 (209–461) | −768…−1241 |
+| 011 | /1 | nothing in the lockable range (the tone would be at 1.8–3.7 GHz; 12 settings above 6 GHz skipped) | untestable by the tone |
+| 100 | /32 | 53–133 (48–120) at full strength; nothing under /1, /2, /4, /8, /16 in that range | −373…−1345 |
+| 101, 110, 111 | any of the six | isolated hits only (several near a tone of 655–665 MHz regardless of Nint) | unresolved |
+
+**VCO range:** received from Nint 58 (f_VCO = 28.8 MHz × 58 =
+1.670 GHz; marginal with /4, full with /8) to 128 (3.686 GHz); not at
+53 (1.526) or 133 (3.830). `tuner::VCO_RANGE_HZ` = (1.70, 3.65) GHz,
+30 MHz inside the received bounds. With Nint + Nfra fractional the
+documented dividers give LO 209 MHz–3.65 GHz; **42–209 MHz needs an
+undescribed code**, and code 100 behaves as /32 (LO 52–115 MHz). The
+hypothesis f_LO = f_ref · 2 · (Nint + Nfra) / div holds for /2, /4, /8
+(the tone is received exactly where it predicts, across 15 settings per
+code).
+
+**R2 VCO_INDICATOR[6:0]** is the same function of Nint for all eight
+codes: 63 at Nint 13–18, 0 at 23–58, 70, 77, 83, 87, 91, 95, 103, 108,
+112, 116, 120, 122, 125, 127 at 63, 68, …, 128, and 63 from 133 on (/8
+alone reads 127 at 133). So 0 and 63 are "out of range" on either side
+and 70–127 tracks the VCO's position inside it; bit 7 reads 1 always.
+R1 0xB5, R3 0xFF, R4 0xE0 throughout (R1 was 0x80 before the first
+retune of a session).
+
+The undescribed codes get a hypothesis-free search next (`lo-find`: the
+tone stepped across 2–1300 MHz with the PLL held at Nint 88).
+
+### Step 4d — the undescribed SEL_DIV codes: 100 = /32, 101 = /64, 110 and 111 unusable — `data/step4-lo-find-sel1xx.jsonl` — `harness lo-find --div 4|5|6|7 --config vagc --txvga 10 --backoff 0 --snapshots 1`
+
+Hypothesis-free: the PLL held at Nint 88 (f_VCO 2.534 GHz), the tone
+stepped 2–1300 MHz in 3 MHz steps (433 points per code), `if_agc_val`
+(MSB-first) read at each; the receiver answers where the tone is an IF
+from the LO.
+
+| code | full-strength response (MHz, reading) | LO | f_VCO / LO | weaker responses |
+|---|---|---|---|---|
+| 100 | 71–77 (−987, −1107, −1154) | ≈ 79 | **32** | 239–248 (3·LO), 383–395, 704–710, 1019–1028 |
+| 101 | 29–38 (−1067, −1245, −1053, −605) | ≈ 40 | **64** | 122–131, 188–197, 347–353 |
+| 110 | 623–632 (−149…−508) | ≈ 634 (= f_VCO/4) | 4? | a broad shoulder 596–683 |
+| 111 | 626–632 (−897, −869, −806) | ≈ 634 | 4? | 617–641 |
+
+100 and 101 are clean dividers (bit 2 of SEL_DIV acting as ×16 on the
+documented /2 and /4). 110 and 111 answer only around f_VCO/4 at this
+Nint, and in the sweep the /4 prediction held for them at Nint 93 alone:
+not dividers the driver can use. `tuner::MEASURED_DIVIDERS` carries
+100 → 32, 101 → 64.
+
+**Consequence:** with the VCO at 1.70–3.65 GHz the reachable LOs are
+26.6–57 MHz (/64), 53–114 (/32), 212–456 (/8), 425–912 (/4), 850–1825
+(/2), 1.7–3.65 GHz (/1): **no code reaches 114–212 MHz** (RF ≈
+110–208 MHz with a 4.57 MHz IF). Either the VCO runs lower than
+1.67 GHz under settings this search did not vary (the unspecified cells
+of R24, R25, R28, R31, the LDO voltages, PW_SDM, CAPX), or the band is
+not covered; that is an open search, not assumed either way.
+
+### Step 4e — `tune 300e6` — `data/step4-tune-300.000MHz.json`
+
+With `VCO_RANGE_HZ` set, `choose_div` picked /8 (Nint 84, SDM 39504 →
+LO 304.570 MHz exactly); the tone at 300 MHz read −801 (`if_agc_val`
+MSB-first) against 8191 off, `rf_agc_val` 3088 against 8191; R2 = 93.
+Fractional programming by the documented formula works.
+
+### Step 4f — band table — `data/step4-band-table.jsonl` — `harness band-table --config vagc --meter if_agc_val_msb_first -3000 3000 down --txvga 10 --backoff 0 --settle 300 --snapshots 1 --grid-mhz 10`
+
+87 frequencies (42–102 and 212–1002 MHz in 10 MHz steps; 112–202 MHz
+skipped: no divider, step 4d), 45 936 readings, staged: 16 paths at
+TF_NCH = TF_LP = 0000, then the best two paths × 256 corner codes. The
+source was re-levelled once per frequency at the bypass path and held
+within it; the meter is `if_agc_val` (MSB-first), lower = more signal,
+≈ 207 counts/dB; a path reading repeats to 0.2–0.5 dB (the reading
+right after a retune can be an outlier: 692 MHz, −4399 then −923).
+
+- Paths passing nothing (reading 8191, the rail), out of 87 frequencies:
+  (RFFILT 11, RFMUX 11) 86; (11, 10) 82; (11, 01) 65; (11, 00) 52;
+  (01, 11) 46; (10, 11) 43; (10, 10) 39; (00, 11) 37; (01, 00) 27;
+  (00, 10) 26; (10, 00) 22; (01, 10) 19; (00, 00) 5; (10, 01) 2;
+  (01, 01) 2; (00, 01) 1. The undescribed RFFILT 11 is dead; the
+  undescribed RFMUX 11 nearly so.
+- Best path at the corner codes 0000/0000: (RFFILT 10, RFMUX 01) at 39
+  frequencies, (00, 01) at 22, (00, 00) 8, (01, 01) 8, (10, 10) 5,
+  (01, 10) 3, (10, 00) 2. The spread between live paths at one frequency
+  is large (median 21 dB, up to 48 dB); the band code matters even with
+  the tracking filter bypassed.
+- The corner codes (TF_NCH, TF_LP) raise the best path by at most 3.8 dB
+  (median 0.6 dB) at this level: with a single tone they tune the
+  passband's edge, not its gain. Their rejection of an out-of-band tone
+  is not measured here (a second-tone step would be).
+- The per-frequency table (best path, best corner codes, their readings)
+  is read from the record by frequency; a generated table for the driver
+  comes from this file.
+
+### Step 4g — IF filter — `data/step4-filter.jsonl` — `harness filter --config vagc --meter if_agc_val_msb_first -3000 3000 down --txvga 10 --backoff 0 --settle 300 --snapshots 1`
+
+LO fixed (300 MHz + 4.57 MHz, /8), the tone 0.1–12 MHz below the LO in
+100 kHz steps, `--ddc track` (pset_iffreq 1 MHz below the tone). 37
+curves × 120 points. Readings relative to the reference curve (FILT_CODE
+0000, FILT_BW 00, HPF 1111), which is flat (≈ −750 ± 100) from 0.6 to
+10.4 MHz, falls below 0.5 MHz and is −3 dB at ≈ 10.8 MHz; some points
+alternate between two loop states ≈ 1.7 dB apart. The repeat of code 0
+in the FILT_CODE stage matched the reference to 0.0 dB.
+
+| field | result |
+|---|---|
+| FILT_CODE (BW 00, HPF 1111) | upper −3 dB corner 10.6, 10.6, (10.6), 10.5, 10.2, 9.9, 9.7, 9.4, 9.2, 9.0, 8.8, 8.6, 8.4, 8.1, 8.1, 7.8 MHz for codes 0–15: monotonic, ≈ 0.19 MHz per code; ≥ 16 dB down 2 MHz past the corner |
+| FILT_BW (CODE 0, HPF 1111) | 00 = the reference; 01 and 10 identical, corner 8.8 MHz; 11 corner 7.3 MHz — as Table 1-3 says (widest / middle / narrowest) |
+| HPF (CODE 0, BW 00) | all 16 codes within ±1 dB of the reference from 0.1 to 12 MHz: no measurable high-pass corner above 0.1 MHz in this configuration (the roll-off below 0.5 MHz is common to every code, so it is not the tuner's HPF) |
+
+Passband flatness in-band: ±1 dB. R30 bit 6 was at the matrix's 1
+throughout (`--r30b6 0` not run).
+
+### Step 4h — if-choice: the meter is pre-DDC; the wanted sideband is below the LO; image rejection 10–20 dB uncalibrated — `data/step4-if-choice.jsonl` — `harness if-choice --config vagc --txvga 10 --backoff 0 --snapshots 1`
+
+LO 304.57 MHz (/8), tone 0.25–12 MHz below and above the LO in 250 kHz
+steps × pset_iffreq IF {0, 3.57, 4.063, 4.07, 4.57, 4.5714} MHz ×
+Spec_inv 0/1: 1152 readings.
+
+- Tone below the LO: `if_agc_val` ≈ −400…−830 (full strength) from
+  0.5 to 10 MHz for every DDC IF and both Spec_inv values, +300 at
+  0.5 MHz, +600…+900 at 11 MHz — the tuner's IF passband of step 4g,
+  unchanged by anything the demodulator's DDC is set to. **`if_agc_val`
+  is taken before the DDC and the channel filter**; it cannot locate the
+  tone against pset_iffreq, and no documented readback can (`dagc_val`
+  flips 0/255 at random here too). The DDC IF for the driver is the
+  tuner's IF by construction (4.57 MHz, Spec_inv = 1 for the high-side
+  LO, §9.3), verifiable only once a baseband path exists (step 3's open
+  question).
+- Tone above the LO: 2000–3300 at 0.5–2 MHz (10–15 dB below the lower
+  sideband), 3300–5000 at 4.5 MHz, the rail (nothing) from ≈ 7 MHz. So
+  the wanted sideband is **below the LO** (high-side mixing, as §9.3
+  describes) and the upper sideband is the image, rejected by only
+  10–20 dB with IMR_G = IMR_P = 32 (the datasheet's 65 dBc needs the
+  undocumented image calibration: a search over IMR_G × IMR_P with the
+  tone above the LO is the next step for that).
+
+### Step 4i — gain per code — `data/step4-gain-ladder.json` (loop meter) — `harness gain-ladder --config vagc --meter if_agc_val_msb_first -3000 3000 down --txvga 10 --backoff 0 --settle 400`
+
+300 MHz, the other stages at code 8. A first run of this command lost
+its record to a harness panic (a JSON array given a field in the
+comparator's stop path); fixed, and every JSON step now writes its
+record on a panic too.
+
+- **VGA_CODE** (comparator: VGA_MODE = 0, the source level bisected in
+  1 dB steps to the flip of `if_agc_val` between +8191 and −8192): flip
+  at +19, +16, +13, +10, +7, +3, −1, −4, −7, −11, −14, −18, −21, −25,
+  −31 dB for codes 0–14; code 15 below the source's −36 dB floor. Gain
+  rises with the code by 3–4 dB per step, **3.57 dB/code** over 0–14
+  (the document's 3.5 dB/step with its sign misprint confirmed; the
+  documented 52.5 dB span for 0–15 is consistent with code 15 being
+  > 50 dB above code 0).
+- **LNA_GAIN** (loop meter, source re-levelled on the exact backoff):
+  relative to code 0: 0, 1.9, 5.4, 7.3, 7.5, 13.0, 16.4, 14.9, 24.3,
+  25.3, 27.8, 29.8, 31.9, 30.6, 30.7, 36.4 dB — 36 dB in all, in
+  uneven steps (0.2 to 9.4 dB), two steps slightly negative within the
+  loop's ≈ 1.7 dB two-state quantisation.
+- **MIX_GAIN** (loop meter, source fixed): 0, 0.7, 1.4, 1.1, 3.0, 3.9,
+  4.0, 7.7, 7.8, 10.7, 10.7, 11.9, 12.1, 13.4, 15.1, 14.6 dB — ≈ 15 dB,
+  flat from code 12.
+
+The loop meter's dB scale is the −207 counts/dB fit of step 4b (from
+nominal txvga steps). The comparator method has 1 dB resolution with
+exact source steps, so it was then applied to all three stages.
+
+### Step 4j — gain per code by the comparator, all stages — `data/step4-gain-ladder-comparator.json` — `harness gain-ladder --config manual --meter if_agc_val_msb_first -3000 3000 down --txvga 10 --backoff 0 --settle 300 --out …`
+
+300 MHz, the other stages at code 8, every code's flip level found by
+bisection in 1 dB steps (exact backoff for levels ≤ 0, txvga above).
+Gain relative to code 0 = −(flip − flip₀):
+
+| code | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| LNA_GAIN flip dB | 16 | 13 | 9 | 6 | 3 | 1 | −2 | −5 | −7 | −11 | −12 | −14 | −15 | −18 | −19 | −20 |
+| LNA gain rel. dB | 0 | 3 | 7 | 10 | 13 | 15 | 18 | 21 | 23 | 27 | 28 | 30 | 31 | 34 | 35 | 36 |
+| MIX_GAIN flip dB | 5 | 3 | 1 | 0 | −2 | −3 | −5 | −6 | −7 | −9 | −10 | −12 | −12 | −13 | −13 | −12 |
+| MIX gain rel. dB | 0 | 2 | 4 | 5 | 7 | 8 | 10 | 11 | 12 | 14 | 15 | 17 | 17 | 18 | 18 | 17 |
+| VGA_CODE flip dB | 19 | 16 | 13 | 10 | 7 | 3 | −1 | −4 | −7 | −11 | −14 | −18 | −21 | −25 | −30 | < −36 |
+| VGA gain rel. dB | 0 | 3 | 6 | 9 | 12 | 16 | 20 | 23 | 26 | 30 | 33 | 37 | 40 | 44 | 49 | > 55 |
+
+Monotonic in every stage (the mixer's 12–15 within ±1 dB of flat); the
+VGA repeats step 4i's run to ±1 dB. Resolution ±1 dB (the bisection's
+step; levels above 0 dB rest on the source's nominal 1 dB txvga steps).
+These are the driver's gain tables; a generated table cites this file.
+
 ## Step 0 — recovery: PROVEN — `data/step0-recovery.json` — `harness recovery`
 
 3/3 power cycles: the dongle is gone within ~60 ms of power-off and
