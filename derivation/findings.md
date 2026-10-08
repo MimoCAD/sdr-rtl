@@ -619,7 +619,23 @@ plain scan only 0xC0–0xCB did; with the restart every value from 0xC0
 does.
 
 
-## Step 3 — block scan: the system block, the USB block, pages 3 and 4 (smoke-tested, chunks pending) — `data/step3-blockscan-{sys,usb,p3,p4}.jsonl` — `harness blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]]`
+## Step 3 — block scan: the system block, the USB block, pages 3 and 4 — `data/step3-blockscan-{sys,usb,p3,p4}.jsonl` — `harness blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]]`
+
+Results so far: **p3 65,536 covered, 0 streams, 0 wedges; p4 65,536,
+0 streams, 320 wedges (the page-0 mirror at 0x20) all recovered; sys
+65,536, 0 streams, 0 wedges.** usb: 7,241 covered, 0 streams, 595
+wedges, then stopped twice by a bench hazard:
+
+**Hazard — USB register 0x1C (0x201C, in the map's reserved range).**
+Writes there wedge the chip at every other value, and twice (values
+0x54 and 0x64) the wedge plus the power cycle that followed took the
+analyzer, the dongle and the second radio on the same hub branch off
+the bus together; only a restart of the hub (and once the host)
+brought them back. Not cycle wear: page 4 survived 320 consecutive
+wedges. The remaining values of 0x1C (0x65–0xFF) are DEFERRED, to be
+run last with someone present to restart the hub; the rest of the
+block resumes at 0x1D (`--from 29 0`). This is a declared deferral
+of 155 candidates, not a cut: they stay in the candidate space.
 
 Every byte value at every address of the register spaces no single-write
 scan had covered, plain method (no restart, as the plain byte scan), one

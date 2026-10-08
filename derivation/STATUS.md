@@ -34,13 +34,13 @@ reasoning in [`findings.md`](findings.md), the method in
 | Tracking-filter corner codes | Within the meter's noise with one tone | Second-tone rejection measurement |
 | Bias tee | GPIO4 documented "antenna power, default off", but the reset value has its bit set | Measure the pin |
 | PLL lock | Inferred from R2 | Accept, or find a documented lock bit |
-| Bench | The analyzer wedged after ~2,600 power cycles (now self-healing), then the hub branch lost every device | Replug; `harness recovery` |
+| Bench | USB register 0x1C is a hazard: a wedge there plus the power cycle drops the whole hub branch (twice); only a hub restart recovers it. Its remaining 155 values are deferred; the block resumes at 0x1D | Restart the hub; `harness recovery`; `blockscan --block usb --from 29 0` |
 
 ## Resume commands (from the repository root of the workspace)
 
 ```
 cargo run --release -p sdr-rtl --example harness -- recovery
-cargo run --release -p sdr-rtl --example harness -- blockscan --block usb --limit 12000
+cargo run --release -p sdr-rtl --example harness -- blockscan --block usb --from 29 0 --limit 12000
 cargo run --release -p sdr-rtl --example harness -- bytescan --restart --limit 15000
 cargo build --manifest-path crates/rtl/derived/Cargo.toml && cargo test --manifest-path crates/rtl/derived/Cargo.toml
 ```
