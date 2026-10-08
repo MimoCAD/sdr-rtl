@@ -623,8 +623,13 @@ does.
 
 Results so far: **p3 65,536 covered, 0 streams, 0 wedges; p4 65,536,
 0 streams, 320 wedges (the page-0 mirror at 0x20) all recovered; sys
-65,536, 0 streams, 0 wedges.** usb: 7,241 covered, 0 streams, 595
-wedges, then stopped twice by a bench hazard:
+65,536, 0 streams, 0 wedges; usb 130,407 covered (every offset of
+0x000–0x1FF touched), 0 streams, 723 wedges at six offsets (0x01, 0x0C,
+0x10, 0x18, 0x1C, 0x104), all recovered — the only candidates not run
+are the 155 deferred values of 0x1C.** So every single-write space the
+map has room for — demodulator pages 0–4, the system block, the USB
+block — has been covered once from the documented baseline without a
+single stream. The usb block was stopped twice by a bench hazard:
 
 **Hazard — USB register 0x1C (0x201C, in the map's reserved range).**
 Writes there wedge the chip at every other value, and twice (values
