@@ -1,0 +1,12 @@
+analyzer gateware v1.1 · state 0x88
+capture started (host unix time 1791487034.105) — timestamps below are analyzer-relative
+[  0.000000s] capture start
+[  3.084013s] ORPHAN DATA (3 bytes, no token before it): 4b 00 00
+[  3.084025s] ORPHAN DATA (3 bytes, no token before it): 4b 00 00
+[  3.084159s] ORPHAN DATA (4 bytes, no token before it): 4b e8 40 f1
+[  3.085605s] ORPHAN DATA (4 bytes, no token before it): 4b e8 40 f1
+capture transfer error: Err(Unknown(3758097133))
+
+thread 'main' (446888) panicked at src/bin/cynthion-witness.rs:244:10:
+analyzer state write: Unknown(3758097133)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

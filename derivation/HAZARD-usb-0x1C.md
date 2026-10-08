@@ -100,6 +100,34 @@ This is a hypothesis from the value pattern; the proof is in
 3. If a different dock or a plain hub recovers on port reset, the
    defect is the dock's.
 
+## The confirmation run (2026-10-08, with the operator present)
+
+`data/step3-testmode-selector4-capture.log` (the analyzer watching the
+dongle's port, all endpoints, orphan DATA packets dumped) and
+`data/step3-testmode-selector4.jsonl` (one candidate: 0x1C ← 0x04,
+no power cycle before it).
+
+What the wire showed in the ~1 s between the write and the end of the
+capture: the control transfer's own packets (zero-length DATA1 status
+stages `4b 00 00`, a one-byte read-back `4b e8 40 f1` = 0xE8, the
+DEMOD_CTL value), then nothing — **no standard test packet** (a
+53-byte DATA0 beginning `00 × 9, aa × 8, …`, repeated) was seen. The
+dongle stopped answering (the write completed with NotResponding),
+and within the same second the analyzer's own control pipe stopped
+answering too; the harness's recovery then found no dongle on the bus.
+
+So the Test_Packet identification is **not confirmed**: selector 4
+did not produce visible test packets before the analyzer itself went
+down. What is confirmed is narrower and still useful for the dock
+report: a single vendor write of a value with bits [2:0] in 1–4 to
+0x201C makes the dongle silent on USB within a millisecond, and the
+device sitting between it and the dock (the analyzer's passthrough)
+loses its own control pipe in the same second, after which the dock's
+whole branch is gone until the dock is power cycled. Whether the chip
+drives a test-mode line state, a PHY power-down, or something else on
+its upstream pair cannot be told from this capture; a scope on the
+D+/D− pair at the moment of the write would.
+
 ## Scan handling
 
 The remaining values of 0x1C (0x65–0xFF) are deferred, not cut: by
