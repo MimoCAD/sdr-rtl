@@ -73,6 +73,15 @@
 //!   band-table  a frequency grid x RFFILT x RFMUX x TF_NCH x TF_LP
 //!   filter      FILT_CODE, FILT_BW, HPF: the tone stepped across the IF
 //!   if-choice   the DDC IF x Spec_inv x tone side: which readback finds it
+//!
+//!   rom-dump    step 5: read the ROM through GetROMCode (read-only); the
+//!               image goes to ~/mimosdr-captures/rtl2832u-rom/ (outside
+//!               every repository), the record holds only its size,
+//!               SHA-256, the read method and the consistency check
+//!   rom-dump --probe [ADDR:LEN ...]  GetROMCode reads with timing and
+//!               the chip's liveness after each (prints only)
+//!   rom-dump --xdata-check  blocks 1 and 2 at the same wValue, page
+//!               nibble 0 and 1 (prints only)
 //!   step 4 options (step4::USAGE): --freq HZ --div CODE --ref-div2 0|1
 //!               --if HZ --lo-side high|low --config manual|vagc|auto
 //!               --txvga N --backoff N --meter NAME LO HI up|down --page3
@@ -90,6 +99,7 @@ mod json;
 mod meter;
 mod regs;
 mod restart;
+mod rom_dump;
 mod source;
 mod step0;
 mod step1;
@@ -207,8 +217,9 @@ fn main() {
         Some("band-table") => step4::band_table(&args[1..]),
         Some("filter") => step4::filter(&args[1..]),
         Some("if-choice") => step4::if_choice(&args[1..]),
+        Some("rom-dump") => rom_dump::run(&args[1..]),
         _ => Err(format!(
-            "usage: harness recovery | protocol | tuner | baseline | scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] | confirm-write P O VALUE | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
+            "usage: harness recovery | protocol | tuner | baseline | rom-dump [--probe ADDR:LEN...|--xdata-check] | scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] | confirm-write P O VALUE | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
             step4::USAGE
         )),
     };

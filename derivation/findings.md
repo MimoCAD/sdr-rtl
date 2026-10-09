@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 5 (the chip's firmware), 2026-10-09: the 8 KiB ROM read through `GetROMCode`, mapped with our own 8051 disassembler. **The firmware never touches the data path**: it configures bulk endpoint A at SET_CONFIGURATION / SET_INTERFACE and acknowledges its interrupt, and nothing else; it has no mode variable, no mode table and no source selector. The demodulator is an I²C slave the firmware reaches only on the host's behalf. What feeds the FIFO is hardware, steered (on the bench evidence) from the demodulator's register file. Two spaces the scans never covered follow from the code: **demodulator pages 5–15** (the page nibble is masked to 4 bits, not 0–4) and **external-data addresses outside 0x2000–0x21FF / 0x3000–0x30FF** (blocks 1 and 2 are a raw window on the whole 16-bit space). Section "Step 5 — the firmware" below.
+
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
 Results: the demodulator is clocked from the tuner's clock output (4a);
 the meter is `if_agc_val` MSB-first with the IF loop closed through the
@@ -14,6 +16,235 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 5 — the firmware — `data/step5-rom-dump.json` — `harness rom-dump`
+
+Approved by the project owner on 2026-10-09, after ~810,000 single-write
+candidates found no raw-sample mode, under one rule: the driver never
+contains or uses any part of the firmware. The image and every listing
+of it live outside every repository (`~/mimosdr-captures/rtl2832u-rom/`).
+This section carries only facts, in words, each with the ROM address it
+was read at and its evidence: **code** (read from the disassembly),
+**bench** (measured), or both. No byte of the ROM is reproduced here.
+The disassembler is ours: `examples/rom51` (a plain MCS-51 opcode table,
+recursive descent from the vectors, jump tables of LJMP/AJMP entries
+followed, a constant DPTR tracked through straight runs, `--inline
+ADDR:N` for routines that read their argument bytes from after the
+call). Addresses below are ROM addresses unless written `X:` (the
+8051's external-data space, as the code addresses it).
+
+### 5a. The dump
+
+| | |
+|---|---|
+| request | `GetROMCode` (Table 27): bmRequestType 0xC0, wIndex 0x0400, wValue = address, read-only |
+| chunk | 64 bytes. `rom-dump --probe`, fresh power-on: wLength 1, 8, 64 answer in ~1.7 ms; 65 → Stall after ~84 ms, chip still answering; 256 → Stall after ~98 ms, then every request (system block included) times out until a power cycle. In the record: 1, 8, 32, 63, 64 agree byte for byte with one-byte reads at 0x0000, 0x2000, 0x8000; 65 does not |
+| passes | the whole 16-bit space three times: A and B in one power session, C after a power cycle |
+| **size** | **8,192 bytes (0x0000–0x1FFF)** |
+| **SHA-256** | **`f554992f78a44dd5c5a8aed77595a23272f8114b4bbf9766437d5ea4cdea6dd1`** (the harness's own SHA-256, checked against `shasum -a 256`) |
+| consistency | the image identical in A, B and C; the whole space A = B; A ≠ C only in 0x2000–0x2FFF |
+
+Why 8 KiB (bench, and code independently):
+
+- 0x0000–0x1FFF is the same in two power sessions; 0x2000–0x2FFF reads
+  one byte value repeated 4,096 times, different in each power session,
+  and it is not
+  the USB block (block 1 at the same wValue reads the documented
+  registers in the same session).
+- Above it, `GetROMCode` reaches the system block's registers at
+  0x3000–0x300B (equal to block 2's reads with the 4 bytes of each 32-bit
+  word reversed), reads 0 from 0x4000 to 0xEFFF, and finds 13 non-zero
+  bytes at 0xFD03–0xFD17 (the IR registers' documented 0xFD00 range).
+  The wIndex page nibble 1–15 changes nothing (all 30 probes equal page 0).
+- Code: the firmware checks its own ROM with a CRC-16 (polynomial 0x8005,
+  initial value all ones, MSB first) over exactly 0x0000–0x1FFF (range set
+  at 0x0B24–0x0B2B, routine 0x1B5A), compared against a constant at
+  0x0B1E or a value from the EEPROM (0x0AEF–0x0B1C). The CRC of our image
+  equals that constant. The last two bytes of the ROM are its balance
+  bytes; 0x1D0C–0x1FFD is an initialisation table and zero fill.
+- Coverage: the walk from the vectors reaches 6,737 of the 8,192 bytes as
+  instructions; what it does not reach is the inline argument bytes
+  after calls to 0x120B, the descriptor/string/test-packet tables
+  0x0DD0–0x0F9E, and the tail above.
+
+The dump answers one question about the block itself: `GetROMCode` reads
+the 8051's **code** space (the handler at 0x08A1 hands the copy routine
+0x19D3 a code-space pointer, 0x08F1), so above 0x1FFF it shows what the
+code space decodes there, not external data.
+
+### 5b. Structure (code)
+
+- Vectors: reset → 0x1A64 (clears internal RAM, stack, runs the
+  initialisation table at 0x1D0C, then the main routine 0x1C13); external
+  interrupt 0 → 0x14D8 (the USB interrupt); timer 0 → 0x1CCE (a tick that
+  decrements two software timers). The other vectors are unused.
+- Main 0x1C13: timers, serial port and interrupts (0x1C98; the serial
+  port is set up but SBUF is never used), the I²C master (0x1C59), the
+  EEPROM-driven configuration (0x0A7D), the USB initialisation (0x1895),
+  the GPIO set-up (0x1AF0); then the loop at 0x1C22 waits for the
+  setup-packet flag and dispatches each control request (0x000E).
+- The setup packet is read from X:20F8–X:20FF, each 32-bit word stored
+  most-significant byte first: X:20FB bmRequestType, X:20FA bRequest,
+  X:20F8/9 wValue high/low, X:20FE/F wIndex high/low, X:20FC/D wLength.
+- 0x001B: request type standard → bRequest table (0x003D, 12 entries:
+  GET_STATUS, CLEAR_FEATURE, SET_FEATURE, SET_ADDRESS, GET_DESCRIPTOR,
+  GET/SET_CONFIGURATION, GET/SET_INTERFACE; SET_DESCRIPTOR and the two
+  reserved codes do nothing); vendor → 0x06F7; class → ignored.
+- The only fixed I²C address in the firmware is the EEPROM's (0x0FB8,
+  0x16F6, 0x1756). The demodulator's address appears nowhere: the host
+  supplies it.
+
+### 5c. The vendor dispatcher (code; bench where marked)
+
+0x06F7 takes **wIndex's high byte as the block** (Table 28's nibble [2]),
+bounds it below 8 (0x0703; 8 and up → STALL at 0x0A72) and jumps through
+an 8-entry table (0x0711). Every handler tests **wIndex bit 4** (Table
+28's access nibble) for Set; the low nibble is the page.
+
+| block | handler | what it does |
+|---|---|---|
+| 0 demodulator | 0x072A, then 0x0788 | I²C access: **slave address = wValue low byte, register = wValue high byte**. Before it, the page (wIndex & 0x0F, so **0–15**) is written to **register 0x00** of that slave, by a one-byte I²C write, whenever it differs from a cached copy (0x0736–0x0769); the cache is invalidated at USB initialisation (0x1917) and after a failed page write (0x075F). Bench: wValue = offset<<8 \| 0x20 (1B/1C); page 3 and page 4 register 0x00 read 3 and 4 and take any value (block scan) — the page register itself |
+| 1 USB, 2 system | **one handler**, 0x0925 | a raw external-data window: **wValue is the X: address, any of 0x0000–0xFFFF**; Get copies wLength bytes out (0x13C4), Set copies in (0x15DB). With page nibble 0 the bytes of each aligned 32-bit word are reversed (0x13EE–0x141D), so the host sees little-endian what the 8051 stores most-significant-first; any other page nibble copies straight. **Bench (`rom-dump --xdata-check`, 2026-10-09): block 2 at 0x2144/0x2158/0x2000 reads EPA_CFG/EPA_MAXPKT/USB_SYSCTL exactly as block 1 does, block 1 at 0x3000 reads the system block, and page nibble 1 returns every word's bytes reversed.** So the documented bases 0x2000 and 0x3000 are the 8051's own X: addresses, and the "block" only names a convention |
+| 3 tuner | 0x0788 | the same I²C access as block 0 without the page write (so block 3 at address 0x20 reaches the demodulator's current page: bench 2, address 0x10 read through the tuner block) |
+| 4 ROM | 0x08A1 | code-space read at wValue; Set → STALL (0x0919) |
+| 5 IR | 0x091F | always STALL: this firmware serves no IR request (the IR registers are reachable through blocks 1/2 at X:FC00/FD00) |
+| 6 standard I²C | 0x076B | wLength > 16 → STALL; otherwise block 0/3's access with a flag (X:4000 = 1) that makes the I²C write omit the register-address byte (0x12D8) |
+| 7 *(undocumented)* | 0x0A3C | Set only (Get → STALL): clears bit 0 of USB register 0x2010 (the bit the USB initialisation sets last, 0x191D, after clearing it at start-up, 0x1CB7), waits wValue timer ticks (0x0A64), then re-runs the whole USB initialisation (0x1895: EEPROM patch list, SIE reset, endpoint 0). A host-commanded disconnect and re-enumeration — **a bench hazard, not a mode** |
+
+Data stages are sent in packets of at most 64 bytes; between packets the
+handlers wait on endpoint-0 status (X:210F bit 1) with a 100-tick bound
+and STALL at its end (0x07A4–0x0811, 0x08B8–0x0916, 0x0949–0x09C5) —
+bench: GetROMCode wLength 65 stalls after ~84 ms. I²C transactions are
+split into at most 16 bytes (0x17D4, 0x1985).
+
+### 5d. The registers the firmware writes (code)
+
+USB block, as the host addresses it (32-bit little-endian):
+
+- 0x2000 USB_SYSCTL: SIE reset set, cleared, then DMA enable set
+  (0x1898–0x18CF, and again on bus reset 0x1BD7–0x1BE7).
+- 0x2008 interrupt status (write-1-to-clear) and 0x200C interrupt enable,
+  set to bits 2, 4, 5, 6, 7 (0x1907, 0x1C02). In the handler (0x14F7):
+  bit 5 = setup packet; bit 4 → the USB registers re-initialised (0x1BC0;
+  a bus reset, by its use); bit 2 → 0x2010 bits 3–4 set, then bit 4
+  cleared (0x1524);
+  **bit 7 = bulk endpoint A: only acknowledged — 0x2150 is written all
+  ones (0x156F–0x157E) and nothing else happens**; bit 6 does the same
+  for endpoint 0's 0x2110.
+- 0x2010: bit 0 cleared at start-up, set at the end of USB initialisation
+  (a connect bit, by its use); bit 2 remote wake-up (SET/CLEAR_FEATURE);
+  bit 5 set or cleared by the GPIO set-up from an EEPROM option (0x1B0A,
+  0x1B37). Bench: the USB block scan wedged at offset 0x10.
+- 0x2014 bit 0: read as the high-speed indicator (0x03D8).
+- 0x2018: the device address (SET_ADDRESS writes wValue there, 0x0352).
+  Bench: the block scan wedged at offset 0x18.
+- **0x201C: the test mode.** SET_FEATURE(TEST_MODE) (0x05C1–0x064E)
+  writes 2 for Test_J, 3 for Test_K, 1 for Test_SE0_NAK, and for
+  Test_Packet first loads the standard 53-byte test packet (table at
+  0x0F6A) into the endpoint-0 buffer, then writes 4; then the firmware
+  loops forever (0x064E). This confirms `HAZARD-usb-0x1C.md`'s reading
+  (values 1–4 are test modes) and explains its capture: a bare write of 4
+  sends whatever the endpoint-0 buffer holds, not the test packet.
+- 0x2104–0x2123: endpoint 0's register set, laid out like endpoint A's
+  0x2144–0x2163 (0x2104 bit 7 enable; 0x2108 control: handshake, stall;
+  0x210C status — bit 1 polled as "IN buffer free"; 0x210C and 0x2110
+  written all ones at initialisation; **0x2118 = 64, endpoint 0's max
+  packet**; 0x2120 its OUT byte count). Bench: the block scan wedged at
+  0x104.
+- **Endpoint A**, only in these places:
+  - SET_CONFIGURATION(1) (0x03B4) and SET_INTERFACE alternate 0 (0x0445):
+    USB_EPA_CTL ← 0x20 (flush) then bit 5 cleared; USB_EPA_MAXPKT ← 512
+    at high speed, 64 at full speed; USB_EPA_CFG ← 0xD1 (enabled, bulk,
+    IN, endpoint 1); **0x214C and 0x2150 ← all ones** (two registers
+    Table 29 calls reserved; endpoint 0's counterparts are 0x210C/0x2110).
+  - SET_INTERFACE alternate 1 (0x049C): USB_EPA_MAXPKT ← 940 (5 × 188) and
+    USB_EPA_CFG ← 0xB1 (isochronous) — the "ISO mode" of §11.1; the ROM's
+    descriptors (0x0DD0) declare no alternate setting 1.
+  - SET_FEATURE / CLEAR_FEATURE(ENDPOINT_HALT) on 0x81: USB_EPA_CTL bit 4
+    set / cleared (0x0656, 0x06BB) — bench: ClearFeature clears bit 4
+    (detector check).
+  - **Never referenced: USB_EPA_FIFO_CFG (0x2160), USB_EPA_CTL bit 9
+    (FIFO reset) and bit 0 (FIFO valid).** Bench: FIFO_CFG reads 20
+    blocks at power-on (1A), the period of the page 0 0x07 replay.
+
+System block (host view; the 8051 sees each word's bytes reversed):
+
+- **DEMOD_CTL (0x3000) is never written** (its byte is not referenced).
+- GPIO: GP_CFG0 bit 7 set (0x1AF0); GPIO3 made an output and driven, or
+  made an input, by an EEPROM option (0x1AF7–0x1B58); GPIO4 and GPIO0
+  pulsed by an EEPROM record (0x0AD4–0x0BA4); DEMOD_CTL_1 (0x300B) from an
+  EEPROM option (0x1AFD).
+- I²C master: I2CCR (0x3040) ← 0x17 (0x1C59; the "FD10" divisor the
+  document says software must write — bench: it reads 0x17 at power-on,
+  1A), then I2CMCR bit 31 set and polled until it clears (0x1C63–0x1C95);
+  every transaction (0x127C write, 0x0FBA read) loads I2CMFR (0x3050)
+  and starts with I2CMCR bit 31.
+
+Others: X:4000–X:40FF is the 8051's data RAM (variables; the request
+buffer at X:4090). X:A5A5–X:A5A6 are written on every byte of the ROM CRC
+loop (0x1BB1): something outside the documented map (unknown).
+
+### 5e. What feeds the bulk endpoint — the facts
+
+1. **No code moves, inspects or selects stream data.** Endpoint A appears
+   only in 5d's list: configuration at SET_CONFIGURATION/SET_INTERFACE,
+   the halt bit, and an acknowledged interrupt. There is no mode
+   variable, no table of modes and no branch that writes a source or
+   format register (code, whole ROM: every MOVX with a constant address
+   is in the cross-reference; the only writes to addresses not fixed in
+   the code are the host's own requests and the EEPROM patch list
+   below). The path demodulator → 188-byte packetiser → FIFO → endpoint A
+   is hardware.
+2. **The firmware never writes the demodulator on its own** (code): every
+   I²C transfer is a host request (blocks 0/3/6) or one EEPROM record's
+   single I²C write (0x0B68–0x0B8D, address and data from the EEPROM);
+   the page write of block 0 is register 0x00.
+3. **Consistent with the bench:** page 0 0x07 bit 7 (the 45 MB/s replay
+   of the FIFO's 20 × 188 bytes) and the 28 bits that throttle it are
+   demodulator registers no firmware path writes; the replay period is
+   USB_EPA_FIFO_CFG's power-on 20 blocks, which no firmware path changes;
+   the demodulator's I²C address 0x10 (8-bit 0x20) is the host's choice
+   in wValue.
+4. **An EEPROM patch list** (0x16D6–0x17BB, run inside the USB
+   initialisation at boot and by block 7): at EEPROM (I²C 0xA0) offset
+   0x4E, if the byte is 0x5C, the next byte is a length (capped at 178)
+   and then come (address high, address low, value) triples, each written
+   to that X: address. It is the vendor's way of setting hardware
+   registers before enumeration; whether this dongle's EEPROM carries a
+   list is not known (its contents were never recorded).
+
+So the raw-sample switch, if the chip has one, is a hardware register,
+and the code points at two spaces no scan has covered:
+
+- **Demodulator pages 5–15.** Block 0 masks the page to 4 bits (0x0734)
+  and writes it to register 0x00, so wIndex 0x0005–0x000F (Get) and
+  0x0015–0x001F (Set) reach pages 5–15 exactly as 0–4 are reached. Pages
+  16–255 would need register 0x00 written directly, which desynchronises
+  the firmware's page cache until a different page is requested.
+- **External-data addresses beyond the scanned ranges.** Blocks 1 and 2
+  read and write any X: address; the scans covered 0x2000–0x21FF and
+  0x3000–0x30FF only. The rest of 0x2000–0x3FFF, 0x4100–0xFBFF and the IR
+  range 0xFC00–0xFDFF are unscanned hardware space.
+
+### 5f. Open
+
+- Why `GetROMCode` above the ROM shows the system registers but one
+  repeated, session-dependent value at 0x2000–0x2FFF and 0x3040–0x305F,
+  and zeros where the data RAM sits (0x4000).
+- Why wLength 256 wedges the chip where 65 only stalls (both end in the
+  same 100-tick wait).
+- What X:A5A5–X:A5A6, USB 0x214C/0x2150 (beyond "all ones at
+  configuration, all ones on endpoint A's interrupt") and the
+  non-standard special function register 0x8E written at start-up are.
+
+### Replay
+
+```
+cargo run --release -p sdr-rtl --example harness -- rom-dump                  # the dump, data/step5-rom-dump.json; image to ~/mimosdr-captures/rtl2832u-rom/
+cargo run --release -p sdr-rtl --example harness -- rom-dump --probe 0:64 0:65 # request lengths (prints only)
+cargo run --release -p sdr-rtl --example harness -- rom-dump --xdata-check     # blocks 1/2 as one X: window (prints only)
+cargo run --release -p sdr-rtl --example rom51 -- ~/mimosdr-captures/rtl2832u-rom/rtl2832u-rom.bin --inline 0x120B:4 --xref > ~/mimosdr-captures/rtl2832u-rom/listing.txt
+```
 
 ## Step 4 — the tuner from the documents, measured with a cabled tone: CODE BUILT, BENCH PENDING
 

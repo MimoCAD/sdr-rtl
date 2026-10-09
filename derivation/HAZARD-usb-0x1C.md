@@ -66,6 +66,21 @@ without the host's SetFeature. In those modes a device stops
 answering (that is the wedge), and per §7.1.20 the only exit is a
 power cycle (that is why the restore write cannot help).
 
+**Confirmed from the chip's own firmware (2026-10-09, findings.md
+"Step 5 — the firmware", item 5d).** The firmware's
+SetFeature(TEST_MODE) handler (ROM 0x05C1–0x064E) implements the four
+test modes by writing this register: 2 for Test_J, 3 for Test_K, 1 for
+Test_SE0_NAK, and, for Test_Packet, it first loads the standard test
+packet into the endpoint-0 buffer, then writes 4 and loops forever.
+Note the register's encoding differs from the USB selector numbers
+(selector 1 Test_J → 2; selector 3 Test_SE0_NAK → 1). That also explains
+the confirmation capture below: a raw write of 4 skips the packet load,
+so the transmitter had nothing to send.
+
+So the register **is** the chip's USB test-mode control, and our scan's
+vendor write drove it directly, outside the SetFeature path the USB
+specification defines for entering a test mode.
+
 This is a hypothesis from the value pattern; the proof is in
 "Confirming it" below.
 
