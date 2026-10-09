@@ -29,6 +29,9 @@
 //!               judged by content.rs; an interesting candidate ends the
 //!               chunk and is confirmed (confirm-write) at once
 //!   confirm P O B   step 3: confirm a scan hit (page, offset, bit)
+//!   survey      step 6, read-only: demodulator pages 5-15 and the 8051's
+//!               external data outside the scanned ranges (64-byte reads),
+//!               two passes each, from the low-if-open held state
 //!   confirm-write P O VALUE [--baseline B] [--windows N] [--buf BYTES]
 //!               [--no-minimise] [--out PATH]  step 3: one byte written on
 //!               a baseline: bytes/s at 2.4/1.2/2.048 Msps, the FIFO's
@@ -106,6 +109,7 @@ mod step1;
 mod step2;
 mod step3;
 mod step4;
+mod survey;
 mod tuner;
 mod usb;
 
@@ -204,6 +208,7 @@ fn main() {
         Some("scan") => step3::scan(&args[1..]),
         Some("confirm") => step3::confirm(&args[1..]),
         Some("confirm-write") => confirm_write::run(&args[1..]),
+        Some("survey") => survey::run(),
         Some("bytescan") => bytescan::run(&args[1..]),
         Some("blockscan") => blockscan::run(&args[1..]),
         Some("restart-probe") => restart::probe(),

@@ -6,6 +6,8 @@ Status (2026-10-09): **the single-write hypothesis is exhausted.** From the docu
 
 Step 5 (the chip's firmware), 2026-10-09: the 8 KiB ROM read through `GetROMCode`, mapped with our own 8051 disassembler. **The firmware never touches the data path**: it configures bulk endpoint A at SET_CONFIGURATION / SET_INTERFACE and acknowledges its interrupt, and nothing else; it has no mode variable, no mode table and no source selector. The demodulator is an I²C slave the firmware reaches only on the host's behalf. What feeds the FIFO is hardware, steered (on the bench evidence) from the demodulator's register file. Two spaces the scans never covered follow from the code: **demodulator pages 5–15** (the page nibble is masked to 4 bits, not 0–4) and **external-data addresses outside 0x2000–0x21FF / 0x3000–0x30FF** (blocks 1 and 2 are a raw window on the whole 16-bit space). Section "Step 5 — the firmware" below.
 
+Step 6 (the spaces step 5 opened), 2026-10-09: a read-only survey of demodulator pages 5–15 and the 8051's external data outside the scanned blocks, and the single-bit scan of pages 5–15 (22,440, register 0x00 excluded) from the held-open data path with the content detector: **0 interesting**, period score 1.000 in all 22,423 scorable windows. Pages 8–15 alias pages 0–7 on read (8 = 0, 9 ≈ 1, 10 ≈ 2, 12 = 4), writes alias by page mod 4 (on the bench evidence); 5–7, 11, 13–15 read like the live page 3. External data outside the blocks is zero except X:2F00–X:2FFF (a few bytes, X:2F80 live), the data RAM X:4000–X:41FF and the IR range X:FC00–X:FD3F. Section "Step 6" below.
+
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
 Results: the demodulator is clocked from the tuner's clock output (4a);
 the meter is `if_agc_val` MSB-first with the IF loop closed through the
@@ -16,6 +18,119 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 6 — the spaces the firmware opens: pages 5–15 and the rest of external data — `data/step6-survey.json`, `data/step6-scan-p5-15.jsonl` — `harness survey`, `harness scan --baseline low-if-open --pages 5-15 --offset-from 1 --record step6-scan-p5-15.jsonl`
+
+Both steps start from the low-if-open held state (low-if + page 0 0x07
+bit 7, the 3,760-byte replay running) and use only the facts of step 5c:
+block 0 reaches pages 0–15 (page written to register 0x00 on a change);
+blocks 1/2 read any X: address, page nibble 1 straight; data stages ≤ 64
+bytes.
+
+### 6a. Read-only survey — `data/step6-survey.json` (run twice; the classes agree)
+
+No writes. Pages 0–15 read byte by byte (register 0x00 first), twice,
+≥ 100 ms apart; X: 0x2000–0x21FF and 0x3000–0x30FF (references) plus the
+four ranges in 64-byte reads, twice. No read failed or wedged; one power
+session. **The 8051's data RAM (X:4000–X:41FF) is recorded by class
+only**: it holds the USB string descriptors built from the EEPROM, the
+serial number among them (a first run stored those bytes; that record
+was deleted and the step changed before the run that is kept).
+
+Demodulator pages 5–15 (of 255 offsets, register 0x00 excluded from the
+comparisons):
+
+| page | reg 0x00 | non-trivial (not 0x00/0xFF) | differ from page 0 | live (changed between passes; 2nd run) | closest page (equal offsets) |
+|---|---|---|---|---|---|
+| 5 | 5 | 32 | 165 | 50 | 3 (226) |
+| 6 | 6 | 37 | 167 | 46 | 13 (212) |
+| 7 | 7 | 35 | 166 | 46 | 3 (227) |
+| 8 | 8 | 148 | **1** (register 0x00 only) | 0 | **0 (255 of 255)** |
+| 9 | 9 | 190 | 227 | 0 | **1 (233)** |
+| 10 | 10 | 215 | 239 | 0 | **2 (242)** |
+| 11 | 11 | 32 | 168 | 39 | 3 (213) |
+| 12 | 12 | 6 | 150 | 0 | **4 (255 of 255)** |
+| 13 | 13 | 34 | 171 | 39 | 5 (212) |
+| 14 | 14 | 36 | 164 | 41 | 3 (227) |
+| 15 | 15 | 37 | 171 | 39 | 3 (212) |
+
+So reads of pages 8, 9, 10, 12 return pages 0, 1, 2, 4 (9 and 10 differ
+from 1 and 2 at their live offsets); pages 5–7, 11, 13–15 read like page
+3, the live readback page, each with 39–50 live offsets in 0x05–0x79
+(the same block every time). Register 0x00 reads the page number on
+every page, both passes.
+
+External data (page nibble 1, 64-byte chunks):
+
+| range | class |
+|---|---|
+| X:2200–X:2EFF | all zero |
+| X:2F00–X:2F3F | static, a few non-zero bytes |
+| X:2F40–X:2F7F | all zero |
+| X:2F80–X:2FBF | **live** (two bytes at +0x16/+0x17 change between passes) |
+| X:2FC0–X:2FFF | static, one non-zero byte |
+| X:3100–X:3FFF | all zero |
+| X:4000–X:41FF | static non-zero: the 8051's data RAM (bytes not recorded, above) |
+| X:4200–X:FBFF | all zero (744 chunks) |
+| X:FC00–X:FC7F | static non-zero (the IR receive buffer's range, step 5) |
+| X:FC80–X:FCFF | all zero |
+| X:FD00–X:FD3F | **live** (bytes +0x01, +0x0A, +0x0B; the IR registers' range) |
+| X:FD40–X:FDFF | all zero |
+
+No chunk is a byte-for-byte mirror of another or of the USB/system
+blocks. The only live hardware outside the scanned blocks is 64 bytes at
+X:2F80 and the IR block at X:FD00.
+
+### 6b. Single-bit scan of pages 5–15 with the path held open — `data/step6-scan-p5-15.jsonl` — COMPLETE, 0 interesting
+
+Candidate space: pages 5–15 × offsets 0x01–0xFF × bits 0–7 = 22,440,
+**register 0x00 excluded on every page** (the page-select register: the
+firmware writes the page there and caches it; writing it would
+desynchronise the cache; stated in the header). Detector, thresholds
+and the held-flow check as in the step-3 open scan, re-measured for
+this record: held state alone 44.5 MB/s, period score 1.000, entropy
+7.9446 bits; with the tone on 37.0 MB/s, the same signature, `if_agc_val`
+8191 → −889. Interesting = period score < 0.99 (≥ 15,040 B) or 2.4–9.6
+MB/s; each would have ended its chunk with a full `confirm-write`.
+19 chunks of ≤ 1,200, ~4.6 min each.
+
+| | count |
+|---|---|
+| interesting | **0** — no confirmation was triggered |
+| period score < 1.000 | 0 of 22,423 scorable windows |
+| bytes/s 2.4–9.6 MB/s | 0 |
+| entropy | 7.9357–7.9510 bits (no "signature changed") |
+| rate changed (throttle/stop, periodic where scored) | 46: p5 0x01 b0 b1 b3–b7, 0xD7 b0; p8 0x01 b0, 0x06 b5 b7, 0x07 b6 b7, 0x0A b3 b7, 0x0E b0, 0xB5 b3; p9 0x01 b2, 0x09 b7, 0x0C b6, 0xD7 b0; p12 0x01 b0 b3, 0x06 b5 b7, 0x07 b0–b6, 0x0A b3 b7, 0x0E b0; p13 0x01 b0 b1 b3–b7, 0xD7 b0; p14 0x20 b7; p15 0xF2 b3, 0xF5 b2 |
+| zero bytes in the window | 2: p8 0xB5 b3 (0x0A → 0x02, one transfer ended 0xE00002ED — page 0 0xB5 b3's behaviour exactly) and p12 0x01 b3 |
+| held flow lost before a candidate | 21 (after p5/p13 0x01, p8 0xB5, p12 0x01/0x02, p14 0x0B, p15 0xF1): 2 restored by the reapply, 19 by a power cycle; every candidate ran with the flow verified |
+| held state disturbed, reapplied | p5 and p13: 0x01 (IIC_repeat), 0x15 (Spec_inv), 0x19–0x1B (pset_iffreq), 0x9F (rsamp_ratio) — page 1's registers; p8 and p12: 0x10 (soft reset), 0x07, 0x08 (AD_EN) — page 0's |
+| wedged, recovered | 6: p8 and p12 at 0x20 b4, 0xA7 b5, 0xA7 b6 — page 0's three |
+| restore not verified (not wedged) | 1,361, on pages 5–7, 11, 13–15 (the live readback-like pages), 1 on page 12 |
+| detector check | 0 halts; 1 transfer error (p8 0xB5 b3) |
+
+**Writes alias too:** a write to page 8 or 12 acts on page 0 (its soft
+reset, its two wedges, its stoppers 0x07, 0x0A, 0x0E, 0xB5 recur bit for
+bit), pages 5, 9 and 13 act on page 1 (IIC_repeat, Spec_inv,
+pset_iffreq, rsamp_ratio, and page 1's stoppers 0x01 b2, 0x09 b7, 0x0C
+b6, 0xD7 b0); on pages 5, 12, 13 the restore writes back the aliased
+read value (page 3-like, page 4-like), which is why those disturb the
+held state. Pages 6, 7, 10, 11, 14, 15 showed three single-bit throttles
+(p14 0x20 b7, p15 0xF2 b3, 0xF5 b2) and nothing else.
+
+**No candidate carries the tone, or changes the content at all.** Pages
+5–15 add no data-path control beyond the registers pages 0–4 already
+showed; every window that could be scored was the FIFO's 3,760-byte
+replay. The scan ran with the source unkeyed; no candidate was
+interesting, so none reached the tone test.
+
+### Replay
+
+```
+cargo run --release -p sdr-rtl --example harness -- survey
+SRC='--source-cmd "cargo run --release --example tone_source -- --cabled"'
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if-open --pages 5-15 --offset-from 1 --record step6-scan-p5-15.jsonl --limit 0 $SRC     # header: held state alone, thresholds
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if-open --pages 5-15 --offset-from 1 --record step6-scan-p5-15.jsonl --limit 1200 $SRC  # repeat to 22440
+```
 
 ## Step 5 — the firmware — `data/step5-rom-dump.json` — `harness rom-dump`
 

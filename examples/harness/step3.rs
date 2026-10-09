@@ -20,6 +20,8 @@ pub const WINDOW: Duration = Duration::from_millis(100);
 pub const BUF_LEN: usize = 16 * 1024;
 pub const TOLERANCE: f64 = 0.20;
 const PAGES: u8 = 5;
+/// The highest page block 0 reaches (wIndex & 0x0F, findings 5c).
+pub const MAX_PAGE: u8 = 15;
 
 pub fn expected_bytes_per_s(rate: f64) -> f64 {
     2.0 * rate
@@ -305,7 +307,7 @@ pub fn alive(rtl: &Rtl) -> bool {
     rtl.sys_read8(DEMOD_CTL).is_ok()
 }
 
-pub const SCAN_USAGE: &str = "scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] [--redo-flowless | --redo-list P:OFF:BIT,...]";
+pub const SCAN_USAGE: &str = "scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] [--pages LO-HI] [--offset-from N] [--record NAME] [--redo-flowless | --redo-list P:OFF:BIT,...]";
 
 /// low-if-open: the window the held flow is checked with before each
 /// candidate's write.
@@ -347,6 +349,9 @@ pub fn scan(args: &[String]) -> Result<(), String> {
     let mut limit: Option<usize> = None;
     let mut redo_mode = false;
     let mut redo_list: HashSet<(u8, u8, u8)> = HashSet::new();
+    let mut pages: (u8, u8) = (0, PAGES - 1);
+    let mut offset_from: u8 = 0;
+    let mut record: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--redo-flowless" {
@@ -378,13 +383,24 @@ pub fn scan(args: &[String]) -> Result<(), String> {
         match args[i].as_str() {
             "--baseline" => baseline = Baseline::parse(v)?,
             "--limit" => limit = Some(v.parse().map_err(|e| format!("--limit {v}: {e}"))?),
+            "--pages" => {
+                let (a, b) = v.split_once('-').ok_or("--pages LO-HI")?;
+                pages = (a.parse().map_err(|e| format!("--pages {v}: {e}"))?, b.parse().map_err(|e| format!("--pages {v}: {e}"))?);
+                if pages.0 > pages.1 || pages.1 > MAX_PAGE {
+                    return Err(format!("--pages {v}: within 0-{MAX_PAGE} (block 0 masks the page to 4 bits, findings 5c)"));
+                }
+            }
+            "--offset-from" => offset_from = v.parse().map_err(|e| format!("--offset-from {v}: {e}"))?,
+            "--record" => record = Some(v.clone()),
             a => return Err(format!("{a}: {SCAN_USAGE}")),
         }
         i += 2;
     }
     usb::guard()?;
     let rate = baseline.rate_hz();
-    let path = crate::data_dir().join(baseline.record_name());
+    let path = crate::data_dir().join(record.as_deref().unwrap_or(baseline.record_name()));
+    let n_candidates = (pages.1 - pages.0 + 1) as usize * (256 - offset_from as usize) * 8;
+    let space = format!("page {}..={} x offset 0x{offset_from:02X}..=0xFF x bit 0..=7 ({n_candidates} candidates)", pages.0, pages.1);
     let (done, has_header) = done_keys(&path);
     if redo_mode && baseline != Baseline::LowIfOpen {
         return Err("--redo-flowless is for --baseline low-if-open".into());
@@ -416,8 +432,8 @@ pub fn scan(args: &[String]) -> Result<(), String> {
     }
     if !has_header && baseline != Baseline::ZeroIf {
         let (solo, solo_streams, solo_content) = baselines::solo(baseline, &rtl, &mut bulk)?;
-        let mut hdr = crate::header_with_source("3-scan", &format!("bulk IN bytes per 100 ms with one demodulator bit flipped on top of the {} baseline", baseline.name()))
-            .with("candidate_space", "page 0..=4 x offset 0x00..=0xFF x bit 0..=7 (10240 candidates)")
+        let mut hdr = crate::header_with_source(if pages.1 >= PAGES { "6-scan" } else { "3-scan" }, &format!("bulk IN bytes per 100 ms with one demodulator bit flipped on top of the {} baseline", baseline.name()))
+            .with("candidate_space", space.as_str())
             .with("settings_held_fixed", format!("the {} baseline (baseline_definition); streams judged against {rate} Hz; window 100 ms; {} x {} byte transfers queued; the source unkeyed during the scan", baseline.name(), BulkCounter::QUEUED, BUF_LEN))
             .with("procedure", "read byte; write it with the bit flipped; measure 100 ms (bytes already queued before the window counted as stale); restore; verify the restore by read-back; chip answering; the baseline's settings re-read (baseline_definition), reapplied if disturbed, power cycle and the baseline from scratch if they do not hold or the chip is gone")
             .with("baseline_definition", baseline.definition())
@@ -425,6 +441,15 @@ pub fn scan(args: &[String]) -> Result<(), String> {
             .with("baseline_setup", setup)
             .with("solo", solo)
             .with("solo_streams", solo_streams);
+        if offset_from > 0 {
+            hdr.set(
+                "excluded",
+                format!("register 0x00 through 0x{:02X} on every page: register 0x00 is the page-select register (block 0 writes the page number there whenever the requested page changes and caches it, findings 5c); writing it would desynchronise the firmware's page cache", offset_from - 1),
+            );
+        }
+        if pages.1 >= PAGES {
+            hdr.set("why_these_pages", "block 0 masks the page to 4 bits (findings 5c, ROM 0x0734): pages 5-15 are reached exactly as 0-4, and no earlier scan wrote them");
+        }
         if open {
             let t = content::Thresholds::from_solo(&solo_content, rate);
             println!("held state thresholds: {}", t.record().render());
@@ -451,8 +476,8 @@ pub fn scan(args: &[String]) -> Result<(), String> {
     let (mut tested, mut hits, mut any_bytes, mut wedges, mut reapplied) = (0usize, 0usize, 0usize, 0usize, 0usize);
     let (mut changed, mut data, mut flow_lost) = (0usize, Vec::new(), 0usize);
     let mut interesting: Option<(u8, u8, u8)> = None;
-    'scan: for page in 0..PAGES {
-        for off in 0..=255u8 {
+    'scan: for page in pages.0..=pages.1 {
+        for off in offset_from..=255u8 {
             for bit in 0..8u8 {
                 if redo_mode != redo.contains(&(page, off, bit)) || (!redo_mode && done.contains(&(page, off, bit))) {
                     continue;
