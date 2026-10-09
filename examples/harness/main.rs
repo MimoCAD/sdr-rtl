@@ -23,7 +23,11 @@
 //!               step-4 low-IF state with the tuner tuned (-lowif), or
 //!               the power-on state (-poweron); see baselines.rs. A new
 //!               record starts with the baseline measured alone (low-if:
-//!               with --source-cmd, also the tone off/on control)
+//!               with --source-cmd, also the tone off/on control).
+//!               --baseline low-if-open: low-if plus page 0 0x07 bit 7
+//!               (the endpoint path held open), each window's content
+//!               judged by content.rs; an interesting candidate ends the
+//!               chunk and is confirmed (confirm-write) at once
 //!   confirm P O B   step 3: confirm a scan hit (page, offset, bit)
 //!   confirm-write P O VALUE [--baseline B] [--windows N] [--buf BYTES]
 //!               [--no-minimise] [--out PATH]  step 3: one byte written on
@@ -81,6 +85,7 @@ mod baselines;
 mod blockscan;
 mod bytescan;
 mod confirm_write;
+mod content;
 mod json;
 mod meter;
 mod regs;
@@ -203,7 +208,7 @@ fn main() {
         Some("filter") => step4::filter(&args[1..]),
         Some("if-choice") => step4::if_choice(&args[1..]),
         _ => Err(format!(
-            "usage: harness recovery | protocol | tuner | baseline | scan [--baseline zero-if|low-if|power-on] [--limit N] | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
+            "usage: harness recovery | protocol | tuner | baseline | scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] | confirm-write P O VALUE | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
             step4::USAGE
         )),
     };

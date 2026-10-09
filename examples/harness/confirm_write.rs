@@ -22,6 +22,7 @@
 use std::time::Duration;
 
 use crate::baselines::{self, Baseline};
+use crate::content::{self, Content};
 use crate::json::{J, hex8, hex32, hex_bytes};
 use crate::regs::*;
 use crate::source::{self, Source};
@@ -204,6 +205,8 @@ fn analyse(data: &[u8]) -> J {
     J::obj()
         .with("bytes", data.len())
         .with("periodicity", periodicity(data))
+        .with("content_c_without_rate", Content::of(data, 0.0).compact())
+        .with("content_legend", content::LEGEND)
         .with("excerpt_first_bytes", hex_bytes(&data[..data.len().min(EXCERPT)]))
         .with("block_structure", strip_columns(step3::block_structure(data)))
         .with("iq_stats", step3::iq_stats(data))
@@ -252,8 +255,26 @@ fn write_verify(rtl: &Rtl, page: u8, off: u8, val: u8) -> (J, Option<u8>) {
     )
 }
 
+/// The confirmation's options (`run` parses them; the scan uses the
+/// defaults).
+#[derive(Clone, Debug)]
+pub struct Opts {
+    pub windows: usize,
+    pub buf: usize,
+    pub minimise: bool,
+    pub out: Option<String>,
+    pub dump: Option<String>,
+}
+
+impl std::default::Default for Opts {
+    fn default() -> Opts {
+        Opts { windows: 10, buf: step3::BUF_LEN, minimise: true, out: None, dump: None }
+    }
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
-    let (mut baseline, mut n_windows, mut buf, mut minimise, mut out) = (Baseline::LowIf, 10usize, step3::BUF_LEN, true, None);
+    let d = Opts::default();
+    let (mut baseline, mut n_windows, mut buf, mut minimise, mut out) = (Baseline::LowIf, d.windows, d.buf, d.minimise, d.out);
     let mut dump_dir: Option<String> = None;
     let mut pos = Vec::new();
     let mut i = 0;
@@ -288,6 +309,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err(USAGE.into());
     }
     let (page, off, val) = (num(&pos[0])? as u8, num(&pos[1])? as u8, num(&pos[2])? as u8);
+    confirm(baseline, page, off, val, &Opts { windows: n_windows, buf, minimise, out, dump: dump_dir }).map(|_| ())
+}
+
+/// Confirm one byte value on a baseline; returns the record's name.
+pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Result<String, String> {
+    let (n_windows, buf, minimise, out, dump_dir) = (o.windows, o.buf, o.minimise, o.out.clone(), o.dump.clone());
     usb::guard()?;
     let mut rec = crate::header_with_source("3-confirm-write", "one demodulator byte written on top of a baseline: bytes/s against the resampler rate, the FIFO's dropped blocks, the bytes' structure and spectrum, tone off/on, and the baseline minimised")
         .with("candidate", J::obj().with("page", page).with("offset", hex8(off)).with("value", hex8(val)))
@@ -340,7 +367,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     rec.set("rate_tracking", tracking);
     // (c)
-    if baseline == Baseline::LowIf && source::command().is_some() {
+    if matches!(baseline, Baseline::LowIf | Baseline::LowIfOpen) && source::command().is_some() {
         let rate = step3::RATE_HZ;
         let mut src = Source::open()?;
         rec.set("source", src.describe());
@@ -390,10 +417,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
             let (w, _) = write_verify(&rtl, page, off, val);
             let mut data = Vec::new();
             let (ws, total, bps) = capture(&rtl, &mut bulk, 5, &mut data);
-            println!("without {item}: {total} B, {bps:.0} B/s");
+            let c = Content::of(&data, 0.0);
+            println!("without {item}: {total} B, {bps:.0} B/s, period score {:?}", c.period_score);
             mini.push(
                 J::obj()
                     .with("removed", item.as_str())
+                    .with("content_c_without_rate", c.compact())
                     .with("setup", setup)
                     .with("write", w)
                     .with("windows", ws)
@@ -414,5 +443,5 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
         None => crate::write_record(&name, &rec),
     }
-    Ok(())
+    Ok(name)
 }

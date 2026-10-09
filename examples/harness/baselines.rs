@@ -22,6 +22,7 @@
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
+use crate::content::{self, Content};
 use crate::json::{J, hex8, hex32};
 use crate::meter::{self, Meter, Reading};
 use crate::regs::*;
@@ -89,6 +90,13 @@ pub const LOW_ITEMS: [LowItem; 16] = [
     LowItem::Dma,
 ];
 
+/// low-if-open's extra item: page 0 0x07 bit 7 (its power-on value 0x3C,
+/// written 0xBC; data/step3-confirm-lowif-p0-07-bc.json).
+pub const OPEN_PATH_ITEM: &str = "OpenPath";
+pub const OPEN_PATH_PAGE: u8 = 0;
+pub const OPEN_PATH_OFF: u8 = 0x07;
+pub const OPEN_PATH_BIT: u8 = 1 << 7;
+
 /// The power-on baseline's two items.
 pub const POWER_ON_ITEMS: [&str; 2] = ["DemodPll", "Endpoint"];
 
@@ -96,6 +104,9 @@ pub const POWER_ON_ITEMS: [&str; 2] = ["DemodPll", "Endpoint"];
 pub enum Baseline {
     ZeroIf,
     LowIf,
+    /// low-if with page 0 0x07 bit 7 set: the bulk endpoint's data path
+    /// held open (data/step3-confirm-lowif-p0-07-bc.json).
+    LowIfOpen,
     PowerOn,
 }
 
@@ -104,8 +115,9 @@ impl Baseline {
         match s {
             "zero-if" => Ok(Baseline::ZeroIf),
             "low-if" => Ok(Baseline::LowIf),
+            "low-if-open" => Ok(Baseline::LowIfOpen),
             "power-on" => Ok(Baseline::PowerOn),
-            _ => Err(format!("--baseline {s}: zero-if | low-if | power-on")),
+            _ => Err(format!("--baseline {s}: zero-if | low-if | low-if-open | power-on")),
         }
     }
 
@@ -113,6 +125,7 @@ impl Baseline {
         match self {
             Baseline::ZeroIf => "zero-if",
             Baseline::LowIf => "low-if",
+            Baseline::LowIfOpen => "low-if-open",
             Baseline::PowerOn => "power-on",
         }
     }
@@ -122,6 +135,7 @@ impl Baseline {
         match self {
             Baseline::ZeroIf => "step3-scan.jsonl",
             Baseline::LowIf => "step3-scan-lowif.jsonl",
+            Baseline::LowIfOpen => "step3-scan-lowif-open.jsonl",
             Baseline::PowerOn => "step3-scan-poweron.jsonl",
         }
     }
@@ -130,7 +144,7 @@ impl Baseline {
     /// programs into rsamp_ratio, or the power-on ratio's.
     pub fn rate_hz(self) -> f64 {
         match self {
-            Baseline::ZeroIf | Baseline::LowIf => step3::RATE_HZ,
+            Baseline::ZeroIf | Baseline::LowIf | Baseline::LowIfOpen => step3::RATE_HZ,
             Baseline::PowerOn => power_on_rate_hz(),
         }
     }
@@ -140,6 +154,7 @@ impl Baseline {
         match self {
             Baseline::ZeroIf => step3::ITEMS.iter().map(|i| format!("{i:?}")).collect(),
             Baseline::LowIf => LOW_ITEMS.iter().map(|i| format!("{i:?}")).collect(),
+            Baseline::LowIfOpen => LOW_ITEMS.iter().map(|i| format!("{i:?}")).chain([OPEN_PATH_ITEM.to_string()]).collect(),
             Baseline::PowerOn => POWER_ON_ITEMS.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -151,7 +166,7 @@ impl Baseline {
             Baseline::ZeroIf => &[
                 "the documented-only baseline of findings step 3 (step3::apply_baseline): DEMOD_CTL PLL|ADC_I|ADC_Q|reset-release (Table 15); GPIO3 tuner power (Tables 16-19); AD_EN_reg = AD_EN_reg1 = 1, en_bbin = 1 (Table 4, zero-IF 9.1); pset_iffreq = 0 (Table 6, 9.3); rsamp_ratio for 2.4 Msps (Table 7, 9.4); USB_EPA_MAXPKT, USB_EPA_CFG, USB_EPA_CTL FIFO reset pulse, USB_SYSCTL DMA (Tables 30-33)",
             ],
-            Baseline::LowIf => &[
+            Baseline::LowIf | Baseline::LowIfOpen => &[
                 "a power cycle, then in order, every write a read-modify-write read back (tuner::setup_demod's writes, rsamp_ratio at the scan's rate instead of its 8 MHz):",
                 "DemodCtl: DEMOD_CTL |= PLL|ADC_I|ADC_Q|reset-release (Table 15; the PLL makes the demodulator answer, findings 1C)",
                 "TunerPower: GPIO3 GPD[3] = 0, GPOE[3] = 1, GPO[3] = 0, then 50 ms (Tables 16-19, p. 29)",
@@ -174,6 +189,10 @@ impl Baseline {
                 "Nothing else: the tuner at its own power-on state (it answers, and clocks the demodulator, findings 4a), the demodulator's registers at theirs (page 0 0x08 = 0x0D: AD_EN_reg = AD_EN_reg1 = 0; page 1 0xB1 = 0x1F: en_bbin 1; pset_iffreq 0x35D75D = 32/7 MHz; rsamp_ratio 0xC99999 = 64/7 MHz; findings step 3 baseline and restart probe), GPIO3 not driven, the I2C repeater closed.",
             ],
         };
+        let mut items: Vec<&str> = items.to_vec();
+        if self == Baseline::LowIfOpen {
+            items.push("OpenPath (low-if-open only, last): page 0 0x07 |= 0x80 (0x3C -> 0xBC), read back. data/step3-confirm-lowif-p0-07-bc.json: with the tuner programmed this bit makes the bulk endpoint deliver at the bus's full rate (45 MB/s, FIFO dropped-block counter 255) the FIFO memory's 3,760 bytes (20 x 188) round and round; needs DemodCtl, IicRepeat, TunerImage");
+        }
         J::obj()
             .with("baseline", self.name())
             .with("items", J::Arr(items.iter().map(|s| J::from(*s)).collect()))
@@ -192,6 +211,14 @@ impl Baseline {
                 step3::apply_baseline(rtl, rate, &items)
             }
             Baseline::LowIf => apply_low_if(rtl, rate, skip),
+            Baseline::LowIfOpen => {
+                let mut log = apply_low_if(rtl, rate, skip);
+                if !skip.iter().any(|s| s == OPEN_PATH_ITEM) {
+                    let r = step3::step("page 0 0x07[7] = 1: the endpoint data path open (data/step3-confirm-lowif-p0-07-bc.json)", rmw_demod(rtl, OPEN_PATH_PAGE, OPEN_PATH_OFF, OPEN_PATH_BIT, OPEN_PATH_BIT));
+                    log.push(J::obj().with("item", OPEN_PATH_ITEM).with("record", r));
+                }
+                log
+            }
             Baseline::PowerOn => apply_power_on(rtl, skip),
         }
     }
@@ -206,6 +233,13 @@ impl Baseline {
         match self {
             Baseline::ZeroIf => step3::baseline_disturbed(rtl, step3::RATE_HZ),
             Baseline::LowIf => low_if_disturbed(rtl, step3::RATE_HZ),
+            Baseline::LowIfOpen => {
+                let mut bad = low_if_disturbed(rtl, step3::RATE_HZ);
+                if rtl.demod_read8(OPEN_PATH_PAGE, OPEN_PATH_OFF).ok().map(|v| v & OPEN_PATH_BIT != 0) != Some(true) {
+                    bad.push("page 0 0x07[7] = 1".into());
+                }
+                bad
+            }
             Baseline::PowerOn => power_on_disturbed(rtl),
         }
     }
@@ -245,16 +279,26 @@ impl Baseline {
 
 /// `n` 100 ms windows: their records, whether any streamed, total bytes
 /// (window and stale).
-fn windows(bulk: &mut usb::BulkCounter, rate: f64, n: usize) -> (J, bool, usize) {
+/// With `content`, each window's bytes are kept long enough to compute
+/// its [`Content`]; the bytes are then dropped.
+fn windows_content(bulk: &mut usb::BulkCounter, rate: f64, n: usize, content: bool) -> (J, bool, usize, Vec<Content>) {
     let mut ws = J::Arr(Vec::new());
-    let (mut any, mut total) = (false, 0);
+    let (mut any, mut total, mut cs) = (false, 0, Vec::new());
+    let mut data = Vec::new();
     for _ in 0..n {
-        let w = bulk.measure(step3::WINDOW, None);
+        data.clear();
+        let w = bulk.measure(step3::WINDOW, if content { Some(&mut data) } else { None });
         any |= step3::streams(w.rate(), rate);
         total += w.bytes + w.stale_bytes;
-        ws.push(step3::window_record(&w, rate));
+        let mut rec = step3::window_record(&w, rate);
+        if content {
+            let c = Content::of(&data, w.elapsed.as_secs_f64());
+            rec.set("c", c.compact());
+            cs.push(c);
+        }
+        ws.push(rec);
     }
-    (ws, any, total)
+    (ws, any, total, cs)
 }
 
 /// The baseline measured alone: ten 100 ms windows. For low-if, when a
@@ -263,12 +307,19 @@ fn windows(bulk: &mut usb::BulkCounter, rate: f64, n: usize) -> (J, bool, usize)
 /// [`LOWIF_RF_HZ`], and ten more windows with the tone on; the source is
 /// unkeyed and closed before the scan. Returns (record, any window
 /// streamed).
-pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, bool), String> {
+pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, bool, Vec<Content>), String> {
     let rate = b.rate_hz();
-    let (ws, mut streams, total) = windows(bulk, rate, 10);
+    let open = b == Baseline::LowIfOpen;
+    let (ws, mut streams, total, contents) = windows_content(bulk, rate, 10, open);
     println!("{} alone: {total} B in 10 x 100 ms", b.name());
+    for c in &contents {
+        println!("  {}", c.compact().render());
+    }
     let mut rec = J::obj().with("windows", ws).with("bytes_total", total).with("any_window_streams", streams);
-    if b == Baseline::LowIf && source::command().is_some() {
+    if open {
+        rec.set("content_legend", content::LEGEND);
+    }
+    if matches!(b, Baseline::LowIf | Baseline::LowIfOpen) && source::command().is_some() {
         let start = Instant::now();
         let mut src = Source::open()?;
         let described = src.describe();
@@ -276,7 +327,10 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
         let off = Reading::take(rtl, start, false, None);
         let on_src = src.level(LOWIF_RF_HZ, CONTROL_LEVEL)?;
         let on = Reading::take(rtl, start, false, None);
-        let (w_on, s_on, n_on) = windows(bulk, rate, 10);
+        let (w_on, s_on, n_on, c_on) = windows_content(bulk, rate, 10, open);
+        for c in &c_on {
+            println!("  tone on: {}", c.compact().render());
+        }
         let off_again = src.off()?;
         src.quit();
         let moved = meter::moved(&off, &on, Meter::IfAgcMsbFirst).map(|(a, c, m)| J::obj().with("off", a).with("on", c).with("moved", m));
@@ -298,7 +352,7 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
                 .with("tone_off_after", off_again),
         );
     }
-    Ok((rec, streams))
+    Ok((rec, streams, contents))
 }
 
 /// The positive control's level: +10 dB relative, where findings 4c-4e

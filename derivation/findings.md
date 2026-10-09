@@ -2,7 +2,7 @@
 
 Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
-Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
+Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
 Results: the demodulator is clocked from the tuner's clock output (4a);
@@ -802,10 +802,84 @@ the IF-mode demodulator settings), which is why the zero-IF scans never
 saw it. **Not a sample stream.** Recorded as an any-bytes register; the
 scan continued.
 
+### The bit scan with the data path held open: COMPLETE, the content never changes — `data/step3-scan-lowif-open.jsonl` — `harness scan --baseline low-if-open`
+
+Hypothesis (the project owner's, 2026-10-09, in the record's header):
+page 0 0x07 bit 7 opens the bulk endpoint's data path; a second register
+may select what feeds the FIFO. With the path held open, a bit that
+routed the sampled signal into it would change the **content** (the
+3,760-byte period would break), not only the flow.
+
+Held state: low-if + `OpenPath` (page 0 0x07 0x3C → 0xBC, read back);
+`disturbed` also checks that bit. The detector (`examples/harness/content.rs`)
+works on each 100 ms window's bytes on the fly (never stored): bytes/s;
+the period score = fraction of i with data[i] == data[i + 3760]; the
+byte histogram's entropy; mean and variance of even/odd bytes as 8-bit
+I/Q, unsigned and two's complement.
+
+**Held state alone** (10 × 100 ms, written into the header before the
+scan): 44.42–44.60 MB/s; period score **1.000** in every window; entropy
+7.9472 bits; I/Q unsigned means 125.07 / 127.22, variances 5519 / 5714;
+two's complement means 0.743 / −0.511, variances 5429 / 5145. With the
+tone on (tone control `if_agc_val` 8191 → −957): 36.9–37.1 MB/s (the
+transmitter shares the host's USB), every other number the same to the
+third decimal.
+
+**Thresholds** (header `detector_thresholds`): interesting = period score
+< 0.99 (solo minimum − 0.01) with ≥ 15,040 bytes in the window, OR
+bytes/s in [2.4, 9.6] MB/s (½–2 × 2 × 2.4 Msps); logged "rate changed"
+outside [35.5, 53.5] MB/s (solo range ∓ 20 %), "signature changed"
+with the entropy outside [7.897, 7.997] bits. An interesting candidate
+would end the chunk and run `confirm-write` on it at once (rate
+tracking, tone off/±offsets, statistics, minimisation).
+
+**A gap found and closed.** Two candidates stop the replay for good
+although every register reads back as held: page 0 0xB5 0x0A → 0x02
+(bit 3; the window got 96 kB and one bulk transfer ended with
+0xE00002ED, kIOReturnNotResponding; nothing more until a power cycle)
+and page 4 0x02 0x00 → 0x01 (bit 0; 30 MB/s in its window, then nothing
+until the page 4 0x10 b1 soft reset and reapply). Of the 48 + 113
+candidates after them, 159 began on a stopped path (p4 0x06 b5 and 0x0E
+b1 began with the flow briefly restarted by the candidate before). The held state now includes
+the flow itself: before every write a 50 ms window must reach rate_lo,
+else the baseline is reapplied, else power cycle (`held_flow_before`
+on every new line). The 155 candidates with no bytes at all were re-run
+(`--redo-flowless`), and the 4 that had begun without flow but got a
+few stale bytes (p4 0x06 b4, 0x0A b4, 0x0B b0, 0x0E b0) by
+`--redo-list`; the re-test lines carry `"redo":true` and supersede the
+originals. In the redo pass the flow was found lost once (before p4 0x0B
+b1, 28.7 MB/s; the reapply restored 41.5 MB/s).
+
+Results, the latest line per candidate (10,240 candidates, 10,399
+lines):
+
+| | count |
+|---|---|
+| interesting (period broken, or rate toward 2 × sample rate) | **0** — no confirmation was triggered |
+| period score below 1.000 (10,223 windows with ≥ 15,040 B) | **0**: every window that carried enough bytes to score was the same 3,760-byte replay |
+| bytes/s in 2.4–9.6 MB/s | 0 |
+| signature changed (entropy) | 0; entropy 7.9409–7.9487 bits throughout |
+| rate changed: the flow throttled or stopped, the content periodic where scored | 28: p0 0x01 b0, 0x06 b5 b7, 0x07 b6 b7, 0x0A b3 b7, 0x0E b0, 0xB5 b3; p1 0x01 b2, 0x09 b7, 0x0C b6, 0xD7 b0; p4 0x01 b0, 0x02 b0, 0x06 b5 b7, 0x07 b0–b6 (page 4 0x07 writes reach page 0 0x07: the held bit is cleared, reapplied), 0x0A b3 b7, 0x0E b0 b1 |
+| zero bytes in the window | 0 |
+| wedged, recovered | 6 (p0 0x20 b4, p0 0xA7 b5 b6, p4 0x20 b4, p4 0xA7 b5 b6, as in every scan) |
+| detector check | 0 halts; 1 transfer error (p0 0xB5 b3 above) |
+
+**No candidate carries the tone, or anything else from the air:** no
+single bit, from the held-open path, changed what the endpoint delivers
+from the FIFO memory's 3,760-byte replay; the bits that matter only
+throttle or stop it. The scan ran with the source unkeyed (the detector
+looks for any change of content, which sampled noise produces as surely
+as a tone); since nothing was interesting, no candidate reached the
+tone test.
+
 ### Replay (from the repository root of the workspace)
 
 ```
 SRC='--source-cmd "cargo run --release --example tone_source -- --cabled"'
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if-open --limit 0 $SRC      # held state alone, thresholds into the header
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if-open --limit 1500 $SRC   # repeat to 10240 (an interesting candidate ends the chunk with its confirmation)
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if-open --redo-flowless $SRC
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if-open --redo-list 4:0x06:4,4:0x0A:4,4:0x0B:0,4:0x0E:0 $SRC
 cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if --limit 2500 $SRC   # first chunk: header, solo, tone control
 cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if --limit 3000        # repeat until 10240
 cargo run --release -p sdr-rtl --example harness -- scan --baseline power-on --limit 3500      # repeat until 10240
@@ -898,6 +972,7 @@ session received bytes (a halted pipe delivers none until re-enumeration):
 | step3-witness-restart-scan.log | — | — | — | — | watched EP 0; **not evidence about EP 0x81** |
 | step3-blockscan-{sys,usb,p3,p4}.jsonl (smoke, 300 each) | 1,200 | 1 / 23 / 1 / 1 | — | none needed: written with the new detector, every line's `q` shows 0 halts and ≥ 1 transfer in flight | **valid** |
 | step3-scan-lowif.jsonl, step3-scan-poweron.jsonl | 10,240 each | 10 / 10 | — | none needed: new detector, every `bulk_check` 0 errors, 0 halts, ≥ 1 in flight | **valid** |
+| step3-scan-lowif-open.jsonl | 10,240 (10,399 lines) | — | the flow itself: lines with bytes or `held_flow_before` | 159 candidates ran on a stopped path; re-run with the flow check (`"redo":true` lines supersede) | **valid** with the redo lines |
 
 The windows themselves (50 ms + 200 ms follow-up; 200 ms first-byte +
 200 ms judge) were polled throughout: the old detector and the new one

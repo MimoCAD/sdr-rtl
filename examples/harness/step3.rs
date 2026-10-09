@@ -9,6 +9,7 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use crate::baselines::{self, Baseline};
+use crate::content;
 use crate::json::{J, hex8, hex32};
 use crate::regs::*;
 use crate::usb::{self, BulkCounter, Rtl};
@@ -304,7 +305,38 @@ pub fn alive(rtl: &Rtl) -> bool {
     rtl.sys_read8(DEMOD_CTL).is_ok()
 }
 
-pub const SCAN_USAGE: &str = "scan [--baseline zero-if|low-if|power-on] [--limit N]";
+pub const SCAN_USAGE: &str = "scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] [--redo-flowless | --redo-list P:OFF:BIT,...]";
+
+/// low-if-open: the window the held flow is checked with before each
+/// candidate's write.
+pub const FLOW_CHECK: Duration = Duration::from_millis(50);
+
+/// low-if-open: the candidates whose window and stale count were both 0
+/// (the path carried nothing before or after the write: the held flow had
+/// been lost before them, which the register checks cannot see) and that
+/// have no "redo" line yet. Lines carry "bytes":N and
+/// "stale_bytes_discarded":N as plain integers.
+fn flowless_keys(path: &std::path::Path) -> HashSet<(u8, u8, u8)> {
+    let mut set = HashSet::new();
+    let mut redone = HashSet::new();
+    if let Ok(text) = std::fs::read_to_string(path) {
+        for line in text.lines().filter(|l| l.contains("\"kind\":\"candidate\"")) {
+            let get = |k: &str| -> Option<usize> {
+                let i = line.find(&format!("\"{k}\":"))? + k.len() + 3;
+                line[i..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+            };
+            let (Some(p), Some(o), Some(b)) = (get("page"), get("offset_dec"), get("bit")) else { continue };
+            let key = (p as u8, o as u8, b as u8);
+            if line.contains("\"redo\":true") {
+                redone.insert(key);
+            } else if get("bytes") == Some(0) && get("stale_bytes_discarded") == Some(0) {
+                set.insert(key);
+            }
+        }
+    }
+    set.retain(|k| !redone.contains(k));
+    set
+}
 
 /// The single-bit scan from one of the baselines ([`Baseline`]; zero-if,
 /// the original, by default), resumable from its record, at most `--limit`
@@ -313,8 +345,35 @@ pub const SCAN_USAGE: &str = "scan [--baseline zero-if|low-if|power-on] [--limit
 pub fn scan(args: &[String]) -> Result<(), String> {
     let mut baseline = Baseline::ZeroIf;
     let mut limit: Option<usize> = None;
+    let mut redo_mode = false;
+    let mut redo_list: HashSet<(u8, u8, u8)> = HashSet::new();
     let mut i = 0;
     while i < args.len() {
+        if args[i] == "--redo-flowless" {
+            redo_mode = true;
+            i += 1;
+            continue;
+        }
+        if args[i] == "--redo-list" {
+            // P:OFF:BIT,... (OFF hex with 0x or decimal): re-test exactly these.
+            let v = args.get(i + 1).ok_or(SCAN_USAGE)?;
+            for item in v.split(',') {
+                let f: Vec<&str> = item.split(':').collect();
+                let n = |s: &str| -> Result<u8, String> {
+                    match s.strip_prefix("0x") {
+                        Some(h) => u8::from_str_radix(h, 16).map_err(|e| format!("{item}: {e}")),
+                        None => s.parse().map_err(|e| format!("{item}: {e}")),
+                    }
+                };
+                if f.len() != 3 {
+                    return Err(format!("--redo-list {item}: P:OFF:BIT"));
+                }
+                redo_list.insert((n(f[0])?, n(f[1])?, n(f[2])?));
+            }
+            redo_mode = true;
+            i += 2;
+            continue;
+        }
         let v = args.get(i + 1).ok_or(SCAN_USAGE)?;
         match args[i].as_str() {
             "--baseline" => baseline = Baseline::parse(v)?,
@@ -327,6 +386,19 @@ pub fn scan(args: &[String]) -> Result<(), String> {
     let rate = baseline.rate_hz();
     let path = crate::data_dir().join(baseline.record_name());
     let (done, has_header) = done_keys(&path);
+    if redo_mode && baseline != Baseline::LowIfOpen {
+        return Err("--redo-flowless is for --baseline low-if-open".into());
+    }
+    let redo = if !redo_list.is_empty() {
+        redo_list
+    } else if redo_mode {
+        flowless_keys(&path)
+    } else {
+        HashSet::new()
+    };
+    if redo_mode {
+        println!("{} candidates to re-test from the held state with its flow verified", redo.len());
+    }
     let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
     let (mut rtl, mut bulk, setup) = baseline.fresh()?;
     if !has_header && baseline == Baseline::ZeroIf {
@@ -336,9 +408,15 @@ pub fn scan(args: &[String]) -> Result<(), String> {
             .with("procedure", "read byte; write it with the bit flipped; measure; restore; verify the restore by read-back");
         writeln!(out, "{}", hdr.with("kind", "header").render()).map_err(|e| e.to_string())?;
     }
+    let open = baseline == Baseline::LowIfOpen;
+    let mut held: Option<content::Thresholds> = None;
+    if has_header && open {
+        let first = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        held = Some(content::Thresholds::from_header(first.lines().next().unwrap_or("")).ok_or("the record's header has no detector_thresholds")?);
+    }
     if !has_header && baseline != Baseline::ZeroIf {
-        let (solo, solo_streams) = baselines::solo(baseline, &rtl, &mut bulk)?;
-        let hdr = crate::header_with_source("3-scan", &format!("bulk IN bytes per 100 ms with one demodulator bit flipped on top of the {} baseline", baseline.name()))
+        let (solo, solo_streams, solo_content) = baselines::solo(baseline, &rtl, &mut bulk)?;
+        let mut hdr = crate::header_with_source("3-scan", &format!("bulk IN bytes per 100 ms with one demodulator bit flipped on top of the {} baseline", baseline.name()))
             .with("candidate_space", "page 0..=4 x offset 0x00..=0xFF x bit 0..=7 (10240 candidates)")
             .with("settings_held_fixed", format!("the {} baseline (baseline_definition); streams judged against {rate} Hz; window 100 ms; {} x {} byte transfers queued; the source unkeyed during the scan", baseline.name(), BulkCounter::QUEUED, BUF_LEN))
             .with("procedure", "read byte; write it with the bit flipped; measure 100 ms (bytes already queued before the window counted as stale); restore; verify the restore by read-back; chip answering; the baseline's settings re-read (baseline_definition), reapplied if disturbed, power cycle and the baseline from scratch if they do not hold or the chip is gone")
@@ -347,6 +425,18 @@ pub fn scan(args: &[String]) -> Result<(), String> {
             .with("baseline_setup", setup)
             .with("solo", solo)
             .with("solo_streams", solo_streams);
+        if open {
+            let t = content::Thresholds::from_solo(&solo_content, rate);
+            println!("held state thresholds: {}", t.record().render());
+            hdr.set(
+                "hypothesis",
+                "page 0 0x07 bit 7 opens the bulk endpoint's data path (data/step3-confirm-lowif-p0-07-bc.json: 45 MB/s replay of the FIFO memory, period 3,760 B = the 20-block FIFO). A second register may select what feeds that FIFO; with the path held open, a bit that routes the sampled signal into it would change the CONTENT, not just the flow: the 3,760-byte period would break",
+            );
+            hdr.set("detector", content::LEGEND);
+            hdr.set("detector_thresholds", t.record());
+            hdr.set("on_interesting", "the line is written, the chunk ends, and confirm-write runs on the candidate's value from this baseline (rate tracking at 2.4/1.2/2.048 Msps, tone off and at two offsets with --source-cmd, I/Q statistics and spectrum, minimisation); a 'confirmation' line names its record");
+            held = Some(t);
+        }
         writeln!(out, "{}", hdr.with("kind", "header").render()).map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
         if solo_streams {
@@ -359,17 +449,46 @@ pub fn scan(args: &[String]) -> Result<(), String> {
         writeln!(out, "{}", setup.with("kind", "setup").render()).map_err(|e| e.to_string())?;
     }
     let (mut tested, mut hits, mut any_bytes, mut wedges, mut reapplied) = (0usize, 0usize, 0usize, 0usize, 0usize);
+    let (mut changed, mut data, mut flow_lost) = (0usize, Vec::new(), 0usize);
+    let mut interesting: Option<(u8, u8, u8)> = None;
     'scan: for page in 0..PAGES {
         for off in 0..=255u8 {
             for bit in 0..8u8 {
-                if done.contains(&(page, off, bit)) {
+                if redo_mode != redo.contains(&(page, off, bit)) || (!redo_mode && done.contains(&(page, off, bit))) {
                     continue;
                 }
-                if limit.is_some_and(|n| tested >= n) {
+                if limit.is_some_and(|n| tested >= n) || interesting.is_some() {
                     break 'scan;
                 }
                 tested += 1;
                 let mut line = J::obj().with("kind", "candidate").with("page", page).with("offset_dec", off).with("offset", hex8(off)).with("bit", bit);
+                if redo_mode {
+                    line.set("redo", true);
+                }
+                if let Some(t) = &held {
+                    // The held state includes the flow itself: a candidate
+                    // can stop the replay for good while every register
+                    // reads back as held (p0 0xB5 b3, p4 0x02 b0).
+                    let f = bulk.measure(FLOW_CHECK, None);
+                    line.set("held_flow_before", f.rate().round());
+                    if f.rate() < t.rate_lo {
+                        flow_lost += 1;
+                        line.set("held_reapplied", baseline.apply(&rtl));
+                        let g = bulk.measure(FLOW_CHECK, None);
+                        line.set("held_flow_after_reapply", g.rate().round());
+                        if g.rate() < t.rate_lo {
+                            drop(bulk);
+                            drop(rtl);
+                            let (r, b, setup) = baseline.fresh()?;
+                            writeln!(out, "{}", setup.with("kind", "recovery").with("reason", "held flow lost").with("before", J::obj().with("page", page).with("offset", hex8(off)).with("bit", bit)).render())
+                                .map_err(|e| e.to_string())?;
+                            rtl = r;
+                            bulk = b;
+                            let h = bulk.measure(FLOW_CHECK, None);
+                            line.set("held_flow_after_power_cycle", h.rate().round());
+                        }
+                    }
+                }
                 let orig = rtl.demod_read8(page, off);
                 match orig {
                     Err(e) => {
@@ -381,14 +500,30 @@ pub fn scan(args: &[String]) -> Result<(), String> {
                         line.set("flipped", hex8(flipped));
                         let wr = rtl.demod_write8(page, off, flipped);
                         line.set("write_error", wr.err().map(|e| e.to_string()));
-                        let w = bulk.measure(WINDOW, None);
+                        data.clear();
+                        let w = bulk.measure(WINDOW, if open { Some(&mut data) } else { None });
                         line.set("bytes", w.bytes);
                         line.set("bytes_per_s", w.rate());
                         line.set("streams", streams(w.rate(), rate));
                         line.set("stale_bytes_discarded", w.stale_bytes);
                         hits += streams(w.rate(), rate) as usize;
                         any_bytes += (w.bytes + w.stale_bytes > 0) as usize;
-                        if w.bytes + w.stale_bytes > 0 {
+                        if let Some(t) = &held {
+                            // The content detector; the bytes are dropped.
+                            let c = content::Content::of(&data, w.elapsed.as_secs_f64());
+                            let (why, note) = t.judge(&c);
+                            line.set("c", c.compact());
+                            if !note.is_empty() {
+                                changed += 1;
+                                line.set("note", J::Arr(note.iter().map(|s| J::from(*s)).collect()));
+                                println!("p{page} 0x{off:02X} b{bit}: {} {}", note.join(", "), c.compact().render());
+                            }
+                            if !why.is_empty() {
+                                line.set("interesting", J::Arr(why.iter().map(|s| J::from(*s)).collect()));
+                                println!("p{page} 0x{off:02X} b{bit}: INTERESTING ({}) {}", why.join(", "), c.compact().render());
+                                interesting = Some((page, off, flipped));
+                            }
+                        } else if w.bytes + w.stale_bytes > 0 {
                             println!("p{page} 0x{off:02X} b{bit}: {} B in the window, {} B stale", w.bytes, w.stale_bytes);
                         }
                         if !w.errors.is_empty() {
@@ -440,10 +575,24 @@ pub fn scan(args: &[String]) -> Result<(), String> {
     out.flush().map_err(|e| e.to_string())?;
     bulk.close();
     println!(
-        "{} baseline: {tested} tested this run ({} before), {hits} streams, {any_bytes} with any bytes, {wedges} wedges, {reapplied} baseline reapplies",
+        "{} baseline: {tested} tested this run ({} before), {hits} streams, {any_bytes} with any bytes, {wedges} wedges, {reapplied} baseline reapplies{}",
         baseline.name(),
-        done.len()
+        done.len(),
+        if open { format!(", {changed} with rate or signature changed, held flow lost before {flow_lost}, interesting: {interesting:?}") } else { String::new() }
     );
+    if let Some((p, o, v)) = interesting {
+        drop(rtl);
+        println!("confirming p{p} 0x{o:02X} = 0x{v:02X} from {}", baseline.name());
+        let r = crate::confirm_write::confirm(baseline, p, o, v, &crate::confirm_write::Opts::default());
+        let mut l = J::obj().with("kind", "confirmation").with("page", p).with("offset", hex8(o)).with("value", hex8(v));
+        match &r {
+            Ok(name) => l.set("record", name.as_str()),
+            Err(e) => l.set("error", e.as_str()),
+        };
+        writeln!(out, "{}", l.render()).map_err(|e| e.to_string())?;
+        out.flush().map_err(|e| e.to_string())?;
+        r?;
+    }
     Ok(())
 }
 
