@@ -308,3 +308,297 @@ Polarity is per field and NOT uniform — read each one.
 - The configuration EEPROM on the reference circuit is an M24C02 with
   E2..E0 grounded on the host I²C pins 18/19 (Fig. 9) — address 0xA0
   by the M24C02's own addressing; the document prints no address.
+
+## RTL2832U block diagram and data path (Figure 1, §7)
+
+All from [RTL2832U] page images (Figure 1 re-rendered at 3600 px, and
+Figure 9 at 7200 px, then cut into tiles). "Drawn" means only what the
+figure shows; nothing here is inferred from other sources.
+
+### Figure 1, Block Diagram (§4, p. 3)
+
+Blocks, every label as printed:
+
+- **ADC**, with "Sampling Clock 28.8 MHz" printed above it. One input
+  arrow comes in from the left; it has **no label** (no pin name, no
+  I/Q). **One** ADC is drawn.
+- **AGC**, with two arrows pointing out to the left, labelled
+  "RF AGC" and "IF AGC".
+- "IF to Baseband" (a label over the mixer stage, not a box): two
+  multiplier circles (⊗), a box "90", and an oscillator circle (~).
+- Two boxes **LPF** (one after each multiplier).
+- **Resampler**.
+- **Synchroniza-tions** (printed broken over two lines like this).
+- **FFT**.
+- **Channel Estimation/ Equalizer** (one box).
+- **De-Mapper**.
+- **Channel Decoding & De-Interleaver** (one box).
+- **PID Filter**.
+- **USB**.
+
+Lines and arrows, as drawn:
+
+1. The ADC output splits at a junction. One branch goes down and enters
+   **AGC** (arrowhead into AGC). The other branch splits again, into the
+   upper and the lower multiplier.
+2. The oscillator (~) feeds the **lower** multiplier directly (arrow up
+   into it). A thin grey line leaves the oscillator and goes up to the
+   right side of the "90" box (no arrowhead). The "90" box feeds the
+   **upper** multiplier (arrow up into it).
+3. Upper multiplier → LPF (arrow); lower multiplier → LPF (arrow).
+4. The upper LPF output is labelled **I**, the lower LPF output **Q**.
+   Both lines run into the left side of **Resampler**, with no
+   arrowheads.
+5. Resampler → Synchronizations → FFT (arrows, left to right).
+6. "Timing Error": a line from the top of Synchronizations, over and
+   down into the top of Resampler (arrowhead into Resampler).
+7. "Frequency Error": a line from the bottom of Synchronizations, down
+   and left into the oscillator (arrowhead into the oscillator).
+8. FFT → down to Channel Estimation/Equalizer (arrow). The bottom row
+   then runs right to left: Channel Estimation/Equalizer → De-Mapper →
+   Channel Decoding & De-Interleaver → (labelled "MPEG 2") → PID Filter →
+   (labelled "MPEG 2") → USB. No line leaves USB.
+
+The data path as drawn, in order: ADC → multipliers driven by the
+oscillator and its 90 copy ("IF to Baseband") → LPF ×2 → **I / Q** →
+Resampler → Synchronizations → FFT → Channel Estimation/Equalizer →
+De-Mapper → Channel Decoding & De-Interleaver → MPEG 2 → PID Filter →
+MPEG 2 → USB.
+
+- **One** path, **one** output. Figure 1 draws no branch, mux, bypass,
+  tap or second output on the data path. The only side branches are
+  the ADC → AGC branch (out as RF AGC / IF AGC) and the two feedback
+  loops (Timing Error → Resampler, Frequency Error → oscillator).
+- Figure 1 draws **no** 8051, I²C (master, repeater or pins), IR, GPIO,
+  EEPROM, TS pin or M_ERR. USB appears only as the data path's last
+  block.
+- Figure 1 draws none of these, though the text describes them: DC
+  cancellation / IQ compensation (§9.2), adjacent-channel rejection
+  (§9.3 `En_aci`), co-channel interference rejection (§9.5), impulse
+  noise cancellation (§9.6), DAGC (§9.7), guard interval removal (§7.5),
+  the TPS decoder (§7.9), the descrambler (§7.11). The document never
+  says where these sit relative to the drawn blocks.
+- The text's section order (§7.5 guard interval removal, §7.6 FFT,
+  §7.7 synchronization) is not the figure's (Synchronizations before
+  FFT); §7.5 says guard interval removal works "according to the
+  results of synchronization".
+- **Contradiction:** Figure 1 draws one ADC with one input, but §7.1
+  speaks of "Zero IF (I & Q channel) input". Table 1 (p. 5) also lists
+  two differential input pairs (VIP/VIN "I Path", VQP/VQN "Q Path"), and
+  Tables 4 / 15 (pp. 17, 29) give separate ADC_I / ADC_Q enables.
+  Figure 1 draws only the IF case.
+
+### §7 Functional Description (pp. 7–9), quoted exactly
+
+Quoted with the document's own typos and punctuation (marked *sic*).
+
+- §7 (p. 7): "The block diagram of the RTL2832U DVB-T demodulator is
+  shown in Figure 1, page 3. The RTL2832U accepts IF or Zero IF input
+  signals with the analog signal sampled by the internal ADC. The sampled
+  data stream is then processed by OFDM demodulation. After decoding by
+  an on-chip FEC (Viterbi and Reed-Solomon decoder) the USB 2.0 interface
+  outputs packets with transport stream data."
+- §7.1 ADC (p. 7): "The internal A/D converter can accept tuner output
+  with various bandwidths (6, 7, 8MHz), different IF frequencies (4.57M
+  or 36.167M,), Zero IF (I & Q channel) input and can perform spectrum
+  reversion." (*sic*) "Using a sampling clock generated by the internal
+  PLL with a 28.8MHz clock source, the RTL2832U demodulates the received
+  TV signal."
+- §7.2 AGC (p. 7): "The AGC circuit is used to adjust received signal
+  strength to a moderate level for the ADC. This module supports two
+  output paths, and both are sigma-delta modulated signals. The output
+  signals need additional RC LPFs (Low-Pass Filters) before feeding to IF
+  and RF VGA in the tuner The delayed AGC algorithm is described in
+  section 8.1 …" (missing period *sic*).
+- §7.3 Digital Down Conversion (p. 7): "The RTL2832U uses IF or Zero-IF
+  sampling to process received signals. The Digital Down Conversion
+  (DDC) circuit converts the sampled IF signal to a complex base-band
+  signal for further processing. The down conversion frequency and
+  low-pass filter can be programmed according to different IF frequency,
+  sampling rates, and signal bandwidth." No register for the low-pass
+  filter appears in Table 6 (p. 20), which lists only `Spec_inv`,
+  `En_aci` and `pset_iffreq`.
+- §7.4 Resampler (p. 8): "The Resampler circuit changes the received
+  signal from a fixed ADC sampling rate to an Orthogonal Frequency
+  Division Multiplexing (OFDM) sampling rate according to the signal
+  bandwidth. The conversion ratio can be programmed via a register
+  setting."
+- §7.5 Guard Interval Removal (p. 8): "… It is necessary to remove the
+  guard interval before Fast Fourier Transform (FFT) processing. This
+  module is used to moderate the OFDM symbol boundary for FFT according
+  to the results of synchronization."
+- §7.6 FFT (p. 8): "The Fast Fourier Transform (FFT) circuit converts a
+  received time domain signal to a frequency domain signal. Based on the
+  ETSI 300-744 definition, FFT output contains continuous pilots,
+  scattered pilots, Transmission Parameter Signal (TPS), and data
+  signal. These signals can be used for synchronization, channel
+  estimation, and data decision in further processing."
+- §7.7 Synchronization (p. 8): "The RTL2832U can measure and compensate
+  for a large range of sampling frequency offsets and carrier frequency
+  offsets before making a data decision. A moderate symbol boundary is
+  utilized to avoid Inter-Symbol Interference (ISI)."
+- §7.8 Channel Estimation (p. 9): "… The estimated channel response can
+  be used for equalization, and is updated symbol by symbol …"
+- §7.9 TPS Decoder (p. 9): "… Parameters such as transmission mode,
+  guard interval value, code rate etc, can be pre-set by registers to
+  overwrite the result of TPS decoding."
+- §7.10 Equalization (p. 9): "… The data bit is detected based on the
+  equalization output."
+- §7.11 De-Interleaver, FEC Decoder, and Descrambler (p. 9): "In
+  accordance with ETSI 300-744, the RTL2832U uses a de-interleaver to
+  re-order the decision data bit to the correct sequence. The Forward
+  Error Correction (FEC) decoder circuit detects and corrects error bits
+  in the received sequence. The descrambler recovers the output of the
+  decoder to a standard Transport Stream (TS) sequence."
+- §7 never mentions an output other than the USB transport stream. It
+  says nothing on a parallel or serial TS interface, a TS clock, or
+  valid / sync signals.
+
+Related text outside §7:
+
+- §8 (p. 10): "There are three interfaces (AGC, ADC input, two-wire
+  serial interface) between the tuner and the demodulator."
+- §8.2 (p. 14): "Tuner IF or Zero IF output is AC coupled to the
+  RTL2832U differential ADC input. An external AC coupling capacitor is
+  required."
+- §9.3 (p. 19): "The Analog-to-Digital Converter (ADC) block sub-samples
+  Intermediate Frequency (IF) signals, and a Digital Down Conversion
+  (DDC) block converts the IF to baseband signals." The `pset_iffreq` and
+  `rsamp_ratio` examples (pp. 19–20) include a "DAB Mode" (0x2FB814;
+  0xE10000). The document says nothing else about DAB.
+- §9.4 (p. 20): "As the ADC sampling clock is larger than the symbol
+  ratio, there is a re-sampler to convert sampling data to symbol
+  ratio."
+- §9.2 (p. 18): "In Zero-IF mode, the output signal of the tuner often
+  has DC bias and IQ mismatch issues. … DC cancellation and IQ
+  compensation blocks are default enabled when *en_bbin* is set to 1."
+- **Contradiction, IF frequency:** 36.125 MHz (§1, p. 1) against
+  36.167 MHz (§2 p. 2, §7.1 p. 7, Fig. 3 p. 10). §9.3 gives
+  `pset_iffreq` examples for both; its 36.125 line prints
+  "f_IF_D = 36.167-28.8 = 7.367" (copy error *sic*).
+- **Contradiction, crystal tolerance:** "±100ppm" (§2 p. 2, Fig. 3
+  p. 10, §9.10 p. 24) against the ±30 ppm in the "Clock and analog"
+  subsection above.
+
+### Where baseband / I-Q exists in the chain
+
+- Figure 1: complex baseband exists as the lines labelled **I** and
+  **Q**, between the two LPFs and the Resampler. It continues, drawn as
+  one line, through Resampler → Synchronizations → FFT. After the FFT it
+  is frequency-domain (§7.6).
+- §7.3 / §9.3: the DDC makes "a complex base-band signal" from the
+  sampled IF.
+- Zero-IF: I and Q arrive already split, on VIP/VIN and VQP/VQN (Table 1
+  p. 5), each to its own ADC (ADC_I / ADC_Q, Tables 4 and 15). §9.2 DC
+  cancellation and IQ compensation run in this mode. The document does
+  not say whether the Figure 1 mixers are bypassed when
+  `pset_iffreq` = 0 (§9.3 zero-IF example).
+- No pin, register, endpoint or mode in the document outputs these
+  samples. The only output drawn (Fig. 1) or described (§7, §11.1) is
+  the MPEG-2 transport stream over USB.
+- **Naming contradiction, I against Q:** §9.1 (p. 17) "IF signal mode"
+  enables only `AD_EN_reg1`, which Table 4 calls "Enable ADC_Q". Yet
+  Fig. 3's IF variant (p. 10) drives VIP/VIN, which Table 1 calls the
+  "I Path". Fig. 9 (p. 44) labels the nets on VIP/VIN (pins 1/2)
+  **Q_P / Q_N**, and those on VQP/VQN (pins 4/5) **I_N / I_P**, in that
+  order. §9.1's lists also say "AD_EN_reg0" where Table 4 has
+  `AD_EN_reg`. `opt_adc_iq` (Table 4) swaps the ADC_I / ADC_Q datapaths.
+
+### TS interface / MPEG-TS port
+
+- **No TS pins.** Fig. 2 (p. 4) and Table 1 (pp. 5–6) list no TS
+  data, clock, valid, sync or start pins, parallel or serial. The only
+  MPEG pin is **M_ERR**, pin 35, "MPEG Error Output", type O (Table 1,
+  p. 6). Fig. 9 (p. 44) leaves pin 35 unconnected (×).
+- The document has **nothing** on a parallel or serial TS mode, a TS
+  clock, or valid / sync signals.
+- The TS leaves only through USB: §7 (p. 7, quoted above); §11.1
+  (p. 36): "The RTL2832U transfers transport stream data from the
+  demodulation module to the host via an embedded high-speed USB 2.0
+  interface (compatible with USB 1.1). Two endpoints are supplied. One
+  is the control pipe and the other is the data pipe for TS transfer. …
+  The data pipe can be configured to BULK mode or ISO mode."
+- Endpoint A FIFO unit = one TS packet: `USB_EPA_CTL` bit 5 "FIFO Flush.
+  Write 1 to flush the oldest TS packet (a 188 bytes block)"; bit 0
+  "FIFO Valid. Write 1 to validate the TS packet (a 188 bytes block)"
+  (Table 32, p. 40). `USB_EPA_FIFO_CFG`: `BLK_DROP_COUNTER` "Counts
+  blocks dropped (each is 188 bytes) due to full FIFO"; "EPA FIFO Size …
+  in 188-byte blocks. Valid data range is 1~10", reset Ah (Table 34,
+  p. 40). `USB_EPA_CFG` bits 9:8 isochronous "Must be set to 00"; bit 7
+  Endpoint Enable, reset 0 (Table 31, p. 39).
+- PID filter (§9.11, p. 24; Fig. 7; Table 13, pp. 25–26), between the
+  decoder and USB (Fig. 1). "There are 32 PIDs that can be selected
+  within the received multiplex … the default register setting will let
+  all PID transport streams pass through."
+  - Fig. 7 top: "TS, PID=y" → [function | PID filter] → "After PID
+    filtering TS".
+  - Fig. 7 detail: for each n = 0…31, "PID=y" and "PIDn" go into
+    "compare"; compare AND `en_PID[n]`; the 32 ANDs are ORed; the OR is
+    XORed with `mode_PID`. Output "Bit 1: Pass the TS of PID = y /
+    Bit 0 : Rejected the TS of PID = y".
+  - Page 0, 0x61: `err_pass` [5] (0 reject / 1 pass all error packets,
+    default 1), `mode_PID` [6] (0 pass matched / 1 reject matched,
+    default 1), `enable_PID` [7] ("Set 1 to Enable Output of PID Filter
+    / Set 0 No Output", default 1). `en_PID[31:0]` at 0x62–0x65,
+    default 0. `PID0`–`PID31` [12:0] at {0x66,0x67} … {0xA4,0xA5}.
+  - With the defaults (all `en_PID` 0, `mode_PID` 1) the XOR gives 1:
+    pass all. This agrees with the text.
+  - `enable_PID` = 0 is documented as "No Output" — a TS gate ahead of
+    USB.
+
+### I²C buses (Fig. 5, p. 15; Fig. 9, p. 44; Table 1, p. 6)
+
+- Two pin pairs (Table 1, p. 6):
+  - Tuner bus: I2C_SCLT pin 16 (OD, "Output SCLK Signal (5 Voltage
+    Tolerance) for Tuner Control") and I2C_SDAT pin 17 (I/OD).
+  - Under "Host Interface": I2C_SCL pin 18 (OD, "I²C Interface Clock
+    Output Pin") and I2C_SDA pin 19 (I/OD).
+- **Fig. 5, the repeater.** Labels as printed:
+  - A "Tuner" box outside the "RTL2832U" box. Its bus is labelled
+    "I2C_SCLT / I2C_SDAT" and enters the RTL2832U box on the left.
+  - Inside the box, the bus passes through a switch, drawn open with a
+    small arrow at its blade and labelled "I2C_repeat==1".
+  - Right of the switch, a junction: a line goes up to an inner box
+    "Demod I2C".
+  - The bus continues right, out of the RTL2832U box, to the label
+    "I2C commands from driver via USB interface".
+  - So the repeater sits **between the tuner pins and an internal bus**
+    that carries both the driver's USB-borne commands and the "Demod
+    I2C" slave. With the switch closed, the tuner and "Demod I2C" share
+    that bus.
+  - Fig. 5 does not draw pins 18/19.
+  - The figure's label is "I2C_repeat"; the register (Table 3) is
+    `IIC_repeat`.
+- **Fig. 9 (reference circuit).** Separate nets:
+  - Pins 16 / 17 go to an off-board connector box "SCLT" / "SDAT", with
+    R9 / R10 4.7K pull-ups to VDD3.
+  - Pins 18 / 19 go to U4 M24C02-W SCL (pin 6) / SDA (pin 5), with R12 /
+    R13 4.7K pull-ups to VDD3. E0/E1/E2/VSS (pins 1–4) are grounded,
+    MODE (pin 7) is unconnected (×), VCC (pin 8) is on VDD3.
+  - **Contradiction, pull-ups:** 4.7K here against "10k ohm" in §8.3
+    (p. 15) and Fig. 3 (p. 10).
+- Fig. 3 (p. 10) draws SCLT and SDAT from the demodulator to the tuner,
+  both with arrowheads into the tuner, each pulled up by 10k ohm to
+  VDD3.3. The demodulator's "DA" block drives "IF AGC" (solid) and
+  "RF AGC" (dashed) through RC networks with pull-ups to VDD3.3. A thick
+  "USB" arrow leaves the demodulator. Two variants:
+  - IF: "IF differential input 1Vpk-pk 36.167MHz", 6pF on VIP and VIN.
+  - Zero-IF: "Zero-IF differential input 1Vpk-pk", 0.1uF on each of VIP,
+    VIN, VQP and VQN. Fig. 9 uses 1nF (C2–C5).
+- GPIO[2] (§10.2, p. 29): "Input for external I²C mode, internal
+  pull-down. This pin is used for LED control after 8051 firmware runs".
+
+### 8051, USB, IR, GPIO relative to the data path
+
+- None is drawn on Figure 1's data path except USB, its last block.
+- 8051: appears only in §10's title "Register Descriptions (8051
+  System)" (p. 27, base 0x3000) and in the GPIO[2] line above (p. 29).
+  No figure draws it.
+- IR: pin 38 IRRC "IR Signal Input" (Table 1); IrDA registers
+  FC00–FD19 (Table 14, pp. 27–28); §11.1 "remote wakeup capability via
+  IrDA".
+- GPIO: 8 pins (Table 1), registers 0x3001–0x3008 (§10.2).
+- Fig. 9 also ties pin 41 HSDM → "DM" and pin 40 HSDP → "DP" of the
+  "USB Interface" connector, and pin 13 AGC_IF → R11 10K → connector
+  "IF_AGC" (10nF C14 to ground, 1K R7 to VDD3). It leaves pin 15 AGC_RF
+  and pin 6 VINR unconnected (×).
