@@ -27,7 +27,7 @@ reasoning in [`findings.md`](findings.md), the method in
 
 | What | State | Next |
 |---|---|---|
-| **Raw-sample output mode** (the thing that makes it an SDR) | Not in any document. Every single-write space covered once from the documented baseline with 0 streams: demodulator pages 0–2 (196,608, plain), pages 3–4 (65,536 each), the system block (65,536), the USB block (130,407; 155 values of the test-mode register deferred). The restart variant of pages 0–2: 35,766 of 196,608 so far, 0. The only bytes ever seen are 188-byte transport-stream blocks. | Finish the restart remainder (~12 h). If nothing streams, the switch needs more than one write: a decision on narrowing is the project owner's. |
+| **Raw-sample output mode** (the thing that makes it an SDR) | Not in any document. Every single-write space covered once from the documented baseline with 0 streams: demodulator pages 0–2 (196,608, plain), pages 3–4 (65,536 each), the system block (65,536), the USB block (130,407; 155 values of the test-mode register deferred). The restart variant of pages 0–2: 196,608, complete, 0. About 790,000 single-write candidates in all, 0 streams. The only bytes ever seen are 188-byte transport-stream blocks. **The single-write hypothesis is exhausted.** | The switch needs more than one write (or a state the baseline excludes). How to search that space is the project owner's decision. |
 | Wire sample format | Follows from the above | — |
 | RF 110–208 MHz | No divider reaches LO 114–214 MHz under the documented formula | Search for a lower VCO under other register settings |
 | Image rejection | 10–20 dB at IMR_G = IMR_P = 32 | Calibrate IMR_G × IMR_P with the tone above the LO |

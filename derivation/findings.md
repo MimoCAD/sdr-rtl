@@ -2,7 +2,7 @@
 
 Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
-Status: recovery proven; step 1 (encodings) and step 2 (tuner access) done; step 3 baseline + exhaustive single-bit scan done: **no single bit streams**; confirm of p1 0x92 bit 6 reads 0 B alone; the plain byte scan over pages 0–2 is complete (**no single byte streams**); the byte scan with restart is paused at 28976 of 196608 tested (through page 0 0x71 value 0xA1), 0 streams, wedges/errors only at page 0 0x10 and 0x20 (resume: `harness bytescan --restart --limit 15000`, repeated). The complete plain byte-scan record is stored gzip-compressed (`data/step3-bytescan.jsonl.gz`, 52 MB raw); `gunzip -k` it before re-running the plain scan. The bulk detector was checked on the wire (below): it polled endpoint 0x81 without a gap; a halted endpoint would have blinded it silently, which it now detects, clears and records. Block scan (2026-10-08, `harness blockscan --block sys|usb|p3|p4 --limit N`): the single-write spaces the byte scans had not covered — the system block 0x3000–0x30FF, the USB block 0x2000–0x21FF, demodulator pages 3 and 4 — are declared and smoke-tested, 300 candidates each, **0 streams**; the chunks are pending (section below).
+Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
 Results: the demodulator is clocked from the tuner's clock output (4a);
@@ -596,7 +596,12 @@ nothing can be written during it. Restart order used:
 Every candidate runs from the same state (power-on values + baseline +
 the candidate alone), with no history from earlier candidates.
 
-## Step 3 — byte scan with restart (in progress) — `data/step3-bytescan-restart.jsonl` — `harness bytescan --restart [--limit N]`
+## Step 3 — byte scan with restart: COMPLETE, no single byte streams — `data/step3-bytescan-restart.jsonl.gz` — `harness bytescan --restart [--limit N]`
+
+Complete 2026-10-09: 195,840 tested + 768 skipped = 196,608, 65,280 per
+page, **0 streams**, 321 wedges (page 0 0x20 and its neighbours), all
+recovered. Bytes at all: page 0 0x07 only (64 candidates, the one-shot
+188-byte transport-stream bursts within 0.1 ms of the FIFO reset).
 
 Same candidate space and order as the plain byte scan (pages 0–2 ×
 offsets × values ascending, current value logged as a skip, pages 3/4
