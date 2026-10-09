@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::io::Write as _;
 use std::time::Duration;
 
+use crate::baselines::{self, Baseline};
 use crate::json::{J, hex8, hex32};
 use crate::regs::*;
 use crate::usb::{self, BulkCounter, Rtl};
@@ -28,14 +29,14 @@ pub fn streams(bytes_per_s: f64, rate: f64) -> bool {
 }
 
 /// One documented baseline write, recorded with its read-back.
-fn step(name: &str, r: Result<J, usb::Fail>) -> J {
+pub fn step(name: &str, r: Result<J, usb::Fail>) -> J {
     match r {
         Ok(j) => J::obj().with("write", name).with("result", j),
         Err(e) => J::obj().with("write", name).with("error", e.to_string()),
     }
 }
 
-fn rmw_sys8(rtl: &Rtl, off: u16, clear: u8, set: u8) -> Result<J, usb::Fail> {
+pub fn rmw_sys8(rtl: &Rtl, off: u16, clear: u8, set: u8) -> Result<J, usb::Fail> {
     let old = rtl.sys_read8(off)?;
     rtl.sys_write8(off, (old & !clear) | set)?;
     let back = rtl.sys_read8(off)?;
@@ -47,7 +48,7 @@ fn rmw_demod(rtl: &Rtl, page: u8, off: u8, mask: u8, value: u8) -> Result<J, usb
     Ok(J::obj().with("before", hex8(old)).with("after", hex8(back)).with("verified", back & mask == value & mask))
 }
 
-fn rmw_usb32(rtl: &Rtl, off: u16, clear: u32, set: u32) -> Result<J, usb::Fail> {
+pub fn rmw_usb32(rtl: &Rtl, off: u16, clear: u32, set: u32) -> Result<J, usb::Fail> {
     let old = rtl.usb_read32(off)?;
     rtl.usb_write32(off, (old & !clear) | set)?;
     let back = rtl.usb_read32(off)?;
@@ -253,14 +254,14 @@ pub fn detector_check() -> Result<(), String> {
     Ok(())
 }
 
-fn scan_path() -> std::path::PathBuf {
-    crate::data_dir().join("step3-scan.jsonl")
-}
-
-fn done_keys() -> HashSet<(u8, u8, u8)> {
+/// The candidates a scan record already holds, and whether it has its
+/// header line.
+fn done_keys(path: &std::path::Path) -> (HashSet<(u8, u8, u8)>, bool) {
     let mut set = HashSet::new();
-    if let Ok(text) = std::fs::read_to_string(scan_path()) {
+    let mut has_header = false;
+    if let Ok(text) = std::fs::read_to_string(path) {
         for line in text.lines() {
+            has_header |= line.contains("\"kind\":\"header\"");
             // Lines carry "page":P,"offset":O,"bit":B as plain integers.
             let get = |k: &str| -> Option<u8> {
                 let i = line.find(&format!("\"{k}\":"))? + k.len() + 3;
@@ -271,7 +272,7 @@ fn done_keys() -> HashSet<(u8, u8, u8)> {
             }
         }
     }
-    set
+    (set, has_header)
 }
 
 /// The baseline's demodulator and system settings still in place: the
@@ -303,25 +304,71 @@ pub fn alive(rtl: &Rtl) -> bool {
     rtl.sys_read8(DEMOD_CTL).is_ok()
 }
 
-pub fn scan() -> Result<(), String> {
+pub const SCAN_USAGE: &str = "scan [--baseline zero-if|low-if|power-on] [--limit N]";
+
+/// The single-bit scan from one of the baselines ([`Baseline`]; zero-if,
+/// the original, by default), resumable from its record, at most `--limit`
+/// new candidates per run. A new record (low-if, power-on) starts with the
+/// baseline measured alone; if it streams by itself the scan stops there.
+pub fn scan(args: &[String]) -> Result<(), String> {
+    let mut baseline = Baseline::ZeroIf;
+    let mut limit: Option<usize> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let v = args.get(i + 1).ok_or(SCAN_USAGE)?;
+        match args[i].as_str() {
+            "--baseline" => baseline = Baseline::parse(v)?,
+            "--limit" => limit = Some(v.parse().map_err(|e| format!("--limit {v}: {e}"))?),
+            a => return Err(format!("{a}: {SCAN_USAGE}")),
+        }
+        i += 2;
+    }
     usb::guard()?;
-    let done = done_keys();
-    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(scan_path()).map_err(|e| e.to_string())?;
-    if done.is_empty() {
+    let rate = baseline.rate_hz();
+    let path = crate::data_dir().join(baseline.record_name());
+    let (done, has_header) = done_keys(&path);
+    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
+    let (mut rtl, mut bulk, setup) = baseline.fresh()?;
+    if !has_header && baseline == Baseline::ZeroIf {
         let hdr = crate::header("3-scan", "bulk IN bytes per 100 ms with one demodulator bit flipped on top of the baseline")
             .with("candidate_space", "page 0..=4 x offset 0x00..=0xFF x bit 0..=7 (10240 candidates)")
             .with("settings_held_fixed", format!("documented-only baseline at {RATE_HZ} Hz; window 100 ms; {} x {} byte transfers queued", BulkCounter::QUEUED, BUF_LEN))
             .with("procedure", "read byte; write it with the bit flipped; measure; restore; verify the restore by read-back");
         writeln!(out, "{}", hdr.with("kind", "header").render()).map_err(|e| e.to_string())?;
     }
-    let (mut rtl, mut bulk, setup) = fresh_with_baseline(RATE_HZ, &[])?;
-    writeln!(out, "{}", setup.with("kind", "setup").render()).map_err(|e| e.to_string())?;
-    for page in 0..PAGES {
+    if !has_header && baseline != Baseline::ZeroIf {
+        let (solo, solo_streams) = baselines::solo(baseline, &rtl, &mut bulk)?;
+        let hdr = crate::header_with_source("3-scan", &format!("bulk IN bytes per 100 ms with one demodulator bit flipped on top of the {} baseline", baseline.name()))
+            .with("candidate_space", "page 0..=4 x offset 0x00..=0xFF x bit 0..=7 (10240 candidates)")
+            .with("settings_held_fixed", format!("the {} baseline (baseline_definition); streams judged against {rate} Hz; window 100 ms; {} x {} byte transfers queued; the source unkeyed during the scan", baseline.name(), BulkCounter::QUEUED, BUF_LEN))
+            .with("procedure", "read byte; write it with the bit flipped; measure 100 ms (bytes already queued before the window counted as stale); restore; verify the restore by read-back; chip answering; the baseline's settings re-read (baseline_definition), reapplied if disturbed, power cycle and the baseline from scratch if they do not hold or the chip is gone")
+            .with("baseline_definition", baseline.definition())
+            .with("descriptor", rtl.descriptor_record())
+            .with("baseline_setup", setup)
+            .with("solo", solo)
+            .with("solo_streams", solo_streams);
+        writeln!(out, "{}", hdr.with("kind", "header").render()).map_err(|e| e.to_string())?;
+        out.flush().map_err(|e| e.to_string())?;
+        if solo_streams {
+            bulk.close();
+            println!("the {} baseline streams by itself: scan not started (see the header of {})", baseline.name(), path.display());
+            return Ok(());
+        }
+        println!("{} baseline alone: no stream; scanning", baseline.name());
+    } else {
+        writeln!(out, "{}", setup.with("kind", "setup").render()).map_err(|e| e.to_string())?;
+    }
+    let (mut tested, mut hits, mut any_bytes, mut wedges, mut reapplied) = (0usize, 0usize, 0usize, 0usize, 0usize);
+    'scan: for page in 0..PAGES {
         for off in 0..=255u8 {
             for bit in 0..8u8 {
                 if done.contains(&(page, off, bit)) {
                     continue;
                 }
+                if limit.is_some_and(|n| tested >= n) {
+                    break 'scan;
+                }
+                tested += 1;
                 let mut line = J::obj().with("kind", "candidate").with("page", page).with("offset_dec", off).with("offset", hex8(off)).with("bit", bit);
                 let orig = rtl.demod_read8(page, off);
                 match orig {
@@ -337,8 +384,13 @@ pub fn scan() -> Result<(), String> {
                         let w = bulk.measure(WINDOW, None);
                         line.set("bytes", w.bytes);
                         line.set("bytes_per_s", w.rate());
-                        line.set("streams", streams(w.rate(), RATE_HZ));
+                        line.set("streams", streams(w.rate(), rate));
                         line.set("stale_bytes_discarded", w.stale_bytes);
+                        hits += streams(w.rate(), rate) as usize;
+                        any_bytes += (w.bytes + w.stale_bytes > 0) as usize;
+                        if w.bytes + w.stale_bytes > 0 {
+                            println!("p{page} 0x{off:02X} b{bit}: {} B in the window, {} B stale", w.bytes, w.stale_bytes);
+                        }
                         if !w.errors.is_empty() {
                             line.set("transfer_errors", J::Arr(w.errors.iter().map(|e| J::from(e.as_str())).collect()));
                         }
@@ -352,24 +404,27 @@ pub fn scan() -> Result<(), String> {
                 }
                 let mut wedged = !alive(&rtl);
                 if !wedged {
-                    let disturbed = baseline_disturbed(&rtl, RATE_HZ);
+                    let disturbed = baseline.disturbed(&rtl);
                     if !disturbed.is_empty() {
                         // The candidate (or its restore) changed a baseline
                         // setting: log which, and apply the baseline again;
                         // if that does not hold, power-cycle as for a wedge.
+                        reapplied += 1;
                         line.set("baseline_disturbed", J::Arr(disturbed.into_iter().map(J::from).collect()));
-                        line.set("baseline_reapplied", apply_baseline(&rtl, RATE_HZ, &[]));
-                        let still = baseline_disturbed(&rtl, RATE_HZ);
+                        line.set("baseline_reapplied", baseline.apply(&rtl));
+                        let still = baseline.disturbed(&rtl);
                         wedged = !still.is_empty();
                         line.set("baseline_still_disturbed", J::Arr(still.into_iter().map(J::from).collect()));
                     }
                 }
                 if wedged {
+                    wedges += 1;
+                    println!("p{page} 0x{off:02X} b{bit}: wedged or baseline lost; power cycle");
                     line.set("wedged", true);
                     writeln!(out, "{}", line.render()).map_err(|e| e.to_string())?;
                     drop(bulk);
                     drop(rtl);
-                    let (r, b, setup) = fresh_with_baseline(RATE_HZ, &[])?;
+                    let (r, b, setup) = baseline.fresh()?;
                     writeln!(out, "{}", setup.with("kind", "recovery").with("after", J::obj().with("page", page).with("offset", hex8(off)).with("bit", bit)).render())
                         .map_err(|e| e.to_string())?;
                     rtl = r;
@@ -382,7 +437,13 @@ pub fn scan() -> Result<(), String> {
         }
         println!("page {page} done");
     }
+    out.flush().map_err(|e| e.to_string())?;
     bulk.close();
+    println!(
+        "{} baseline: {tested} tested this run ({} before), {hits} streams, {any_bytes} with any bytes, {wedges} wedges, {reapplied} baseline reapplies",
+        baseline.name(),
+        done.len()
+    );
     Ok(())
 }
 
@@ -394,7 +455,7 @@ pub const BLOCK: usize = 188;
 /// rows of 188 bytes, for every column the most common byte and the
 /// fraction of rows holding it. A fixed marker at a fixed column shows
 /// as a column near 1.0; noise-like samples give no such column.
-fn block_structure(data: &[u8]) -> J {
+pub fn block_structure(data: &[u8]) -> J {
     let rows = data.len() / BLOCK;
     let mut cols = J::Arr(Vec::new());
     let mut constant = J::Arr(Vec::new());
@@ -421,7 +482,7 @@ fn block_structure(data: &[u8]) -> J {
 }
 
 /// I/Q statistics over interleaved unsigned 8-bit samples.
-fn iq_stats(data: &[u8]) -> J {
+pub fn iq_stats(data: &[u8]) -> J {
     let mut ch = J::Arr(Vec::new());
     for (name, phase) in [("I", 0), ("Q", 1)] {
         let s: Vec<f64> = data.iter().skip(phase).step_by(2).map(|b| *b as f64).collect();

@@ -16,8 +16,20 @@
 //!   protocol-readonly  step 1 phases A-B only: no power cycle, no writes
 //!   tuner       step 2: tuner access through the I2C repeater
 //!   baseline    step 3: the documented-only streaming baseline
-//!   scan        step 3: the exhaustive single-bit scan (resumable)
+//!   scan [--baseline zero-if|low-if|power-on] [--limit N]
+//!               step 3: the exhaustive single-bit scan (resumable; at
+//!               most N new candidates per run) from the documented
+//!               zero-IF baseline (default, data/step3-scan.jsonl), the
+//!               step-4 low-IF state with the tuner tuned (-lowif), or
+//!               the power-on state (-poweron); see baselines.rs. A new
+//!               record starts with the baseline measured alone (low-if:
+//!               with --source-cmd, also the tone off/on control)
 //!   confirm P O B   step 3: confirm a scan hit (page, offset, bit)
+//!   confirm-write P O VALUE [--baseline B] [--windows N] [--buf BYTES]
+//!               [--no-minimise] [--out PATH]  step 3: one byte written on
+//!               a baseline: bytes/s at 2.4/1.2/2.048 Msps, the FIFO's
+//!               dropped blocks, structure and spectrum of the bytes, tone
+//!               off/on (low-if, --source-cmd), the baseline minimised
 //!   bytescan [--limit N]  step 3: every byte value of demodulator pages
 //!               0-2 (resumable; at most N new candidates per run)
 //!   bytescan --restart [--limit N]  the same, each candidate followed by
@@ -65,8 +77,10 @@
 //!               --if-step HZ --if-max HZ --snapshots N --limit N
 //! ```
 
+mod baselines;
 mod blockscan;
 mod bytescan;
+mod confirm_write;
 mod json;
 mod meter;
 mod regs;
@@ -172,8 +186,9 @@ fn main() {
         Some("protocol-readonly") => step1::run_readonly(),
         Some("tuner") => step2::run(),
         Some("baseline") => step3::baseline(),
-        Some("scan") => step3::scan(),
+        Some("scan") => step3::scan(&args[1..]),
         Some("confirm") => step3::confirm(&args[1..]),
+        Some("confirm-write") => confirm_write::run(&args[1..]),
         Some("bytescan") => bytescan::run(&args[1..]),
         Some("blockscan") => blockscan::run(&args[1..]),
         Some("restart-probe") => restart::probe(),
@@ -188,7 +203,7 @@ fn main() {
         Some("filter") => step4::filter(&args[1..]),
         Some("if-choice") => step4::if_choice(&args[1..]),
         _ => Err(format!(
-            "usage: harness recovery | protocol | tuner | baseline | scan | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
+            "usage: harness recovery | protocol | tuner | baseline | scan [--baseline zero-if|low-if|power-on] [--limit N] | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
             step4::USAGE
         )),
     };

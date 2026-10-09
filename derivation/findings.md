@@ -2,7 +2,7 @@
 
 Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
-Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
+Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
 Results: the demodulator is clocked from the tuner's clock output (4a);
@@ -703,6 +703,119 @@ whatever else resets the demodulator; `usb` ≈ 3.3 h plus 106 more SIE
 resets at offset 0x01 (~11 min) plus whatever USB_EPA_CFG / USB_EPA_CTL
 cost. Resume with the same command; `--limit` bounds a chunk.
 
+## Step 3 — the bit scan from two other starting states: low-if and power-on — `data/step3-scan-lowif.jsonl`, `data/step3-scan-poweron.jsonl` — `harness scan --baseline low-if|power-on [--limit N]`
+
+Why (2026-10-09): every raw-sample scan above started from the
+documented **zero-IF** baseline (§9.1), but the tuner is a low-IF part
+([R820T] §4.3, Table 4-1) mixing high-side (4h), and step 4 saw the
+demodulator respond to a tone only in the documented IF mode with the
+tuner powered and tuned. And the zero-IF baseline's own writes might
+block the mode: the bare power-on state had never been scanned.
+`examples/harness/baselines.rs` defines both new starting states, item
+by item with citations; each record's header carries the definition,
+every write with its read-back, and the baseline measured alone.
+
+**low-if** (16 items, applied after a power cycle, every demodulator
+write a read-modify-write read back): DEMOD_CTL PLL | ADC_I | ADC_Q |
+reset-release (Table 15); GPIO3 tuner power + 50 ms (Tables 16–19);
+IIC_repeat (Table 3); AD_EN 0x08[7:6] = 01 and en_bbin = 0 (§9.1 IF
+mode); pset_iffreq = −665554 for 4.57 MHz (§9.3, [R820T] Table 4-1
+row 5); Spec_inv = 1 (§9.3, high-side per 4h); en_if_agc, en_rf_agc,
+aagc_hold 0 (Table 2), en_dagc (Table 10), AGC pin polarity 0 (Table 2,
+4b); rsamp_ratio 0x3000000 = 2.4 Msps (§9.4); the tuner image of
+`tuner.rs` in the vagc configuration, CLK_OUT_ENB = 0 (4a), LO 304.57 MHz
+= 300 MHz RF + 4.57 MHz, /8, Nint 84, SDM 39504 (4e); then the zero-IF
+baseline's four endpoint items (Tables 30–33). Read-backs in the record:
+DEMOD_CTL 0x20 → 0xE8, page 1 0x01 0x10 → 0x18, page 0 0x08 0x0D →
+0x4D, page 1 0xB1 0x1F → 0x1E, pset_iffreq `35 D7 5D` → `35 D8 2E`,
+page 1 0x15 0x06 → 0x07, rsamp `F3 26 66 64` → `FC 00 00 00`, every
+one verified; tuner R5–R15 read back exactly, R0 0x96, R2
+VCO_INDICATOR 92 (inside 70–127, 4c); endpoint 0x200 / 0xD1 / FIFO
+pulse 0 → 0x200 → 0 / DMA 1.
+
+**power-on** (after a power cycle, nothing but): DEMOD_CTL bit 7 (the
+demodulator PLL; without it every demodulator access stalls, 1B/1C, and
+every scan candidate is a demodulator write; the ADC enables are not
+set); the endpoint registers (USB_SYSCTL DMA, USB_EPA_CFG, USB_EPA_MAXPKT,
+USB_EPA_CTL stall) read and written only where they differ from what bulk
+IN needs. Streams are judged against the power-on rsamp_ratio 0xC99999 =
+64/7 MHz (9.142857 Msps, 18.29 MB/s).
+
+Procedure per candidate (the original bit scan's): read, write the bit
+flipped, one 100 ms window (bytes completed before it counted as stale),
+restore, verify, chip alive, the baseline's settings re-read (low-if:
+DEMOD_CTL, AD_EN = 01, en_bbin = 0, IIC_repeat, Spec_inv, pset_iffreq,
+rsamp_ratio, tuner R0 = 0x96 with R2 in 70–127; power-on: the PLL bit),
+reapplied if disturbed, power cycle and the baseline from scratch if
+not held or the chip is gone.
+
+### Results: COMPLETE, 0 streams from either baseline
+
+| | low-if | power-on |
+|---|---|---|
+| baseline alone, 10 × 100 ms | 0 B (twice); with the tone on 0 B; positive control `if_agc_val` 8191 → −1194 / −902 (the demodulator sees the tone) | 0 B |
+| writes | 16 items, every read-back as written (above) | DEMOD_CTL 0x20 → 0xA0; endpoint read 0x01 / 0xD1 / 0x200 / 0, all as needed, **0 writes** |
+| candidates | 10,240 (pages 0–4 × 0x00–0xFF × bits 0–7), 4 chunks | 10,240, 3 chunks |
+| streams (within 20 % of 2 × rate) | **0** (rate 2.4 Msps) | **0** (rate 64/7 Msps) |
+| any bytes | 2 candidates: p0 0x07 b7 (0x3C → 0xBC) 4,461,616 B in the window; p0 0x08 b0 3,704 B + 60,968 B stale — the carry-over of the 0x07 flood, which stopped at its restore | **0** (p0 0x07 b7 too: the tuner is not programmed) |
+| wedged, recovered | 6: p0 0x20 b4, p0 0xA7 b5, b6, p4 0x20 b4, p4 0xA7 b5, b6 (the zero-IF scan's six) | the same 6 |
+| baseline disturbed, reapplied, held | 10: p0 0x10 b1 and p4 0x10 b1 (everything back to power-on: the demodulator soft reset, as zero-IF), p4 0x08 b0–b7 (AD_EN) | 0 (the check is the PLL bit alone; the soft reset returns the demodulator to the power-on state, which is this baseline) |
+| restore not verified, not wedged | 255 (254 on page 3, the live readbacks; 1 on page 4) | 85 (84 on page 3; 1 on page 4) |
+| detector self-check | 10,240 lines: 0 transfer errors, 0 halts, never an empty queue | the same |
+| zero-IF's byte sources | p1 0x92 b6/b7 (TS blocks in the zero-IF bit scan): 0 B here; p0 0x07 0xC0+ not in a bit scan's space | 0 B |
+
+So the starting state was not what hid a raw-sample mode from the
+single-bit search: from the documented low-IF state with the tuner
+tuned (a state proven live by the tone), and from the bare power-on
+state, no single bit of demodulator pages 0–4 makes the chip stream at
+the resampler's rate. The one new behaviour is the FIFO replay below.
+
+### Page 0 0x07 bit 7 from low-if: 45 MB/s — the endpoint FIFO's 20 blocks replayed, not samples — `data/step3-confirm-lowif-p0-07-bc.json` — `harness confirm-write 0 0x07 0xBC --baseline low-if --dump /tmp/rtl-flood --source-cmd "…"`
+
+In the first low-if chunk page 0 0x07 0x3C → 0xBC gave 4,465,620 B in
+the 100 ms window (44.6 MB/s, 9.3 × 2 × 2.4 Msps: outside the
+criterion, so not a "stream", but the only sustained data any scan has
+produced); it stopped at the restore (the next candidate: 3,592 B +
+65,536 B stale, then 0). Not seen from zero-IF (bit scan: 0 B; byte
+scan: only the 0xC0+ one-shot 188-byte bursts). Confirmed and
+characterised (fresh power-on + low-if for each part; 10 × 100 ms
+windows; repeated twice, the numbers below are the second run):
+
+| test | result |
+|---|---|
+| control window before the write | 0 B at every rate |
+| rate tracking: rsamp 2.4 / 1.2 / 2.048 Msps | 45.04 / 45.03 / 44.61 MB/s = 9.38 / 18.76 / 10.89 × 2 × rate: **does not track rsamp** |
+| USB_EPA_FIFO_CFG[31:24] dropped blocks (Table 34) | 0 before, 255 (saturated) after every window, every rate |
+| after the restore | 29–46 kB (in flight), then 0 B |
+| periodicity (`data[i] == data[i+P]`, P ≤ 16384) | **P = 3760 B = 20 × 188 B**, match 1.000 over the first 32 KiB, 0.9992 over each whole capture; the mismatches (≈ 33.7 kB ≈ 9 × 3760) are the nine window boundaries where stale completions are not kept |
+| the 3760-byte pattern | identical through the tone states of one power session (> 4 s); different in every power session; all 256 byte values, no 0x47 at a fixed column (not transport-stream packets); byte histograms of each capture are exact multiples of the repeat count |
+| tone off / RF + 200 kHz / RF − 300 kHz / off | the same bytes; the same spectral peaks (cycles/sample −0.2517, 0.3032, 0.1733 … at 10–13 dB, read as complex or real) in all four: the RF is not in the data |
+| bytes/s with the tone on | 37.7 MB/s (the transmitter shares the host's USB) |
+| minimisation (each low-if item removed, 5 windows) | needed: **DemodCtl, IicRepeat, TunerImage** (0 B without any one; without IicRepeat the image cannot be written); every other item removed: 44.2–45.1 MB/s |
+
+USB_EPA_FIFO_CFG reads 0x14 = 20 at power-on (1A); the replay period is
+20 blocks of 188 bytes. So bit 7 of page 0 0x07 lets the endpoint read
+the FIFO's memory round and round at the bus's full rate (the chip's
+drop counter saturating), with nothing new written into it: the bytes
+are the FIFO RAM's power-on contents. It needs the tuner programmed (not
+the IF-mode demodulator settings), which is why the zero-IF scans never
+saw it. **Not a sample stream.** Recorded as an any-bytes register; the
+scan continued.
+
+### Replay (from the repository root of the workspace)
+
+```
+SRC='--source-cmd "cargo run --release --example tone_source -- --cabled"'
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if --limit 2500 $SRC   # first chunk: header, solo, tone control
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if --limit 3000        # repeat until 10240
+cargo run --release -p sdr-rtl --example harness -- scan --baseline power-on --limit 3500      # repeat until 10240
+cargo run --release -p sdr-rtl --example harness -- confirm-write 0 0x07 0xBC --baseline low-if --dump /tmp/rtl-flood $SRC
+```
+(`--limit 0` writes the header and the solo measurement only. A record
+that exists is resumed; move it away to start over. The first 300
+low-if candidates were run before the baseline was itemised and set
+aside; the record was restarted, with the same final register state.)
+
 ## Step 3 — the bulk detector on the wire — `harness detector-check`, `cynthion-witness watch S --ep 1`
 
 The alarm: `data/step3-witness-restart-scan.log` (30 s during the restart
@@ -784,6 +897,7 @@ session received bytes (a halted pipe delivers none until re-enumeration):
 | step3-bytescan-restart.jsonl (stopped) | 5,097 | 3 | 2,040 (40.0 %) | 3,057 (60.0 %; longest 1,597) | same; lines appended from now on carry `q` |
 | step3-witness-restart-scan.log | — | — | — | — | watched EP 0; **not evidence about EP 0x81** |
 | step3-blockscan-{sys,usb,p3,p4}.jsonl (smoke, 300 each) | 1,200 | 1 / 23 / 1 / 1 | — | none needed: written with the new detector, every line's `q` shows 0 halts and ≥ 1 transfer in flight | **valid** |
+| step3-scan-lowif.jsonl, step3-scan-poweron.jsonl | 10,240 each | 10 / 10 | — | none needed: new detector, every `bulk_check` 0 errors, 0 halts, ≥ 1 in flight | **valid** |
 
 The windows themselves (50 ms + 200 ms follow-up; 200 ms first-byte +
 200 ms judge) were polled throughout: the old detector and the new one

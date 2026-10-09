@@ -27,7 +27,7 @@ reasoning in [`findings.md`](findings.md), the method in
 
 | What | State | Next |
 |---|---|---|
-| **Raw-sample output mode** (the thing that makes it an SDR) | Not in any document. Every single-write space covered once from the documented baseline with 0 streams: demodulator pages 0–2 (196,608, plain), pages 3–4 (65,536 each), the system block (65,536), the USB block (130,407; 155 values of the test-mode register deferred). The restart variant of pages 0–2: 196,608, complete, 0. About 790,000 single-write candidates in all, 0 streams. The only bytes ever seen are 188-byte transport-stream blocks. **The single-write hypothesis is exhausted.** | The switch needs more than one write (or a state the baseline excludes). How to search that space is the project owner's decision. |
+| **Raw-sample output mode** (the thing that makes it an SDR) | Not in any document. Every single-write space covered once from the documented baseline with 0 streams: demodulator pages 0–2 (196,608, plain), pages 3–4 (65,536 each), the system block (65,536), the USB block (130,407; 155 values of the test-mode register deferred). The restart variant of pages 0–2: 196,608, complete, 0. About 790,000 single-write candidates in all, 0 streams. The only bytes ever seen are 188-byte transport-stream blocks. **The single-write hypothesis is exhausted.** 2026-10-09: the bit scan repeated from two other starting states — **low-if** (§9.1 IF mode, 4.57 MHz DDC, Spec_inv 1, tuner image tuned to 300 MHz, 2.4 Msps; live by the tone: `if_agc_val` 8191 → −902) and **power-on** (DEMOD_CTL PLL only) — 10,240 each, **0 streams**; neither baseline streams alone. New bytes: p0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 B at 45 MB/s (rate independent of rsamp, tone absent, FIFO drop counter 255) — not samples | No further search started; the multi-write space is the project owner's decision. Evidence: findings "the bit scan from two other starting states", `data/step3-scan-lowif.jsonl`, `data/step3-scan-poweron.jsonl`, `data/step3-confirm-lowif-p0-07-bc.json` |
 | Wire sample format | Follows from the above | — |
 | RF 110–208 MHz | No divider reaches LO 114–214 MHz under the documented formula | Search for a lower VCO under other register settings |
 | Image rejection | 10–20 dB at IMR_G = IMR_P = 32 | Calibrate IMR_G × IMR_P with the tone above the LO |
@@ -42,5 +42,8 @@ reasoning in [`findings.md`](findings.md), the method in
 cargo run --release -p sdr-rtl --example harness -- recovery
 cargo run --release -p sdr-rtl --example harness -- blockscan --block usb --from 29 0 --limit 12000
 cargo run --release -p sdr-rtl --example harness -- bytescan --restart --limit 15000
+cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if --limit 3000 [--source-cmd "cargo run --release --example tone_source -- --cabled"]
+cargo run --release -p sdr-rtl --example harness -- scan --baseline power-on --limit 3500
+cargo run --release -p sdr-rtl --example harness -- confirm-write 0 0x07 0xBC --baseline low-if [--source-cmd "…"]
 cargo build --manifest-path crates/rtl/derived/Cargo.toml && cargo test --manifest-path crates/rtl/derived/Cargo.toml
 ```
