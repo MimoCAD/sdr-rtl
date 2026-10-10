@@ -406,6 +406,17 @@ macro_rules! shared {
 pub struct LosslessStream(Core);
 
 /// A stream at ≤ [`ACCOUNTED_MAX_SPS`]: receive and finish.
+///
+/// It offers the same methods as [`RestrictedStream`]: with nothing read
+/// through the control pipe while samples flow (the rule every kind keeps,
+/// findings 16), the only mid-stream read that is free at these rates —
+/// the dropped-block counter — is not offered either. The two differ in
+/// how they start and stop and in what they promise: this one starts
+/// plainly and, to 1.8 Msps, a control request's stall rarely outlasts
+/// the FIFO (findings 16.3), so its finish costs ~20 blocks, counted;
+/// a `RestrictedStream` starts paused (a plain start drops ~37 blocks at
+/// 2.4 Msps) and its finish costs ~15 there. Kept apart so the kind
+/// names the rate's guarantee.
 pub struct AccountedStream(Core);
 
 /// A stream at any rate: receive and finish; it starts paused and resumes
