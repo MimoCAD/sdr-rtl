@@ -58,12 +58,14 @@ fn open(rate: f64) -> Result<Rtl, String> {
 
 fn report_json(r: &StreamReport, tail: usize) -> String {
     format!(
-        "\"tier\":\"{:?}\",\"samples\":{},\"tail\":{tail},\"dropped_blocks\":{},\"saturated\":{},\"breaks\":{}",
+        "\"tier\":\"{:?}\",\"samples\":{},\"tail\":{tail},\"dropped_blocks\":{},\"saturated\":{},\"breaks\":{},\"stall_retries\":{},\"configuration_unknown\":{}",
         r.tier,
         r.samples,
         r.dropped_blocks,
         r.saturated,
-        r.breaks.len()
+        r.breaks.len(),
+        r.stall_retries,
+        r.configuration_unknown
     )
 }
 
@@ -89,6 +91,8 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
     s.set_quiet_by_stop(std::env::args().any(|a| a == "--quiet-by-stop"));
     #[cfg(feature = "bench")]
     s.set_squeeze(std::env::args().skip_while(|a| a != "--squeeze").nth(1).and_then(|v| v.parse().ok()));
+    #[cfg(feature = "bench")]
+    s.set_fifo_reset(std::env::args().any(|a| a == "--fifo-reset"));
     #[cfg(not(feature = "bench"))]
     let _ = drain_ms;
     let mut buf = vec![Iq::default(); s.max_num_samps()];

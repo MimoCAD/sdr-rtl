@@ -98,6 +98,8 @@ pub const OUTPUT_DECIMATION: f64 = 4.0;
 /// to 2.88 Msps (0xA00000), with 2.048 (0xE10000) and 2.4 (0xC00000)
 /// between (findings 10.2a). A request inside the span is accepted; the
 /// points between the four measured ratios were not measured singly.
+/// "Delivered" is the rate only: at 2.88 Msps the samples carry periodic
+/// ~46° phase steps (findings 16.5; see `Rtl::set_rate`).
 pub const OUTPUT_RATE_GOOD_SPS: (f64, f64) = (1.024e6, 2.88e6);
 
 /// 3.2 Msps (0x900000, f_symbol 12.8 MHz) streamed at the rate in 6 runs

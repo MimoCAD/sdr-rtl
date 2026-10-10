@@ -315,6 +315,38 @@ with nothing flowing and reading the counter.
   breaks (125-228 a run) where 1.024-1.152 found none; whether that is the
   start transient repeating after each resume at that rate is open.
 
+### 16.6 The FIFO reset at each break; the refused request — `data/step16-fifo-reset.jsonl`
+
+- **The FIFO reset clears the held blocks** (USB_EPA_CTL bit 9 set, then
+  the register as it was — the vendor driver's set-up write, findings
+  9b): pulsed after the hold, with the output paused, the new
+  configuration begins 13-28 samples after `at_sample` (1.024 and
+  1.152 Msps, 6 breaks each; then 2 × 10 at 1.152 with it the default):
+  before, 6-10 blocks. 0 blocks dropped, no phase jump inside any segment.
+  The ~24 samples left are the filter pipeline flushing, not the FIFO.
+  The discarded blocks — the old configuration's last ~0.5-0.9 ms — are
+  gone by design and **not counted** by the chip's counter. Now the
+  default at every break, at every `RtlStream::start` (nothing flowing:
+  an earlier run's leftovers could otherwise lead a stream) and at every
+  finish. `Break::settled_at` = `at_sample` + 32.
+- **The refused request ("endpoint stalled")**: 2 of 3 `RestrictedStream`
+  runs at 2.4 Msps before the retry (1 in `tiercheck` 16.5, 1 here); the
+  request layer now tries a refused (STALLed) request again, up to 3 times
+  1 ms apart, and counts each retry (`StreamReport::stall_retries`). In 3
+  more full `tiercheck` runs: 2 retries in one `RestrictedStream`, the run
+  finished. That run received as many samples in its 3 s as the clean
+  ones (6,853,070 against 6,852,882 and 6,850,062) but dropped 255 blocks
+  (saturated): **the refusal fell in the finish, after the last sample
+  handed out**, while the chip streamed into a FIFO no one drained. So a
+  refusal goes with the chip being busy for ~10 ms or more, not with one
+  bad request.
+- **A failed reconfiguration is undone**: if the change inside a pause
+  fails, `Rtl::reassert` writes the last good tuner image whole again
+  (`Rtl`'s state fields are set only once a change's writes all
+  succeed), so the hardware is what `freq()` reports; if that fails too,
+  the stream's `freq()` errs from then on and the report says
+  `configuration_unknown`.
+
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 
 RF 200–232 MHz in 1 MHz steps; at each, the driver tunes (the band

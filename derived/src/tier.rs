@@ -16,7 +16,8 @@
 //!   does ([`LosslessStream::reconfigure`]: retune, gain, …) inside a
 //!   pause; nothing is lost, every sample before [`Break::at_sample`] is
 //!   the old configuration and every one from [`Break::settled_at`] the new
-//!   (between them, up to the FIFO's fill of old samples, findings 16.5),
+//!   (between them [`BREAK_SETTLE_SAMPLES`]: the filter pipeline; the FIFO's
+//!   held blocks are discarded at the break, findings 16.6),
 //!   and at this rate the pause itself loses nothing (100 paused retunes
 //!   of 100; 34 more in 16.5 with no phase jump inside a segment).
 //!   After any start the first ~5-10 ms carry a small phase wobble at
@@ -89,27 +90,27 @@ impl Tier {
     }
 }
 
-/// The most samples the endpoint FIFO can hold: its 21 blocks of memory
-/// (findings 16.1) and the ~24 samples always seen past them (16.5).
-pub const FIFO_RESIDUE_MAX_SAMPLES: u64 = 21 * 94 + 32;
+/// The samples after a break that still carry the old configuration: the
+/// chip's filter pipeline flushing, 14-27 measured (findings 16.6).
+pub const BREAK_SETTLE_SAMPLES: u64 = 32;
 
 /// One break a [`LosslessStream`] made on purpose.
 ///
-/// Where the new configuration begins is known to a window, not a
-/// sample (findings 16.5): the endpoint FIFO keeps its fill through the
-/// pause — ~6 blocks at 1.024 Msps, ~9 at 1.152, ~10 at 1.2, ±1, ~5 more
-/// at a run's first break — and hands it out after the resume, and no
-/// register tells it. Those samples are the old configuration's, in
-/// order and complete (the old tone's phase runs on across `at_sample`
-/// to within ±4°): nothing is lost, the old segment only ends a little
-/// after `at_sample`, somewhere before `settled_at`.
+/// The endpoint FIFO keeps its fill through a pause (~6 blocks at
+/// 1.024 Msps to ~10 at 1.2) and would hand it out after the resume, so
+/// at each break the FIFO is reset (USB_EPA_CTL bit 9) once everything it
+/// delivered is held: those last ~0.5-0.9 ms of the old configuration are
+/// **discarded by design** — the chip's counter does not count them — and
+/// the old segment ends at `at_sample` (findings 16.5, 16.6). After it,
+/// the first [`BREAK_SETTLE_SAMPLES`] still carry the old configuration
+/// (the filter pipeline); from `settled_at` on, the new one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Break {
     /// The samples handed out before the pause: everything before sample
     /// `at_sample` (from 0) is the old configuration.
     pub at_sample: u64,
-    /// From sample `settled_at` on, the new configuration, certainly:
-    /// `at_sample` + [`FIFO_RESIDUE_MAX_SAMPLES`].
+    /// From sample `settled_at` on, the new configuration: `at_sample` +
+    /// [`BREAK_SETTLE_SAMPLES`].
     pub settled_at: u64,
     /// What the pause write cost, just before the break: counted by the
     /// chip, read while paused.
@@ -132,6 +133,11 @@ pub struct StreamReport {
     /// A read of the counter found it stopped at 255: at least this many.
     pub saturated: bool,
     pub breaks: Vec<Break>,
+    /// Requests the chip refused and that were tried again, the run's
+    /// share (findings 16.6).
+    pub stall_retries: u64,
+    /// A failed change could not be undone during the run.
+    pub configuration_unknown: bool,
 }
 
 /// A finished stream: the receiver back, the report, and the samples
@@ -162,6 +168,11 @@ impl fmt::Display for StreamError {
 
 impl std::error::Error for StreamError {}
 
+/// An error re-labelled with the step it failed at.
+fn at(step: &'static str) -> impl Fn(Error) -> Error {
+    move |e| Error::Device { backend: crate::BACKEND, context: step, message: e.to_string() }
+}
+
 /// What every kind shares: the receiver it owns and the raw stream.
 struct Core {
     rtl: Rtl,
@@ -178,6 +189,14 @@ struct Core {
     quiet_by_stop: bool,
     /// Bench: the FIFO size written while paused, before the hold.
     squeeze: Option<u8>,
+    /// Discard the FIFO's held blocks at each break (findings 16.6); on
+    /// unless a bench program turns it off.
+    fifo_reset: bool,
+    /// A failed change could not be undone: the receiver's configuration
+    /// is not known (`freq` errs from then on).
+    unknown: bool,
+    /// The link's stall retries when the stream was made.
+    stalls_at_open: u64,
 }
 
 impl Core {
@@ -190,8 +209,9 @@ impl Core {
             };
             return Err(StreamError { rtl: Box::new(rtl), error });
         }
+        let stalls_at_open = rtl.link_ref().stall_retries();
         match rtl.open_stream(transfer_bytes, queue_depth) {
-            Ok(stream) => Ok(Core { rtl, stream, tier, started: false, breaks: Vec::new(), dropped_blocks: 0, saturated: false, drain: DRAIN, quiet_by_stop: false, squeeze: None }),
+            Ok(stream) => Ok(Core { rtl, stream, tier, started: false, breaks: Vec::new(), dropped_blocks: 0, saturated: false, drain: DRAIN, quiet_by_stop: false, squeeze: None, fifo_reset: true, unknown: false, stalls_at_open }),
             Err(error) => Err(StreamError { rtl: Box::new(rtl), error }),
         }
     }
@@ -202,11 +222,11 @@ impl Core {
         }
         if self.tier == Tier::Restricted {
             // Start paused, then resume with one write (findings 16.4).
-            self.stream.pause_blind()?;
-            self.stream.start()?;
-            self.stream.resume_blind()?;
+            self.stream.pause_blind().map_err(at("start: pause"))?;
+            self.stream.start().map_err(at("start: the sequence"))?;
+            self.stream.resume_blind().map_err(at("start: resume"))?;
         } else {
-            self.stream.start()?;
+            self.stream.start().map_err(at("start: the sequence"))?;
         }
         self.started = true;
         Ok(())
@@ -220,9 +240,9 @@ impl Core {
     /// Pause, drain, hold, read the counter (paused: free): the break.
     fn quiesce(&mut self) -> Result<(u64, DroppedBlocks)> {
         if self.quiet_by_stop {
-            self.stream.halt_blind()?;
+            self.stream.halt_blind().map_err(at("pause: halt"))?;
         } else {
-            self.stream.pause_blind()?;
+            self.stream.pause_blind().map_err(at("pause: the pause write"))?;
         }
         std::thread::sleep(self.drain);
         // Bench (findings 16.5): squeeze the FIFO while paused, to see
@@ -236,13 +256,17 @@ impl Core {
             }
             None => None,
         };
-        let at = self.stream.hold()?;
+        let pos = self.stream.hold().map_err(at("pause: hold"))?;
         if let Some(v) = restore {
             self.rtl.link_ref().usb_write_n(crate::protocol::USB_EPA_FIFO_CFG, &[v[0], v[1], v[2], v[3]])?;
         }
-        let d = self.stream.take_dropped_blocks()?;
+        if self.fifo_reset {
+            // The FIFO's held blocks discarded (findings 16.6).
+            self.stream.reset_fifo().map_err(at("pause: FIFO reset"))?;
+        }
+        let d = self.stream.take_dropped_blocks().map_err(at("pause: the counter"))?;
         self.count(d);
-        Ok((at, d))
+        Ok((pos, d))
     }
 
     fn reconfigure<T>(&mut self, f: impl FnOnce(&mut Rtl) -> Result<T>) -> Result<(T, Break)> {
@@ -255,13 +279,23 @@ impl Core {
         let t0 = Instant::now();
         let (at_sample, dropped_before) = self.quiesce()?;
         let r = f(&mut self.rtl);
-        self.stream.release()?;
-        if self.quiet_by_stop {
-            self.stream.restart_blind()?;
-        } else {
-            self.stream.resume_blind()?;
+        if r.is_err() {
+            // The change may have stopped half way (a tuner retune is
+            // several writes): the receiver's last good state written whole
+            // again, so the hardware is what `Rtl` says it is. If that
+            // fails too, the stream no longer knows its configuration.
+            if self.rtl.reassert().is_err() {
+                self.unknown = true;
+            }
         }
-        let b = Break { at_sample, settled_at: at_sample + FIFO_RESIDUE_MAX_SAMPLES, dropped_before, quiet: t0.elapsed(), rf_hz: self.rtl.freq().unwrap_or(f64::NAN) };
+        self.stream.release().map_err(at("resume: release"))?;
+        if self.quiet_by_stop {
+            self.stream.restart_blind().map_err(at("resume: restart"))?;
+        } else {
+            self.stream.resume_blind().map_err(at("resume: the resume write"))?;
+        }
+        let rf_hz = if self.unknown { f64::NAN } else { self.rtl.freq().unwrap_or(f64::NAN) };
+        let b = Break { at_sample, settled_at: at_sample + BREAK_SETTLE_SAMPLES, dropped_before, quiet: t0.elapsed(), rf_hz };
         self.breaks.push(b);
         r.map(|t| (t, b))
     }
@@ -272,7 +306,7 @@ impl Core {
             self.quiesce()?;
             let mut buf = vec![Iq::default(); self.stream.max_num_samps()];
             loop {
-                let info = self.stream.recv_into(&mut buf, TAIL_WAIT_S)?;
+                let info = self.stream.recv_into(&mut buf, TAIL_WAIT_S).map_err(at("finish: the tail"))?;
                 if info.n_samples == 0 {
                     break;
                 }
@@ -281,15 +315,16 @@ impl Core {
             // The stop's writes with nothing flowing, then the counter for
             // whatever the hold missed (none expected), then the register
             // back to its power-on state.
-            self.stream.stop()?;
-            let d = self.stream.take_dropped_blocks()?;
+            self.stream.stop().map_err(at("finish: stop"))?;
+            let d = self.stream.take_dropped_blocks().map_err(at("finish: the counter"))?;
             self.count(d);
-            self.stream.resume_blind()?;
+            self.stream.resume_blind().map_err(at("finish: the pause bit back"))?;
         }
         let samples = self.stream.delivered();
-        let Core { rtl, stream, tier, breaks, dropped_blocks, saturated, .. } = self;
+        let stall_retries = self.rtl.link_ref().stall_retries() - self.stalls_at_open;
+        let Core { rtl, stream, tier, breaks, dropped_blocks, saturated, unknown, .. } = self;
         drop(stream);
-        Ok(Finished { rtl, report: StreamReport { tier, samples, dropped_blocks, saturated, breaks }, tail })
+        Ok(Finished { rtl, report: StreamReport { tier, samples, dropped_blocks, saturated, breaks, stall_retries, configuration_unknown: unknown }, tail })
     }
 }
 
@@ -306,8 +341,23 @@ macro_rules! shared {
             }
 
             /// The RF the samples are centred on, from the words written.
+            /// Errs once a failed change could not be undone (the
+            /// configuration is then not known; see `reconfigure`).
             pub fn freq(&self) -> Result<f64> {
+                if self.0.unknown {
+                    return Err(Error::Device {
+                        backend: crate::BACKEND,
+                        context: "freq",
+                        message: "a reconfiguration failed and the last good state could not be written back: the receiver's configuration is not known".into(),
+                    });
+                }
                 self.0.rtl.freq()
+            }
+
+            /// Requests the chip refused and that were tried again since
+            /// the receiver was opened (findings 16.6).
+            pub fn stall_retries(&self) -> u64 {
+                self.0.rtl.link_ref().stall_retries()
             }
 
             /// Samples handed out so far.
@@ -406,6 +456,12 @@ impl LosslessStream {
     #[cfg(feature = "bench")]
     pub fn set_squeeze(&mut self, n: Option<u8>) {
         self.0.squeeze = n;
+    }
+
+    /// Discard the FIFO's held blocks at each break, for bench programs.
+    #[cfg(feature = "bench")]
+    pub fn set_fifo_reset(&mut self, on: bool) {
+        self.0.fifo_reset = on;
     }
 
     /// [`Rtl::set_gain`] inside a pause.

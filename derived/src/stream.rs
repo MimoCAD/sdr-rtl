@@ -280,6 +280,10 @@ impl RtlStream {
             State::Idle => start_sequence(self.ratio, &self.taps).into_iter().flat_map(|s| s.writes).collect(),
             State::Stopped => vec![restart_write()],
         };
+        // Nothing flows yet: the FIFO reset (whatever an earlier run left
+        // in it would come out first, findings 16.6) and the counter clear
+        // cost no samples.
+        self.reset_fifo()?;
         self.link.usb_write8(BLK_DROP_COUNTER, 0)?;
         self.drop_mark = 0;
         self.inner.start()?;
@@ -371,6 +375,16 @@ impl RtlStream {
         self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON])?;
         self.paused = false;
         Ok(())
+    }
+
+    /// Pulse USB_EPA_CTL's FIFO reset (bit 9 set, then the register as it
+    /// was), discarding what the endpoint FIFO holds. Only with the output
+    /// paused or stopped: findings 16.6.
+    pub fn reset_fifo(&mut self) -> Result<()> {
+        let v = self.link.usb_read_n(USB_EPA_CTL, 2)?;
+        let was = u16::from_le_bytes([v[0], v[1]]);
+        self.link.usb_write_n(USB_EPA_CTL, &(was | EPA_CTL_FIFO_RESET).to_le_bytes())?;
+        self.link.usb_write_n(USB_EPA_CTL, &was.to_le_bytes())
     }
 
     /// Halt the output with one write of the start register: page 0 0x06

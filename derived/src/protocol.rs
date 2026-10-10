@@ -140,6 +140,11 @@ pub const GPIO_ANTENNA_POWER: u8 = 1 << 4;
 /// bytes) due to full FIFO" — its fourth byte (32-bit registers read
 /// little-endian, findings step 1A).
 pub const USB_EPA_FIFO_CFG: u16 = 0x0160;
+/// USB_EPA_CTL (Table 32, p. 40; documents.md): 16-bit, bit 9 "FIFO
+/// reset", bit 5 flush, bit 4 stall, bit 0 FIFO valid. The vendor driver
+/// writes 0x0210 then 0 at its USB set-up (findings 9b).
+pub const USB_EPA_CTL: u16 = 0x0148;
+pub const EPA_CTL_FIFO_RESET: u16 = 1 << 9;
 pub const BLK_DROP_COUNTER: u16 = USB_EPA_FIFO_CFG + 3;
 /// The counter stops here (findings 16: 255 after every stall).
 pub const BLK_DROP_COUNTER_SATURATED: u8 = 0xFF;

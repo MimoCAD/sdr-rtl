@@ -235,6 +235,14 @@ impl Rtl {
     /// delivered; 3.2 Msps (half the rate in 2 runs of 8) and f_symbol ≥
     /// 14.4 MHz (broken) are refused (`demod::ratio_for_output_rate`).
     ///
+    /// **2.88 Msps corrupts the signal**: the samples carry a ~46° phase
+    /// step every ~11,000-14,000 samples (~200 a second) for as long as
+    /// the stream runs — every run measured, no sample lost (findings
+    /// 16.5). A tone's phase is broken at each step; a decoder sees a
+    /// symbol-timing and carrier glitch. 1.024-2.4 Msps show none after
+    /// the first ~10 ms. Below 1.44 Msps the first ~5-10 ms after a start
+    /// carry ~37° steps every 192-256 samples.
+    ///
     /// Refused while a stream exists: changing the ratio of a running
     /// stream did not dependably take (findings 10.2a), so the rate is
     /// fixed from `rx_stream` until the stream is dropped. A stream made
@@ -318,6 +326,21 @@ impl Rtl {
     /// The RF the baseband is centred on, from the PLL words written.
     pub fn freq(&self) -> Result<f64> {
         Ok(self.pll.lo_hz() - ddc_if_hz())
+    }
+
+    /// The receiver's last good tuner state written whole again (the image
+    /// of `front` at `pll`, as `open` writes it): after a change that
+    /// failed part way, the hardware is made what this `Rtl` says it is.
+    /// The state fields are set only when a change's writes all succeed,
+    /// so they always hold the last good state.
+    pub(crate) fn reassert(&mut self) -> Result<()> {
+        let img = self.front.image(&self.pll);
+        self.status = self.link.with_tuner(|l| {
+            l.tuner_write_image(&img)?;
+            std::thread::sleep(demod::PLL_SETTLE);
+            l.tuner_status()
+        })?;
+        Ok(())
     }
 
     fn codes(&self) -> GainCodes {

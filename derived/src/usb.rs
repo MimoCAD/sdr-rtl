@@ -8,12 +8,12 @@
 //! through.
 
 use std::fmt::Display;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use nusb::MaybeFuture;
-use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
+use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
@@ -25,6 +25,10 @@ use crate::protocol::*;
 /// access NAKs its data stage for 1-5 ms (findings step 3, the detector
 /// on the wire), far inside it.
 pub const CONTROL_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// How often a refused (STALLed) request is tried again, and how far apart.
+pub const STALL_RETRIES: u32 = 3;
+pub const STALL_RETRY_WAIT: Duration = Duration::from_millis(1);
 
 /// An open dongle's control pipe. Clones share the device and the state
 /// below: the receiver and its stream each hold one, possibly on two
@@ -43,6 +47,8 @@ struct Shared {
     rmw: Mutex<()>,
     /// A stream exists (from `Rtl::rx_stream` until the stream drops).
     stream_open: AtomicBool,
+    /// Requests the chip refused (STALL) and that were tried again.
+    stall_retries: AtomicU64,
 }
 
 fn usb_error(context: &'static str, e: impl Display) -> Error {
@@ -55,7 +61,7 @@ fn device_error(context: &'static str, message: String) -> Error {
 
 impl Link {
     pub fn new(dev: nusb::Device) -> Link {
-        Link { dev, shared: Arc::new(Shared { rmw: Mutex::new(()), stream_open: AtomicBool::new(false) }) }
+        Link { dev, shared: Arc::new(Shared { rmw: Mutex::new(()), stream_open: AtomicBool::new(false), stall_retries: AtomicU64::new(0) }) }
     }
 
     pub fn device(&self) -> &nusb::Device {
@@ -87,19 +93,21 @@ impl Link {
     /// don't care, wLength = bytes to read (Table 27).
     pub fn get(&self, value: u16, index: u16, len: u16, context: &'static str) -> Result<Vec<u8>> {
         let v = self
-            .dev
-            .control_in(
-                ControlIn {
-                    control_type: ControlType::Vendor,
-                    recipient: Recipient::Device,
-                    request: BREQUEST,
-                    value,
-                    index,
-                    length: len,
-                },
-                CONTROL_TIMEOUT,
-            )
-            .wait()
+            .retry_stall(|| {
+                self.dev
+                    .control_in(
+                        ControlIn {
+                            control_type: ControlType::Vendor,
+                            recipient: Recipient::Device,
+                            request: BREQUEST,
+                            value,
+                            index,
+                            length: len,
+                        },
+                        CONTROL_TIMEOUT,
+                    )
+                    .wait()
+            })
             .map_err(|e| usb_error(context, e))?;
         if v.len() != len as usize {
             return Err(usb_error(context, format!("short read: {} of {len} bytes", v.len())));
@@ -110,20 +118,48 @@ impl Link {
     /// A vendor Set: bmRequestType 0x40 (vendor, device, OUT), the bytes
     /// in the data stage (Table 27).
     pub fn set(&self, value: u16, index: u16, data: &[u8], context: &'static str) -> Result<()> {
-        self.dev
-            .control_out(
-                ControlOut {
-                    control_type: ControlType::Vendor,
-                    recipient: Recipient::Device,
-                    request: BREQUEST,
-                    value,
-                    index,
-                    data,
-                },
-                CONTROL_TIMEOUT,
-            )
-            .wait()
-            .map_err(|e| usb_error(context, e))
+        self.retry_stall(|| {
+            self.dev
+                .control_out(
+                    ControlOut {
+                        control_type: ControlType::Vendor,
+                        recipient: Recipient::Device,
+                        request: BREQUEST,
+                        value,
+                        index,
+                        data,
+                    },
+                    CONTROL_TIMEOUT,
+                )
+                .wait()
+        })
+        .map_err(|e| usb_error(context, e))
+    }
+
+    /// A request the chip refused with a STALL tried again, up to
+    /// [`STALL_RETRIES`] times, [`STALL_RETRY_WAIT`] apart: now and then the
+    /// chip refuses a request (findings 16.4, 16.6 — "endpoint stalled",
+    /// intermittent, no order or rate isolated). Every request here is
+    /// safe to repeat: reads, writes of whole values, and read-modify-
+    /// writes judged by their read-back. Each retry is counted
+    /// ([`Link::stall_retries`]).
+    fn retry_stall<T>(&self, mut f: impl FnMut() -> std::result::Result<T, TransferError>) -> std::result::Result<T, TransferError> {
+        let mut tries = 0;
+        loop {
+            match f() {
+                Err(TransferError::Stall) if tries < STALL_RETRIES => {
+                    tries += 1;
+                    self.shared.stall_retries.fetch_add(1, Ordering::Relaxed);
+                    std::thread::sleep(STALL_RETRY_WAIT);
+                }
+                r => return r,
+            }
+        }
+    }
+
+    /// Requests the chip refused and that were tried again, since open.
+    pub fn stall_retries(&self) -> u64 {
+        self.shared.stall_retries.load(Ordering::Relaxed)
     }
 
     // ---- System block: wValue = 0x3000 + offset (findings step 1A) ----
