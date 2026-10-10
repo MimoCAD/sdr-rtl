@@ -1,10 +1,11 @@
-//! The driver on the bench: the first run of `derived/` against a
-//! dongle, with the HackRF tone source cabled in through the pad.
+//! The driver on the bench: its first run against a dongle (findings 11,
+//! when it lived in `derived/`), with the HackRF tone source cabled in
+//! through the pad.
 //!
 //!   hwcheck [--source-cmd "<command line>"] [--level TXVGA BACKOFF]
 //!
-//! Run from the workspace root (`cargo run --release --manifest-path
-//! crates/rtl/derived/Cargo.toml --example hwcheck`); the default source
+//! Run from the workspace root (`cargo run --release -p sdr-rtl
+//! --features bench --example hwcheck`); the default source
 //! is `bench::SOURCE_CMD` (the tone source at 8 Msps) there.
 //! Every measurement is one JSON line on stdout; progress goes to stderr.
 //!
@@ -30,7 +31,7 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::{Rtl, RtlStream};
+use sdr_rtl::{Rtl, RtlStream};
 
 /// Bins the peak may sit from the predicted bin: the source and the
 /// dongle disagreed by ~+3 bins at 300 MHz (findings 10.2b).

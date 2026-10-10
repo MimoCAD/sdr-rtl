@@ -10,8 +10,8 @@
 
 use std::time::Duration;
 
-use sdr_rtl_derived::Rtl;
-use sdr_rtl_derived::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_TUNER, windex};
+use sdr_rtl::Rtl;
+use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_TUNER, windex};
 
 const EEPROM_SLAVE: u16 = 0xA0;
 const MAX_BYTES: usize = 16;

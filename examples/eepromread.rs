@@ -10,8 +10,8 @@
 //! hex dump and the fields: signature, IDs, serial flag, configuration
 //! bits, the three string descriptors, the patch list.
 
-use sdr_rtl_derived::Rtl;
-use sdr_rtl_derived::protocol::{ACCESS_GET, BLOCK_TUNER, windex};
+use sdr_rtl::Rtl;
+use sdr_rtl::protocol::{ACCESS_GET, BLOCK_TUNER, windex};
 
 const EEPROM_SLAVE: u16 = 0xA0;
 const EEPROM_BYTES: u16 = 256;

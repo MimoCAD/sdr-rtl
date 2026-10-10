@@ -34,8 +34,8 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::{Iq, RxSource};
-use sdr_rtl_derived::protocol::{ACCESS_GET, ACCESS_SET, BLK_DROP_COUNTER, BLOCK_USB, USB_EPA_FIFO_CFG, windex, wvalue_usb};
-use sdr_rtl_derived::{OPEN_RF_HZ, Rtl, RtlStream};
+use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLK_DROP_COUNTER, BLOCK_USB, USB_EPA_FIFO_CFG, windex, wvalue_usb};
+use sdr_rtl::{OPEN_RF_HZ, Rtl, RtlStream};
 
 const CANDIDATES: [u8; 13] = [0x05, 0x0A, 0x14, 0x18, 0x1C, 0x1F, 0x20, 0x28, 0x30, 0x40, 0x60, 0x80, 0xFF];
 /// The output rate unless `--rate` says otherwise.

@@ -18,10 +18,10 @@ use std::time::Duration;
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::demod::ddc_if_hz;
-use sdr_rtl_derived::image::{R16, R20, R21, R22};
-use sdr_rtl_derived::pll::{Pll, VCO_INDICATOR_MASK, r2_says_locked};
-use sdr_rtl_derived::{Rtl, usb::Link};
+use sdr_rtl::demod::ddc_if_hz;
+use sdr_rtl::image::{R16, R20, R21, R22};
+use sdr_rtl::pll::{Pll, VCO_INDICATOR_MASK, r2_says_locked};
+use sdr_rtl::{Rtl, usb::Link};
 
 const TONE_OFFSET_HZ: f64 = 300e3;
 const SEL_DIVS: [(u8, u32); 2] = [(0b010, 8), (0b011, 16)];
@@ -53,7 +53,7 @@ fn harness_json() -> String {
     };
     let head = git(&["rev-parse", "--short", "HEAD"]);
     let dirty = !git(&["status", "--porcelain", "--", "."]).is_empty();
-    format!("{{\"crates_rtl_head\":\"{head}\",\"harness_uncommitted\":{dirty},\"program\":\"derived/examples/vcoedge.rs\"}}")
+    format!("{{\"crates_rtl_head\":\"{head}\",\"harness_uncommitted\":{dirty},\"program\":\"examples/vcoedge.rs\"}}")
 }
 
 fn run() -> Result<(), String> {

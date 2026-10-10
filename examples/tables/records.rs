@@ -182,7 +182,7 @@ pub struct LoFind {
 // ---- vco-edge (step 14) ----
 
 /// One step 14 line: the synthesizer under one divider at one RF, R2 and
-/// the tone through the raw-sample stream (`derived/examples/vcoedge.rs`).
+/// the tone through the raw-sample stream (`examples/vcoedge.rs`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct VcoEdgeLine {
     pub rf_hz: f64,

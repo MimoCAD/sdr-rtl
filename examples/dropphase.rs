@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::{Iq, RxSource};
-use sdr_rtl_derived::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
-use sdr_rtl_derived::{OPEN_RF_HZ, Rtl};
+use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
+use sdr_rtl::{OPEN_RF_HZ, Rtl};
 
 const RATE_SPS: f64 = 2.4e6;
 const OFFSET_HZ: f64 = 300e3;

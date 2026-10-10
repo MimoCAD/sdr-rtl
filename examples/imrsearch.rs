@@ -27,9 +27,9 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::Rtl;
-use sdr_rtl_derived::demod::ddc_if_hz;
-use sdr_rtl_derived::image::IMR_MIDDLE;
+use sdr_rtl::Rtl;
+use sdr_rtl::demod::ddc_if_hz;
+use sdr_rtl::image::IMR_MIDDLE;
 
 const R8: u8 = 8;
 const R9: u8 = 9;
@@ -148,7 +148,7 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-use sdr_rtl_derived::RtlStream;
+use sdr_rtl::RtlStream;
 
 fn main() {
     if let Err(e) = run() {

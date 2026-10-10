@@ -10,7 +10,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use sdr_core::{Iq, RxSource};
-use sdr_rtl_derived::RtlStream;
+use sdr_rtl::RtlStream;
 
 pub const FFT_N: usize = 4096;
 /// Segments averaged per spectrum.
@@ -129,7 +129,7 @@ fn cycle_once(off_time: Duration) -> Result<(String, bool, u128), String> {
     std::thread::sleep(off_time);
     let on = witness("on")?;
     let t = Instant::now();
-    while sdr_rtl_derived::list().is_empty() {
+    while sdr_rtl::list().is_empty() {
         if t.elapsed() > ENUMERATE_DEADLINE {
             return Ok((format!("{off}; {on}"), false, t.elapsed().as_millis()));
         }
@@ -156,9 +156,9 @@ pub fn power_cycle() -> Result<String, String> {
     Ok(report)
 }
 
-/// derived → rtl → crates → the workspace.
+/// rtl → crates → the workspace.
 pub fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 /// Received samples and what the engine flagged while they came.

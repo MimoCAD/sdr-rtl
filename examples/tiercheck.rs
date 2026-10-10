@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::{OPEN_RF_HZ, Rtl, StreamReport};
+use sdr_rtl::{OPEN_RF_HZ, Rtl, StreamReport};
 
 const TONE_OFFSET_HZ: f64 = 300e3;
 const RETUNE_STEP_HZ: f64 = 100e3;
@@ -76,7 +76,7 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
     // stream exists.
     #[cfg(feature = "bench")]
     if let Some(n) = std::env::args().skip_while(|a| a != "--fifo").nth(1).and_then(|v| v.parse::<u8>().ok()) {
-        use sdr_rtl_derived::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, USB_EPA_FIFO_CFG, windex, wvalue_usb};
+        use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, USB_EPA_FIFO_CFG, windex, wvalue_usb};
         let v = rtl.link().get(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_GET, 0), 4, "FIFO_CFG read").map_err(|e| e.to_string())?;
         rtl.link().set(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_SET, 0), &[n, v[1], v[2], 0], "FIFO_CFG write").map_err(|e| e.to_string())?;
         eprintln!("FIFO size {n} (was {})", v[0]);

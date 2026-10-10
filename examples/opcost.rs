@@ -28,8 +28,8 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
-use sdr_rtl_derived::{OPEN_RF_HZ, Rtl};
+use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
+use sdr_rtl::{OPEN_RF_HZ, Rtl};
 
 const RETUNE_STEP_HZ: f64 = 100e3;
 const VGA_CODES: [usize; 2] = [2, 3];

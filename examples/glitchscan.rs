@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::{OPEN_RF_HZ, Rtl};
+use sdr_rtl::{OPEN_RF_HZ, Rtl};
 
 const WIN: usize = 64;
 const JUMP_RAD: f64 = 0.5;

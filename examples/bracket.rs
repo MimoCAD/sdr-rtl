@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE};
-use sdr_rtl_derived::{OPEN_RF_HZ, Rtl};
+use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE};
+use sdr_rtl::{OPEN_RF_HZ, Rtl};
 
 const RETUNE_STEP_HZ: f64 = 100e3;
 const BLOCK_SAMPLES: f64 = 94.0;

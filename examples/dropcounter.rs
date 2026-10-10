@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::{Iq, RxSource};
-use sdr_rtl_derived::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, windex, wvalue_usb};
-use sdr_rtl_derived::{Rtl, RtlStream};
+use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, windex, wvalue_usb};
+use sdr_rtl::{Rtl, RtlStream};
 
 const EPA_FIFO_CFG: u16 = 0x160;
 const COUNTER_BYTE: usize = 3;

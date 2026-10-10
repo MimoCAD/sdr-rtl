@@ -3,6 +3,7 @@
 //! captures go through one offline decoder.
 //!
 //!   record --freq HZ --seconds S --out NAME [--rate SPS] [--gain LNA MIX VGA]
+//!          [--transfer BYTES] [--depth N]   (default 16 KiB × 16)
 //!
 //! Built with `--features bench` (the drop counter is read through the
 //! request layer). Writes `NAME.sigmf-data` (ci16_le, the stream's 8-bit
@@ -19,8 +20,8 @@ use std::time::Instant;
 
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl_derived::Rtl;
-use sdr_rtl_derived::protocol::{ACCESS_GET, BLOCK_USB, windex, wvalue_usb};
+use sdr_rtl::Rtl;
+use sdr_rtl::protocol::{ACCESS_GET, BLOCK_USB, windex, wvalue_usb};
 
 /// USB_EPA_FIFO_CFG, offset 0x160 in the USB block; bits 31:24 are its
 /// fourth byte (32-bit registers read little-endian, findings step 1A).
@@ -55,6 +56,7 @@ fn utc_now() -> String {
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (mut freq, mut secs, mut out, mut rate) = (None, None, None, 2.4e6);
+    let (mut transfer, mut depth) = (TRANSFER_BYTES, QUEUE_DEPTH);
     let mut codes: Option<[usize; 3]> = None;
     let mut it = args.iter();
     let num = |v: Option<&String>| v.and_then(|s| s.parse::<f64>().ok()).ok_or("bad number");
@@ -64,6 +66,8 @@ fn run() -> Result<(), String> {
             "--seconds" => secs = Some(num(it.next())?),
             "--rate" => rate = num(it.next())?,
             "--out" => out = it.next().cloned(),
+            "--transfer" => transfer = num(it.next())? as usize,
+            "--depth" => depth = num(it.next())? as usize,
             "--gain" => {
                 let mut c = [0usize; 3];
                 for v in &mut c {
@@ -85,7 +89,7 @@ fn run() -> Result<(), String> {
     }
     let before = drop_counter(&rtl)?;
     let started = utc_now();
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl.rx_stream(transfer, depth).map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     let mut w = BufWriter::new(File::create(format!("{out}.sigmf-data")).map_err(|e| e.to_string())?);
     s.start().map_err(|e| e.to_string())?;
@@ -105,7 +109,7 @@ fn run() -> Result<(), String> {
     w.flush().map_err(|e| e.to_string())?;
     let after = drop_counter(&rtl)?;
     let meta = format!(
-        "{{\n  \"global\": {{\n    \"core:datatype\": \"ci16_le\",\n    \"core:sample_rate\": {rate},\n    \"core:version\": \"1.0.0\",\n    \"core:hw\": \"RTL-SDR (RTL2832U), sdr-rtl-derived\",\n    \"core:recorder\": \"sdr-rtl-derived record example\"\n  }},\n  \"captures\": [\n    {{ \"core:sample_start\": 0, \"core:frequency\": {}, \"core:datetime\": \"{started}\" }}\n  ],\n  \"annotations\": []\n}}\n",
+        "{{\n  \"global\": {{\n    \"core:datatype\": \"ci16_le\",\n    \"core:sample_rate\": {rate},\n    \"core:version\": \"1.0.0\",\n    \"core:hw\": \"RTL-SDR (RTL2832U), sdr-rtl\",\n    \"core:recorder\": \"sdr-rtl record example\"\n  }},\n  \"captures\": [\n    {{ \"core:sample_start\": 0, \"core:frequency\": {}, \"core:datetime\": \"{started}\" }}\n  ],\n  \"annotations\": []\n}}\n",
         tuned.actual_rf_freq
     );
     std::fs::write(format!("{out}.sigmf-meta"), meta).map_err(|e| e.to_string())?;

@@ -43,9 +43,9 @@ use std::time::Instant;
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
-use sdr_rtl_derived::protocol::{DAGC_OFF, DAGC_PAGE, EN_DAGC};
-use sdr_rtl_derived::taps::{self, TAP_REGS, TAPS};
-use sdr_rtl_derived::{OPEN_RF_HZ, Rtl, RtlStream};
+use sdr_rtl::protocol::{DAGC_OFF, DAGC_PAGE, EN_DAGC};
+use sdr_rtl::taps::{self, TAP_REGS, TAPS};
+use sdr_rtl::{OPEN_RF_HZ, Rtl, RtlStream};
 
 /// Bins a line may sit from where a model puts it: the source and the
 /// dongle differ by ~4.2 ppm (findings 11), +1.3 kHz at 300 MHz.

@@ -75,7 +75,7 @@ fn predict(path: &str, fs: f64, narrow: f64) {
             for (k, b) in r.iter_mut().enumerate() {
                 *b = u8::from_str_radix(&h[2 * k..2 * k + 2], 16).unwrap_or(0);
             }
-            fields_of.insert(set, sdr_rtl_derived::taps::unpack(&r));
+            fields_of.insert(set, sdr_rtl::taps::unpack(&r));
             continue;
         }
         let (Some(d), Some(st), Some(sd)) = (num(l, "delta"), num(l, "staged_hz"), num(l, "staged_dbfs")) else { continue };
@@ -141,7 +141,7 @@ fn residual(path: &str, fs: f64, narrow: f64, grid: f64) {
             for (k, b) in r.iter_mut().enumerate() {
                 *b = u8::from_str_radix(&h[2 * k..2 * k + 2], 16).unwrap_or(0);
             }
-            fields_of.insert(set, sdr_rtl_derived::taps::unpack(&r));
+            fields_of.insert(set, sdr_rtl::taps::unpack(&r));
             continue;
         }
         let (Some(d), Some(p), Some(s), Some(fl)) = (num(l, "delta"), num(l, "plain_dbfs"), num(l, "staged_dbfs"), num(l, "median_dbfs")) else { continue };

@@ -40,6 +40,7 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use sdr_core::gain::{Stage, StageReading};
 use sdr_core::{Error, Iq, RecvInfo, Result, RxSource, TuneRequest, TuneResult, elevate_current_thread};
 
 use crate::Rtl;
@@ -354,6 +355,22 @@ macro_rules! shared {
                 self.0.rtl.freq()
             }
 
+            /// The sum of the gain stages' dB, as last written (no request).
+            pub fn gain(&self) -> f64 {
+                self.0.rtl.gain()
+            }
+
+            /// Each gain stage as last written (no request).
+            pub fn stage_readings(&self) -> Vec<StageReading> {
+                self.0.rtl.stage_readings()
+            }
+
+            /// The receiver's label (product and serial, from the USB
+            /// descriptors read at open).
+            pub fn label(&self) -> &str {
+                self.0.rtl.label()
+            }
+
             /// Requests the chip refused and that were tried again since
             /// the receiver was opened (findings 16.6).
             pub fn stall_retries(&self) -> u64 {
@@ -479,6 +496,11 @@ impl LosslessStream {
     pub fn set_gain(&mut self, db: f64) -> Result<Break> {
         self.0.reconfigure(|rtl| rtl.set_gain(db)).map(|(_, b)| b)
     }
+
+    /// [`Rtl::set_stage_level`] inside a pause.
+    pub fn set_stage_level(&mut self, stage: Stage, level: usize) -> Result<Break> {
+        self.0.reconfigure(|rtl| rtl.set_stage_level(stage, level)).map(|(_, b)| b)
+    }
 }
 
 impl AccountedStream {
@@ -498,6 +520,87 @@ pub enum TieredStream {
     Lossless(LosslessStream),
     Accounted(AccountedStream),
     Restricted(RestrictedStream),
+}
+
+/// What every kind offers, on whichever kind it is.
+macro_rules! each {
+    ($s:expr, $k:ident => $e:expr) => {
+        match $s {
+            TieredStream::Lossless($k) => $e,
+            TieredStream::Accounted($k) => $e,
+            TieredStream::Restricted($k) => $e,
+        }
+    };
+}
+
+impl TieredStream {
+    pub fn tier(&self) -> Tier {
+        each!(self, s => s.tier())
+    }
+
+    pub fn rate(&self) -> f64 {
+        each!(self, s => s.rate())
+    }
+
+    pub fn freq(&self) -> Result<f64> {
+        each!(self, s => s.freq())
+    }
+
+    pub fn gain(&self) -> f64 {
+        each!(self, s => s.gain())
+    }
+
+    pub fn stage_readings(&self) -> Vec<StageReading> {
+        each!(self, s => s.stage_readings())
+    }
+
+    pub fn label(&self) -> &str {
+        each!(self, s => s.label())
+    }
+
+    pub fn stall_retries(&self) -> u64 {
+        each!(self, s => s.stall_retries())
+    }
+
+    pub fn delivered(&self) -> u64 {
+        each!(self, s => s.delivered())
+    }
+
+    pub fn breaks(&self) -> &[Break] {
+        each!(self, s => s.breaks())
+    }
+
+    pub fn finish(self) -> Result<Finished> {
+        each!(self, s => s.finish())
+    }
+
+    /// The stream as a [`LosslessStream`], the one kind that can be
+    /// reconfigured while it runs; `None` at a rate above
+    /// [`LOSSLESS_MAX_SPS`].
+    pub fn lossless_mut(&mut self) -> Option<&mut LosslessStream> {
+        match self {
+            TieredStream::Lossless(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+impl RxSource for TieredStream {
+    fn max_num_samps(&self) -> usize {
+        each!(self, s => s.max_num_samps())
+    }
+
+    fn start(&mut self) -> Result<()> {
+        each!(self, s => s.start())
+    }
+
+    fn recv_into(&mut self, buf: &mut [Iq], timeout_secs: f64) -> Result<RecvInfo> {
+        each!(self, s => s.recv_into(buf, timeout_secs))
+    }
+
+    fn setup_worker_thread(&self) {
+        elevate_current_thread();
+    }
 }
 
 #[cfg(test)]
