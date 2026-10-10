@@ -555,6 +555,16 @@ second host:
   1 of 7 with the reap above removed from the byte path, so not the reap.
   The same finish unsplit: 0 in 8. Before the async core, 8 runs of 8 were
   clean. Counted, reported, not yet explained.
+- **In a browser** (`web/`, Chrome on the second host, WebUSB): the device
+  chooser, the open, the EEPROM read (its identity whole), 4 s at
+  2.4 Msps read as wire bytes on one task — 17,294,872 bytes, 8,652,606
+  samples — while another task retuned three times, each retune landing;
+  **170 blocks dropped by the chip**: 114 before the first break (the
+  stream's first second), 56 before the second, 0 before the third. The
+  EEPROM round trip (0x31 ← 0x55 and back, each write read back): the whole
+  part as before. One run. The early loss, which the native build does not
+  show, is open: WebUSB's completion latency, or the reading task not
+  keeping the queue served in the browser's one event loop.
 
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 

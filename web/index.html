@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sdr-rtl over WebUSB</title>
+<style>
+  body { font: 14px/1.4 ui-monospace, monospace; margin: 2em; max-width: 60em; }
+  button { font: inherit; padding: .4em 1em; margin-right: .5em; }
+  pre { background: #f4f4f4; padding: 1em; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>sdr-rtl over WebUSB</h1>
+<p>An RTL2832U + R820T dongle, driven from Rust compiled to WebAssembly, in a
+Chromium-family browser. The first click opens the browser's device chooser.</p>
+<button id="stream">Stream check</button>
+<button id="eeprom">EEPROM round trip</button>
+<pre id="out"></pre>
+<script type="module">
+  import init, { stream_check, eeprom_round_trip } from "./pkg/sdr_rtl_web.js";
+  const out = document.getElementById("out");
+  const log = (text) => { out.textContent += text + "\n"; };
+  await init();
+  if (!navigator.usb) log("This browser has no WebUSB (Chrome, Edge or another Chromium browser has).");
+  const run = (f) => async () => {
+    try { log("result: " + await f(log)); }
+    catch (e) { log("error: " + e); }
+  };
+  document.getElementById("stream").onclick = run(stream_check);
+  document.getElementById("eeprom").onclick = run(eeprom_round_trip);
+</script>
+</body>
+</html>
