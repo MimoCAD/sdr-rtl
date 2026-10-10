@@ -91,6 +91,12 @@
 //!               the chip's liveness after each (prints only)
 //!   rom-dump --xdata-check  blocks 1 and 2 at the same wValue, page
 //!               nibble 0 and 1 (prints only)
+//!   stream-confirm replay|rate|tone|pause|coeff-probe|coeffs|minimise|seldiv
+//!               [--level TXVGA BACKOFF] [--gain LNA MIX VGA] [--windows N]
+//!               step 10: the vendor driver's stream-start sequence
+//!               (findings 9b/9h) from a power cycle, proven to be samples
+//!               (rate, tone, pause), the coefficient registers, the
+//!               minimisation, SEL_DIV 011; data/step10-*.json
 //!   step 4 options (step4::USAGE): --freq HZ --div CODE --ref-div2 0|1
 //!               --if HZ --lo-side high|low --config manual|vagc|auto
 //!               --txvga N --backoff N --meter NAME LO HI up|down --page3
@@ -116,6 +122,7 @@ mod step1;
 mod step2;
 mod step3;
 mod step4;
+mod stream_confirm;
 mod survey;
 mod tuner;
 mod usb;
@@ -231,6 +238,7 @@ fn main() {
         Some("filter") => step4::filter(&args[1..]),
         Some("if-choice") => step4::if_choice(&args[1..]),
         Some("rom-dump") => rom_dump::run(&args[1..]),
+        Some("stream-confirm") => stream_confirm::run(&args[1..]),
         _ => Err(format!(
             "usage: harness recovery | protocol | tuner | baseline | rom-dump [--probe ADDR:LEN...|--xdata-check] | scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] | confirm-write P O VALUE | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
             step4::USAGE

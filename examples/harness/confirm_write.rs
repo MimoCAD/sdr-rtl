@@ -47,7 +47,7 @@ fn dump(dir: &Option<String>, name: &str, data: &[u8]) {
 /// different sizes, so the sign and the scale of a moving peak both show.
 pub const TONE_OFFSETS_HZ: [f64; 2] = [200e3, -300e3];
 /// FFT length and the most segments averaged.
-const FFT_N: usize = 4096;
+pub const FFT_N: usize = 4096;
 const FFT_SEGMENTS: usize = 64;
 /// Peaks reported per spectrum, and the bins around a peak excluded from
 /// the next.
@@ -136,14 +136,14 @@ fn spectrum(data: &[u8], complex: bool) -> J {
 }
 
 /// A bin's frequency in cycles per sample (−0.5..0.5).
-fn cycles(k: usize) -> f64 {
+pub fn cycles(k: usize) -> f64 {
     let signed = if k < FFT_N / 2 { k as f64 } else { k as f64 - FFT_N as f64 };
     signed / FFT_N as f64
 }
 
 /// The averaged power per bin (Hann window, mean removed), the segments
 /// used and the means removed; None with fewer bytes than one segment.
-fn spectrum_power(data: &[u8], complex: bool) -> Option<(Vec<f64>, usize, f64, f64)> {
+pub fn spectrum_power(data: &[u8], complex: bool) -> Option<(Vec<f64>, usize, f64, f64)> {
     let per = if complex { 2 } else { 1 };
     let seg_bytes = FFT_N * per;
     let segs = (data.len() / seg_bytes).min(FFT_SEGMENTS);
@@ -285,7 +285,7 @@ fn periodicity(data: &[u8]) -> J {
 }
 
 /// Everything (b) says about one capture.
-fn analyse(data: &[u8]) -> J {
+pub fn analyse(data: &[u8]) -> J {
     J::obj()
         .with("bytes", data.len())
         .with("periodicity", periodicity(data))

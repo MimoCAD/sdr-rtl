@@ -4,7 +4,16 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
-Step 9 (the vendor's Windows driver observed on the wire), 2026-10-09: **an interoperability observation, not a bench result.** A USB analyzer capture of Realtek's own driver under a DAB player shows the chip streaming raw samples: 954,067 bulk packets of 512 bytes, 8-bit unsigned interleaved pairs centred on ≈ 126.7, ≈ 4.1 MB/s (2 × 2.048 Msps within the analyzer's timebase error), never the 3,760-byte replay. The stream begins **0.55 ms after the driver writes page 0 0x06 = 0x80**, the last of 22 demodulator writes made after a demodulator reset (t = 60.377 s); the driver **never writes page 0 0x07, page 0 0x08 (AD_EN) or page 1 0xB1 (en_bbin)**, and the stream runs before the tuner is programmed. A multi-register state none of our baselines held. Section "Step 9" below; the bench test that would confirm it is at its end (not run).
+Step 10 (step 9's sequence on our bench), 2026-10-09: **CONFIRMED — the chip streams raw samples on our bench.**
+- **Replay:** findings 9h's sequence from a power cycle gives 0 bytes through all 24 items, then the first bulk data 0.10–0.15 ms after page 0 0x06 ← 0x80, at 4,099,326 B/s (= 2 × 2.0497 Msps).
+- **Samples, not a replay:** the rate tracks rsamp_ratio as 2 × f_symbol / 4 at 1.024, 2.048, 2.4 and 2.88 Msps (every fresh run; 3.2 Msps in 6 of 8). A cabled tone lands at offset / rate cycles per sample, even byte I and odd byte Q, 54–57 dB over the median bin, and moves with the tone. Page 1 0x01 bit 2 pauses the stream (0 bytes) and resumes it.
+- **The 20 coefficient registers:** the stream starts with our own low-pass and with the chip's power-on values. All zero gives a constant 0x80.
+- **Minimal sequence:** DEMOD_CTL ← 0xE8; page 1 0x16–0x18 ← 0; pset_iffreq; Spec_inv; rsamp_ratio; the taps (optional); page 0 0x19 ← 0x25; page 1 0x93 ← 0xF0; page 0 0x06 ← 0x80. Clearing 0x06 bit 7 stops the stream; setting it again restarts it.
+- **SEL_DIV 011 is /16:** LO 106–228 MHz reachable.
+
+Section "Step 10" below.
+
+Step 9 (the vendor's Windows driver observed on the wire), 2026-10-09: **an interoperability observation, not a bench result.** A USB analyzer capture of Realtek's own driver under a DAB player shows the chip streaming raw samples: 954,067 bulk packets of 512 bytes, 8-bit unsigned interleaved pairs centred on ≈ 126.7, ≈ 4.1 MB/s (2 × 2.048 Msps within the analyzer's timebase error), never the 3,760-byte replay. The stream begins **0.55 ms after the driver writes page 0 0x06 = 0x80**, the last of 22 demodulator writes made after a demodulator reset (t = 60.377 s); the driver **never writes page 0 0x07, page 0 0x08 (AD_EN) or page 1 0xB1 (en_bbin)**, and the stream runs before the tuner is programmed. A multi-register state none of our baselines held. Section "Step 9" below; the bench test that confirms it is at its end (9h), run as step 10.
 
 Step 5 (the chip's firmware), 2026-10-09: the 8 KiB ROM read through `GetROMCode`, mapped with our own 8051 disassembler. **The firmware never touches the data path**: it configures bulk endpoint A at SET_CONFIGURATION / SET_INTERFACE and acknowledges its interrupt, and nothing else; it has no mode variable, no mode table and no source selector. The demodulator is an I²C slave the firmware reaches only on the host's behalf. What feeds the FIFO is hardware, steered (on the bench evidence) from the demodulator's register file. Two spaces the scans never covered follow from the code: **demodulator pages 5–15** (the page nibble is masked to 4 bits, not 0–4) and **external-data addresses outside 0x2000–0x21FF / 0x3000–0x30FF** (blocks 1 and 2 are a raw window on the whole 16-bit space). Section "Step 5 — the firmware" below.
 
@@ -24,6 +33,185 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 10 — step 9's sequence on our bench: raw samples CONFIRMED, minimised — `data/step10-*.json` — `harness stream-confirm <test>`
+
+Implemented clean-room from findings 9b/9h and our own harness only
+(`examples/harness/stream_confirm.rs`). Every test starts from a power
+cycle. The bulk endpoint 0x81 is polled from before the first write (four
+512-byte transfers in flight). Each write is read back and followed by a
+20 ms window. After the first byte, the counter is re-opened with
+16 KiB transfers.
+
+The tone tests program the tuner from `tuner.rs`:
+- manual gains LNA 8, mixer 8, VGA 8;
+- CLK_OUT_ENB 0 (findings 4a);
+- PLL /8, LO = 300 MHz + the observed DDC (digital down-converter) IF of 3.570 MHz, high side.
+
+The tone source is cabled through 20 dB at txvga 0, backoff −20 dB. USB-block offset 0x1C is never written (`usb_write_guarded`). The 20 values of page 1 0x1C–0x2F seen on the wire are used only as a test fixture (`OBSERVED_COEFFS_FIXTURE`); the driver must not ship them (10.3).
+
+### 10.1 Replay (test 1) — `data/step10-1-replay.json`
+
+- **Before the start:** 0 bytes in the window before the first write and after each of the 24 items. All 47 read-backs match. The one halt is the FIFO (first-in-first-out) reset item's own stall bit (USB_EPA_CTL 0x0210), cleared.
+- **The start:** page 0 0x06 ← 0x80. First bulk data 0.10–0.15 ms after the control transfer returns (five observed-sequence starts across the replay, rate, pause and tone runs: 0.146, 0.097, 0.107, 0.099, 0.096 ms).
+- **Rate:** 4,099,326 B/s over 10 × 100 ms = 1.0008 × 2 × 2.048 Msps.
+- **Content, tuner idle:** bytes 124–128, mean 126.53 / 126.53 (even / odd), variance 0.43 / 0.43. Period score at 3,760 bytes 0.40, which is what five values give by chance. The 1..16,384 periodicity test finds no period. **Not the replay.**
+
+### 10.2 Proof that it is samples
+
+**2a. Rate tracks rsamp_ratio** (`data/step10-2a-rate.json`, each ratio from a power cycle; predicted bytes/s = 2 × f_symbol / 4, f_symbol = 28.8 MHz × 2²² / ratio, the factor 4 from findings 9f):
+
+The values come from five runs of `stream-confirm rate` while the test grew. The record holds the last run: ×1 twice, 2.88 and 3.2 Msps three times each, the rest once.
+
+| rsamp_ratio | f_symbol | predicted B/s | measured B/s (every fresh run) |
+|---|---|---|---|
+| 0x1C20000 (×2) | 4.096 MHz | 2,048,000 | 2,035,749 … 2,051,358 (5 runs) |
+| 0xE10000 (observed) | 8.192 MHz | 4,096,000 | 4,097,002 … 4,100,146 (7 runs) |
+| 0xC00000 | 9.6 MHz | 4,800,000 | 4,792,138 … 4,801,265 (5 runs) |
+| 0xA00000 | 11.52 MHz | 5,760,000 | 5,750,875 … 5,765,830 (8 runs) |
+| 0x900000 | 12.8 MHz | 6,400,000 | 6,389,493 … 6,401,007 in 6 runs; **3,195,631 and 3,201,402 in 2** (half) |
+| 0x800000 | 14.4 MHz | 7,200,000 | 3,588,265 … 3,603,962 (4 runs), every byte 0x80 (dead) |
+| 0x708000 (×½) | 16.384 MHz | 8,192,000 | 4,097,203 … 4,099,680 (5 runs), bytes 0–255, variance ~2,000 (broken) |
+
+So the output rate is f_symbol / 4. It is reliable for f_symbol 4.096–11.52 MHz (output 1.024–2.88 Msps), unreliable at 12.8 MHz, and broken at 14.4 MHz (f_xtal / 2) and above.
+
+**Ratio changed while streaming** (three methods, each twice, alternating ×2 / ×1; reproduced in three runs):
+- plain write: ×1 → ×2 takes, ×2 → ×1 does not;
+- inside a pause (page 1 0x01 bit 2): ×2 → ×1 takes;
+- followed by the start bit cleared and set: ×1 → ×2 takes, ×2 → ×1 gives 4.74 MB/s (neither rate).
+
+Live rate changes are **not dependable**; set the rate before the start.
+
+**2b. The tone** (`data/step10-2b-tone.json`): tuner noise (tone off) has variance 10.0. Each tone state is 5 × 100 ms, FFT (fast Fourier transform) 4096 bins, 64 segments, even byte = I, odd byte = Q:
+
+| tone offset from the DDC centre RF | predicted bin | peak bin | SNR (peak / median bin) | variance |
+|---|---|---|---|---|
+| +100 kHz | 200 | 203 | 57.2 dB | 967 |
+| +300 kHz | 600 | 603 | 56.8 dB | 952 |
+| −200 kHz | 3696 | 3699 | 56.6 dB | 952 |
+| −500 kHz | 3096 | 3099 | 56.8 dB | 955 |
+| +700 kHz | 1400 | 1403 | 57.1 dB | 955 |
+| −900 kHz | 2296 | 2299 | 53.8 dB | 918 |
+
+- **Every line at the predicted place and sign:** with Spec_inv 1 and the high-side LO, a tone above the centre RF is at positive frequency read as even = I, odd = Q. A constant +3 bins (+1.5 kHz, about 5 ppm at 300 MHz) is the source/dongle reference difference.
+- **Mirror bins:** −2.4 to +3.0 dB over the median, and 12.6 dB at +300 kHz, so at least 44 dB under the tone. I and Q are in quadrature, not a real signal.
+- **No clipping:** range 63–192.
+- **Tone off again:** no line.
+
+**2c. Pause** (`data/step10-2c-pause.json`): page 1 0x01 0x10 → 0x14 gives **0 bytes in 10 × 10 ms**. Back to 0x10 gives 425,984 bytes in the next 10 × 10 ms, then 4,095,449 B/s.
+
+### 10.3 The 20 registers page 1 0x1C–0x2F
+
+**Layout, from bit weights** (`data/step10-3a-coeff-probe.json`, `--gain 8 8 12`). The stream runs with the tuner noise as stimulus. One register at a time is written live to 0x01/0x04/0x10/0x40/0x80, the rest 0, and the output variance is measured:
+- The fixture gives 257 and all zero gives 0.71.
+- **0x1C–0x23** behave alike: bit 7 gives ~1.0, bit 6 ~0.4.
+- **0x24–0x2F** form four groups of three bytes. In each group:
+  - byte 0 bits 4/6/7 give 3.5–5.6 / 62–103 / 260–429;
+  - byte 1 bits 0/2 give 4.1–5.8 / 61–84 (the same weights);
+  - byte 1 bits 4–7 are silent;
+  - byte 2 behaves like 0x1C–0x23.
+
+Hence the stated layout (`encode` / `decode`): **c0–c7 = 8-bit fields at 0x1C–0x23; c8–c15 = 12-bit fields, two per three bytes, MSB first**: c(8+2p) = byte0 << 4 | byte1 >> 4 and c(9+2p) = (byte1 & 0x0F) << 8 | byte2. Both widths share one LSB weight.
+
+The fixture decodes, under two's complement, to a smooth taper: −54 −36 −41 −40 −32 −14 14 53 | 101 156 215 273 327 372 404 421. Signs from the bench: c15 = +1024 with c8 = 0xC00 gives 86–92 dB within ±0.2 MHz of the centre, against 111 dB for c15 alone, so the two cancel and 0xC00 reads as −1024 (two's complement; unsigned 3072 would add) (`data/step10-3b-coeff-response.json`).
+
+**Their frequency role is NOT identified** (`data/step10-3b-coeff-response.json`). The tone was stepped −5…+5 MHz in 50 kHz steps around the DDC centre, with 16 tap sets written live at each step:
+- **Single 12-bit taps (1024):** 109–111 dB over most of the output band for every one of c8–c15. c8, c9 and c11 dip by up to ~10 dB near the band edges (Δ −1.6…−0.75 MHz and +0.8…+1.2 MHz).
+- **Every set, including the fixture:** the output has one flat level per alias zone. Tones beyond ±1.02 MHz land at Δ − n × 2.4 MHz (then folded by 2.048 MHz), only 8–17 dB down. So a stage samples at 2.4 MHz (28.8 / 12) and its alias rejection is weak for all sets.
+- **The fixture:** not a low-pass at this scale. Relative to a single tap it is 2–4 dB up in band and ~6 dB up in the alias zones.
+- **c15 − c14 (1024 each):** about 2 dB over a single tap across the band, not a null. **c15 − c8** has asymmetric nulls (+0.15, −1.25, +2.9 MHz). No uniform symmetric-FIR (finite impulse response) model fitted all pairs.
+- **Live pset_iffreq:** a write while streaming reads back but does not move the tone's line (same bin with a +500 kHz shift).
+- **Write stalls:** writes made while streaming stalled now and then (a coefficient byte; an rsamp pair). After a stalled coefficient write the output stayed constant until the next write.
+
+**Which variants stream** (`data/step10-3c-coeffs.json`, each from a power cycle, tuner programmed, tone at nine offsets):
+
+| taps written at 0x1C–0x2F | streams | first byte | noise variance (tone off) | in-band tone SNR (6 offsets) | alias zones (+1.5 / −2.0 / +2.5 MHz, variance) |
+|---|---|---|---|---|---|
+| observed fixture | yes | 0.092 ms | 9.8 | 53.6–56.9 dB | 107 / 79 / 162 |
+| **our own low-pass** | **yes** | 0.133 ms | 7.7 | 52.1–57.7 dB | 65 / 64 / 148 |
+| all 20 = 0 | yes, 4.085 MB/s | 0.136 ms | 0 — every byte 0x80 | none | none |
+| not written (power-on values) | yes (10.4) | — | — | 55.4–56.3 dB | — |
+
+**Our own low-pass** (`own_lowpass_taps()`): a Hamming-windowed sinc, 32 taps symmetric, cutoff 1.2 MHz, DC gain 4096, under the **assumption** that the taps run at the ADC rate 28.8 MHz with even length. The bench neither confirmed nor refuted that assumption. Taps c0–c15: −6 −5 −5 −2 3 15 34 61 96 138 185 233 279 317 345 360.
+
+The registers are needed for content, not for the stream: zeros silence it, and our own set, the fixture and the chip's power-on set all carry the tone equally. **The driver writes its own set or leaves the power-on values; it never contains the fixture.**
+
+### 10.4 Minimisation (test 4) — `data/step10-4-minimise.json`, `-4b-minimal.json`, `-4c-steady.json`
+
+One item of the observed sequence was removed per power cycle. The tuner was programmed after the start and the tone kept at the DDC centre RF + 300 kHz (full sequence: tone at bin 602, 56.7 dB, variance 1,044, 4.08 MB/s):
+
+| item removed | result |
+|---|---|
+| USB_SYSCTL ← 0x09; USB_EPA_MAXPKT; USB_EPA_CTL reset; ClearFeature(HALT); DEMOD_CTL_1; the reset pulse; the 65 ms wait | streams unchanged |
+| **ADC enable (DEMOD_CTL 0xA8, 0xE8)** | **streams at 4.085 MB/s but every byte is 0x80** |
+| page 1 0x3E–0x3F; 0x15 ← 0 (before 0x15 ← 1); page 0 0x18, 0x20, 0x61; page 1 0x92, 0x93, 0x94 | streams unchanged (singly) |
+| page 1 0x16–0x17 | tone moves +87.5 kHz (bin 778): the power-on 3F CE is a frequency offset |
+| page 1 0x18 | tone at bin 600 instead of 602–603 |
+| pset_iffreq | tone moves (bin 1805, 45 dB): the power-on IF 4.571 MHz |
+| Spec_inv (0x15 ← 1) | tone mirrored (bin 3493) |
+| rsamp_ratio | 4.58 MB/s, tone at bin 540: the power-on 0xC99999 (2.2857 Msps) |
+| the 20 taps | unchanged (the power-on taps carry the tone, 56.3 dB) |
+| page 0 0x17 ← 0x11 | variance 1,161 (+0.5 dB) |
+| **page 0 0x19 ← 0x25** | **0 bytes** |
+| all of 9b items 6–21 together | 0 bytes |
+
+Further, each from a power cycle (`-4b-minimal.json`, `-4c-steady.json`):
+- **page 0 0x19:** bit 0 is the stream's enable (0x24: 0 bytes). Bit 2 changes the content (0x21: near-constant output, tone only 33 dB).
+- **DEMOD_CTL:** ← 0xE8 as one write equals 0xA8 then 0xE8.
+- **Rate steadiness:** with only the ADC enable, 0x19 and the content items, the samples are real (tone 57 dB at the right bin) but the rate wanders 3.35–4.13 MB/s over 20 windows and the level drops (variance ~230 against ~980). Putting back page 1 **0x93 ← 0xF0 or 0x94 ← 0x0F (either alone)** restores 4.09–4.13 MB/s and the full level. No other single item does.
+- **The driver sequence, measured as one plan, 20 windows:**
+  1. DEMOD_CTL ← 0xE8
+  2. page 1 0x16–0x17 ← 00 00, 0x18 ← 00
+  3. pset_iffreq (0x19–0x1B)
+  4. 0x15 ← 0x01
+  5. rsamp_ratio
+  6. our taps
+  7. page 0 0x19 ← 0x25
+  8. page 1 0x93 ← 0xF0
+  9. page 0 0x06 ← 0x80
+
+  Result: first byte 0.016 ms, **4.092–4.126 MB/s** steady, tone at bin 603, 57.4 dB, variance 1,106.
+- **Stop and restart without a power cycle** (in a full-sequence session): page 0 0x06 bit 7 cleared gives 0 bytes. Setting it again restarts the stream within one 16 KiB transfer (≤ 3.1 ms), steady at 4.095 MB/s with the tone. Re-running the USB items, the whole sequence, or the whole sequence after DEMOD_CTL ← 0x20 also restarts it.
+
+**Minimal for a stream:**
+- DEMOD_CTL ← 0xE8, page 0 0x19 ← 0x25, page 0 0x06 ← 0x80. Bytes come, but at power-on content and wandering rate.
+- Add page 1 0x93 ← 0xF0 for a steady rate.
+- Add 0x16–0x18 ← 0, pset_iffreq, Spec_inv and rsamp_ratio for the intended centre and rate.
+
+Nothing in the USB or system block beyond DEMOD_CTL is needed after a power cycle.
+
+### 10.5 SEL_DIV 011 = /16 (test 5) — `data/step10-5-seldiv.json`
+
+- **Setup:** PLL as findings 9e: SEL_DIV 011, REF_DIV2 1, Nint 100, SDM 7646. R2 VCO_INDICATOR reads 110 (inside 70–127). The stream is the receiver.
+- **Where /16 predicts** (LO 180.21 MHz, DDC centre 176.64 MHz): the tone at 176.84 and 176.34 MHz lands at bins 402 and 3498 (predicted 400 and 3496), 56.9 and 56.4 dB.
+- **Where /8 and /1 predict** (356.85, 2,879.99 MHz): no line at the predicted bin (a 25 dB line at the wrong bin at 357.05 MHz is not the tone's).
+- **Hypothesis-free sweep** (50–400 MHz, 1.5 MHz steps, the PLL held): answers above 15 dB only at 168.5–185 MHz, peaking at 176.0–177.5 MHz (51–52 dB). Every landing fits a centre of 176.64 MHz, through the 2.4 MHz alias (e.g. 179.0 MHz → −39 kHz). Weak answers at 89, 138.5 and 140 MHz are source harmonics and spurs.
+- **Control** (SEL_DIV 010 at the same Nint/SDM): the tone where /8 predicts (356.85 MHz) lands at bins 403 / 3499, 57.8 / 57.3 dB; the sweep answers at 350–365 MHz.
+
+**SEL_DIV 011 divides by 16**, not /1 as [R820T2] prints. With the measured VCO 1.70–3.65 GHz it reaches LO 106–228 MHz, which closes the 114–212 MHz gap of findings 4d.
+
+### 10.6 Open
+
+- What the 20 tap registers filter (rate, length, position in the chain), and how to get more alias rejection than 8–17 dB.
+- Live changes of rsamp_ratio and pset_iffreq; the stall of writes made while streaming.
+- 3.2 Msps reliability.
+- The meaning of page 1 0x93 / 0x94, page 0 0x19 bit 2, page 0 0x17 and page 1 0x16–0x18 beyond what 10.4 measured.
+
+### Replay (from the repository root of the workspace)
+
+```
+cargo run --release -p sdr-rtl --example harness -- stream-confirm replay
+cargo run --release -p sdr-rtl --example harness -- stream-confirm rate
+cargo run --release -p sdr-rtl --example harness -- stream-confirm pause
+cargo run --release -p sdr-rtl --example harness -- stream-confirm tone --source-cmd "cargo run --release --example tone_source -- --cabled"
+cargo run --release -p sdr-rtl --example harness -- stream-confirm coeff-probe --gain 8 8 12
+cargo run --release -p sdr-rtl --example harness -- stream-confirm coeff-response --source-cmd "cargo run --release --example tone_source -- --cabled"
+cargo run --release -p sdr-rtl --example harness -- stream-confirm coeffs --source-cmd "cargo run --release --example tone_source -- --cabled"
+cargo run --release -p sdr-rtl --example harness -- stream-confirm minimise --source-cmd "cargo run --release --example tone_source -- --cabled"
+cargo run --release -p sdr-rtl --example harness -- stream-confirm minimal --windows 20 --source-cmd "cargo run --release --example tone_source -- --cabled"
+cargo run --release -p sdr-rtl --example harness -- stream-confirm steady --source-cmd "cargo run --release --example tone_source -- --cabled"
+cargo run --release -p sdr-rtl --example harness -- stream-confirm seldiv --source-cmd "cargo run --release --example tone_source -- --cabled"
+```
 
 ## Step 9 — the vendor driver on the wire (interoperability observation) — capture outside the repository (`~/mimosdr-captures/rtl2832u-windows/`)
 
@@ -249,7 +437,7 @@ scan found (step 3).
   0x08, page 1 0xB1, page 1 0x11, the AGC enables of page 1 0x04 (the
   driver writes 0x04 only after the start).
 
-### 9h. The bench test that would confirm it (NOT run)
+### 9h. The bench test that would confirm it (run: step 10)
 
 From a power cycle, every write read back, the bulk endpoint polled from
 before step 1 with the step-3 detector (period score, entropy, I/Q

@@ -196,6 +196,11 @@ impl Rtl {
     pub fn demod_write8(&self, page: u8, off: u8, v: u8) -> R<()> {
         self.set(self.form().wvalue(off), windex(BLOCK_DEMOD, ACCESS_SET, page as u16), &[v])
     }
+    /// Several consecutive registers in one Set (wLength = data.len()), as
+    /// the vendor driver was seen to write page 1 0x3E-0x3F (findings 9b).
+    pub fn demod_write(&self, page: u8, off: u8, data: &[u8]) -> R<()> {
+        self.set(self.form().wvalue(off), windex(BLOCK_DEMOD, ACCESS_SET, page as u16), data)
+    }
     /// Write one byte and read it back; Ok(readback).
     pub fn demod_write8_verify(&self, page: u8, off: u8, v: u8) -> R<u8> {
         self.demod_write8(page, off, v)?;
