@@ -321,7 +321,7 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
         .with("baseline_definition", baseline.definition())
         .with("windows_per_state", n_windows)
         .with("detector", BulkCounter::describe(buf, "per window: bytes, stale (completed before the window), elapsed, completions, the first 16 completion sizes, USB_EPA_FIFO_CFG[31:24] after the window, bulk_check"));
-    let rates: Vec<f64> = if baseline == Baseline::PowerOn { vec![baseline.rate_hz()] } else { step3::CONFIRM_RATES_HZ.to_vec() };
+    let rates: Vec<f64> = baseline.confirm_rates_hz();
     // (a) + (b)
     let mut tracking = J::Arr(Vec::new());
     for rate in rates {
@@ -367,8 +367,9 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
     }
     rec.set("rate_tracking", tracking);
     // (c)
-    if matches!(baseline, Baseline::LowIf | Baseline::LowIfOpen) && source::command().is_some() {
-        let rate = step3::RATE_HZ;
+    if matches!(baseline, Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen) && source::command().is_some() {
+        let rate = baseline.rate_hz();
+        let centre = baseline.ddc_centre_rf_hz();
         let mut src = Source::open()?;
         rec.set("source", src.describe());
         let (rtl, mut bulk, setup) = baseline.fresh_at(rate, &[], buf)?;
@@ -376,7 +377,7 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
         let mut states = J::Arr(Vec::new());
         let mut plan: Vec<(String, Option<f64>)> = vec![("tone off".into(), None)];
         for o in TONE_OFFSETS_HZ {
-            plan.push((format!("tone at the tuned RF {o:+} Hz"), Some(baselines::LOWIF_RF_HZ + o)));
+            plan.push((format!("tone at the DDC centre RF {o:+} Hz"), Some(centre + o)));
         }
         plan.push(("tone off again".into(), None));
         for (name, hz) in plan {
@@ -401,8 +402,14 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
             "tone",
             J::obj()
                 .with("rate_hz", rate)
-                .with("tuned_rf_hz", baselines::LOWIF_RF_HZ)
-                .with("expected", "for raw I/Q at the resampler's rate after the DDC: a peak at offset / rate cycles per sample (+0.0833 and -0.125 at 2.4 Msps), its sign flipped if the spectrum is inverted; any other reading of the bytes shows the peak elsewhere or not at all")
+                .with("ddc_centre_rf_hz", centre)
+                .with(
+                    "expected",
+                    format!(
+                        "for raw I/Q at the resampler's rate after the DDC: a peak at offset / rate cycles per sample ({}), its sign flipped if the spectrum is inverted (Spec_inv 1 with a high-side LO); any other reading of the bytes shows the peak elsewhere or not at all",
+                        TONE_OFFSETS_HZ.iter().map(|o| format!("{o:+} Hz -> {:+.4}", o / rate)).collect::<Vec<_>>().join(", ")
+                    ),
+                )
                 .with("setup", setup)
                 .with("write", w)
                 .with("states", states),

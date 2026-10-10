@@ -115,11 +115,16 @@ pub struct Thresholds {
     pub entropy_hi: f64,
     pub stream_lo: f64,
     pub stream_hi: f64,
+    /// Further byte rates flagged within [`TARGET_TOLERANCE`] (dab-open).
+    pub targets: Vec<f64>,
 }
+
+/// The tolerance on [`Thresholds::targets`].
+pub const TARGET_TOLERANCE: f64 = 0.20;
 
 impl Thresholds {
     /// From the held state's solo windows.
-    pub fn from_solo(solo: &[Content], rate_hz: f64) -> Thresholds {
+    pub fn from_solo(solo: &[Content], rate_hz: f64, targets: &[f64]) -> Thresholds {
         let min = |f: &dyn Fn(&Content) -> f64| solo.iter().map(f).fold(f64::INFINITY, f64::min);
         let max = |f: &dyn Fn(&Content) -> f64| solo.iter().map(f).fold(f64::NEG_INFINITY, f64::max);
         let two = step3::expected_bytes_per_s(rate_hz);
@@ -131,6 +136,7 @@ impl Thresholds {
             entropy_hi: max(&|c| c.entropy_bits) + ENTROPY_MARGIN,
             stream_lo: two * RATE_BAND.0,
             stream_hi: two * RATE_BAND.1,
+            targets: targets.to_vec(),
         }
     }
 
@@ -143,6 +149,8 @@ impl Thresholds {
             .with("entropy_hi", self.entropy_hi)
             .with("stream_lo", self.stream_lo)
             .with("stream_hi", self.stream_hi)
+            .with("rate_targets", J::Arr(self.targets.iter().map(|t| J::from(*t)).collect()))
+            .with("rate_target_tolerance", TARGET_TOLERANCE)
             .with(
                 "rules",
                 format!(
@@ -168,6 +176,14 @@ impl Thresholds {
             entropy_hi: get("entropy_hi")?,
             stream_lo: get("stream_lo")?,
             stream_hi: get("stream_hi")?,
+            // Absent in records written before dab-open: no targets.
+            targets: line
+                .find("\"rate_targets\":[")
+                .map(|i| {
+                    let rest = &line[i + "\"rate_targets\":[".len()..];
+                    rest[..rest.find(']').unwrap_or(0)].split(',').filter_map(|s| s.trim().parse().ok()).collect()
+                })
+                .unwrap_or_default(),
         })
     }
 
@@ -181,6 +197,9 @@ impl Thresholds {
         let r = c.rate();
         if r >= self.stream_lo && r <= self.stream_hi {
             why.push("rate toward 2 x sample rate");
+        }
+        if self.targets.iter().any(|t| (r / t - 1.0).abs() <= TARGET_TOLERANCE) {
+            why.push("rate near a target");
         }
         if r < self.rate_lo || r > self.rate_hi {
             note.push("rate changed");
@@ -199,7 +218,7 @@ mod tests {
     #[test]
     fn replay_scores_one_and_noise_scores_low() {
         let unit: Vec<u8> = (0..PERIOD).map(|i| (i * 7 + i / 13) as u8).collect();
-        let replay: Vec<u8> = unit.iter().cycle().take(PERIOD * 10).copied().collect();
+        let replay: Vec<u8> = unit.iter().cycle().take(PERIOD * 40).copied().collect();
         assert_eq!(Content::of(&replay, 1.0).period_score, Some(1.0));
         let mut x = 12345u32;
         let noise: Vec<u8> = (0..PERIOD * 10)
@@ -209,9 +228,12 @@ mod tests {
             })
             .collect();
         assert!(Content::of(&noise, 1.0).period_score.unwrap() < 0.02);
-        let t = Thresholds::from_solo(&[Content::of(&replay, 0.1)], 2.4e6);
+        let t = Thresholds::from_solo(&[Content::of(&replay, 0.1)], 2.4e6, &[4.096e6, 32.768e6]);
         let back = Thresholds::from_header(&J::obj().with("detector_thresholds", t.record()).render()).unwrap();
         assert!((back.period_min - t.period_min).abs() < 1e-12 && (back.stream_hi - t.stream_hi).abs() < 1e-6);
+        assert_eq!(back.targets, vec![4.096e6, 32.768e6]);
         assert_eq!(t.judge(&Content::of(&noise, 0.1)).0, vec!["period broken"]);
+        // 32 x 3760 bytes in 0.004 s = 30.08 MB/s: within 20 % of 32.768 MB/s.
+        assert_eq!(t.judge(&Content::of(&replay[..PERIOD * 32], 0.004)).0, vec!["rate near a target"]);
     }
 }

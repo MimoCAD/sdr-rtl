@@ -309,6 +309,10 @@ pub fn alive(rtl: &Rtl) -> bool {
 
 pub const SCAN_USAGE: &str = "scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] [--pages LO-HI] [--offset-from N] [--record NAME] [--redo-flowless | --redo-list P:OFF:BIT,...]";
 
+/// The content detector's recheck (added 2026-10-09 during the dab-open
+/// scan; written into the record as a `detector_revision` line).
+pub const RECHECK_RULE: &str = "a window flagged by rate alone (period intact) is measured once more, 100 ms, the flip still in place; the candidate is interesting only if the second window is flagged too. A period break is interesting at once. Both windows are on the line (c, recheck, recheck_flags, recheck_cleared)";
+
 /// low-if-open: the window the held flow is checked with before each
 /// candidate's write.
 pub const FLOW_CHECK: Duration = Duration::from_millis(50);
@@ -402,7 +406,7 @@ pub fn scan(args: &[String]) -> Result<(), String> {
     let n_candidates = (pages.1 - pages.0 + 1) as usize * (256 - offset_from as usize) * 8;
     let space = format!("page {}..={} x offset 0x{offset_from:02X}..=0xFF x bit 0..=7 ({n_candidates} candidates)", pages.0, pages.1);
     let (done, has_header) = done_keys(&path);
-    if redo_mode && baseline != Baseline::LowIfOpen {
+    if redo_mode && !baseline.is_open() {
         return Err("--redo-flowless is for --baseline low-if-open".into());
     }
     let redo = if !redo_list.is_empty() {
@@ -424,7 +428,7 @@ pub fn scan(args: &[String]) -> Result<(), String> {
             .with("procedure", "read byte; write it with the bit flipped; measure; restore; verify the restore by read-back");
         writeln!(out, "{}", hdr.with("kind", "header").render()).map_err(|e| e.to_string())?;
     }
-    let open = baseline == Baseline::LowIfOpen;
+    let open = baseline.is_open();
     let mut held: Option<content::Thresholds> = None;
     if has_header && open {
         let first = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -432,7 +436,7 @@ pub fn scan(args: &[String]) -> Result<(), String> {
     }
     if !has_header && baseline != Baseline::ZeroIf {
         let (solo, solo_streams, solo_content) = baselines::solo(baseline, &rtl, &mut bulk)?;
-        let mut hdr = crate::header_with_source(if pages.1 >= PAGES { "6-scan" } else { "3-scan" }, &format!("bulk IN bytes per 100 ms with one demodulator bit flipped on top of the {} baseline", baseline.name()))
+        let mut hdr = crate::header_with_source(if baseline == Baseline::DabOpen { "7-scan" } else if pages.1 >= PAGES { "6-scan" } else { "3-scan" }, &format!("bulk IN bytes per 100 ms with one demodulator bit flipped on top of the {} baseline", baseline.name()))
             .with("candidate_space", space.as_str())
             .with("settings_held_fixed", format!("the {} baseline (baseline_definition); streams judged against {rate} Hz; window 100 ms; {} x {} byte transfers queued; the source unkeyed during the scan", baseline.name(), BulkCounter::QUEUED, BUF_LEN))
             .with("procedure", "read byte; write it with the bit flipped; measure 100 ms (bytes already queued before the window counted as stale); restore; verify the restore by read-back; chip answering; the baseline's settings re-read (baseline_definition), reapplied if disturbed, power cycle and the baseline from scratch if they do not hold or the chip is gone")
@@ -451,15 +455,19 @@ pub fn scan(args: &[String]) -> Result<(), String> {
             hdr.set("why_these_pages", "block 0 masks the page to 4 bits (findings 5c, ROM 0x0734): pages 5-15 are reached exactly as 0-4, and no earlier scan wrote them");
         }
         if open {
-            let t = content::Thresholds::from_solo(&solo_content, rate);
+            let t = content::Thresholds::from_solo(&solo_content, rate, &baseline.rate_targets());
             println!("held state thresholds: {}", t.record().render());
             hdr.set(
                 "hypothesis",
-                "page 0 0x07 bit 7 opens the bulk endpoint's data path (data/step3-confirm-lowif-p0-07-bc.json: 45 MB/s replay of the FIFO memory, period 3,760 B = the 20-block FIFO). A second register may select what feeds that FIFO; with the path held open, a bit that routes the sampled signal into it would change the CONTENT, not just the flow: the 3,760-byte period would break",
+                if baseline == Baseline::DabOpen {
+                    "the project owner's, 2026-10-09: with the front half configured as the datasheet's own DAB example (9.3 pset_iffreq -1066988 = 0x2FB814, 9.4 rsamp_ratio 0xE10000 = 8.192 MHz = 4 x 2.048 MHz; the only place the document mentions DAB, a standard this chip does not decode itself), the DVB-T back end disabled through its documented enables, and the output path held open (page 0 0x07 bit 7: data/step3-confirm-lowif-p0-07-bc.json), a single control may route the baseband samples (which Figure 1 draws between the LPFs and the FFT) into the packetiser/FIFO; that would change the CONTENT (the 3,760-byte replay period would break) or bring the rate near 2 x 2.048 / 2 x 8.192 MB/s (or 4 x, for 16-bit samples)"
+                } else {
+                    "page 0 0x07 bit 7 opens the bulk endpoint's data path (data/step3-confirm-lowif-p0-07-bc.json: 45 MB/s replay of the FIFO memory, period 3,760 B = the 20-block FIFO). A second register may select what feeds that FIFO; with the path held open, a bit that routes the sampled signal into it would change the CONTENT, not just the flow: the 3,760-byte period would break"
+                },
             );
             hdr.set("detector", content::LEGEND);
             hdr.set("detector_thresholds", t.record());
-            hdr.set("on_interesting", "the line is written, the chunk ends, and confirm-write runs on the candidate's value from this baseline (rate tracking at 2.4/1.2/2.048 Msps, tone off and at two offsets with --source-cmd, I/Q statistics and spectrum, minimisation); a 'confirmation' line names its record");
+            hdr.set("on_interesting", "the line is written, the chunk ends, and confirm-write runs on the candidate's value from this baseline (rate tracking at the baseline's confirm rates — 2.4/1.2/2.048 Msps for low-if-open; for dab-open the DAB example 8.192 Msps and its ratio x2 / x1/2, 4.096 / 16.384 Msps — tone off and at two offsets from the DDC's centre RF with --source-cmd, I/Q statistics and spectrum, minimisation); a 'confirmation' line names its record");
             held = Some(t);
         }
         writeln!(out, "{}", hdr.with("kind", "header").render()).map_err(|e| e.to_string())?;
@@ -472,6 +480,20 @@ pub fn scan(args: &[String]) -> Result<(), String> {
         println!("{} baseline alone: no stream; scanning", baseline.name());
     } else {
         writeln!(out, "{}", setup.with("kind", "setup").render()).map_err(|e| e.to_string())?;
+    }
+    if open && !std::fs::read_to_string(&path).unwrap_or_default().contains("\"kind\":\"detector_revision\"") {
+        writeln!(
+            out,
+            "{}",
+            J::obj()
+                .with("kind", "detector_revision")
+                .with("date", "2026-10-09")
+                .with("from_line", done.len())
+                .with("rule", RECHECK_RULE)
+                .with("why", "with dab-open's rate targets the band around 4 x 8.192 MB/s reaches 39.3 MB/s, and a single slow window of the unchanged replay (held rate 44.4-44.6 MB/s) can fall in it: p0 0x25 b4 read 36.6 MB/s in its window and 45.0 MB/s at every rate in its confirmation (data/step3-confirm-dabopen-p0-25-10.json). Candidates before this line were judged on one window, each flagged one confirmed")
+                .render()
+        )
+        .map_err(|e| e.to_string())?;
     }
     let (mut tested, mut hits, mut any_bytes, mut wedges, mut reapplied) = (0usize, 0usize, 0usize, 0usize, 0usize);
     let (mut changed, mut data, mut flow_lost) = (0usize, Vec::new(), 0usize);
@@ -536,8 +558,24 @@ pub fn scan(args: &[String]) -> Result<(), String> {
                         if let Some(t) = &held {
                             // The content detector; the bytes are dropped.
                             let c = content::Content::of(&data, w.elapsed.as_secs_f64());
-                            let (why, note) = t.judge(&c);
+                            let (mut why, note) = t.judge(&c);
                             line.set("c", c.compact());
+                            if !why.is_empty() && !why.contains(&"period broken") {
+                                // Rate alone (the period intact): measure once
+                                // more with the flip still in place; a single
+                                // slow window of the replay is host jitter.
+                                data.clear();
+                                let w2 = bulk.measure(WINDOW, Some(&mut data));
+                                let c2 = content::Content::of(&data, w2.elapsed.as_secs_f64());
+                                let (why2, _) = t.judge(&c2);
+                                line.set("recheck", c2.compact());
+                                line.set("recheck_flags", J::Arr(why2.iter().map(|s| J::from(*s)).collect()));
+                                if why2.is_empty() {
+                                    line.set("recheck_cleared", J::Arr(why.iter().map(|s| J::from(*s)).collect()));
+                                    println!("p{page} 0x{off:02X} b{bit}: rate flag cleared by the recheck {}", c2.compact().render());
+                                    why.clear();
+                                }
+                            }
                             if !note.is_empty() {
                                 changed += 1;
                                 line.set("note", J::Arr(note.iter().map(|s| J::from(*s)).collect()));

@@ -97,6 +97,69 @@ pub const OPEN_PATH_PAGE: u8 = 0;
 pub const OPEN_PATH_OFF: u8 = 0x07;
 pub const OPEN_PATH_BIT: u8 = 1 << 7;
 
+/// [RTL2832U] 9.3 (p. 19), the "DAB Mode" example: pset_iffreq =
+/// -1066988 = 0x2FB814 (two's complement over 22 bits).
+pub const DAB_PSET_IFFREQ: i32 = -1_066_988;
+/// [RTL2832U] 9.4 (p. 20), the "DAB mode" example: rsamp_ratio =
+/// 14745600 = 0xE10000.
+pub const DAB_RSAMP_RATIO: u32 = 0xE1_0000;
+/// f_symbol of the DAB example: 28.8 MHz x 2^22 / 0xE10000 = 8.192 MHz
+/// exactly. Stated as the literal so that rsamp_ratio(rate)'s floor gives
+/// 0xE10000 (the quotient computed in floating point floors to 0xE0FFFF;
+/// the unit test checks).
+pub const DAB_RATE_HZ: f64 = 8.192e6;
+pub fn dab_rate_hz() -> f64 {
+    DAB_RATE_HZ
+}
+/// f_IF_D of the DAB example: 1066988 / 2^22 x 28.8 MHz = 7.32643 MHz.
+pub fn dab_if_hz() -> f64 {
+    -(DAB_PSET_IFFREQ as f64) / TWO_POW_22 * XTAL_HZ
+}
+/// The 22-bit pattern over {0x19, 0x1A, 0x1B}, MSB first.
+pub fn dab_pset_bytes() -> [u8; 3] {
+    let u = (DAB_PSET_IFFREQ as u32) & 0x3F_FFFF;
+    [(u >> 16) as u8, (u >> 8) as u8, u as u8]
+}
+/// dab-open's extra rate flags (bytes/s, each within
+/// `content::TARGET_TOLERANCE`): 2 x 2.048 MHz and 2 x 8.192 MHz (8-bit
+/// I/Q pairs), and 4 x each (16-bit samples).
+pub const DAB_RATE_TARGETS: [f64; 4] = [4.096e6, 16.384e6, 8.192e6, 32.768e6];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dab_examples_match_the_datasheet() {
+        assert_eq!(dab_pset_bytes(), [0x2F, 0xB8, 0x14]);
+        assert_eq!(rsamp_ratio(dab_rate_hz()), DAB_RSAMP_RATIO);
+        assert!((XTAL_HZ * TWO_POW_22 / DAB_RSAMP_RATIO as f64 - DAB_RATE_HZ).abs() < 1e-3);
+        // The confirmation's other two rates: the ratio doubled and halved.
+        assert_eq!(rsamp_ratio(DAB_RATE_HZ / 2.0), 2 * DAB_RSAMP_RATIO);
+        assert_eq!(rsamp_ratio(DAB_RATE_HZ * 2.0), DAB_RSAMP_RATIO / 2);
+        assert!((dab_if_hz() - 7_326_425.17).abs() < 1.0, "{}", dab_if_hz());
+    }
+}
+
+/// One back-end item: (name, page, [(offset, mask, value)]). Only bits the
+/// document names, each set to its documented "off".
+pub type DabItem = (&'static str, u8, &'static [(u8, u8, u8)]);
+pub const DAB_ITEMS: [DabItem; 5] = [
+    ("AciOff", 1, &[(0x15, 0x02, 0x00)]),
+    ("CciOff", 1, &[(0x40, 0x02, 0x00)]),
+    ("IncOff", 1, &[(0x5D, 0x01, 0x00)]),
+    ("AutoScanOff", 1, &[(0x5F, 0x01, 0x01)]),
+    ("PidPassAll", 0, &[(0x61, 0x40, 0x40), (0x62, 0xFF, 0x00), (0x63, 0xFF, 0x00), (0x64, 0xFF, 0x00), (0x65, 0xFF, 0x00)]),
+];
+/// Each back-end item's documented meaning, for the record.
+pub const DAB_ITEM_TEXT: [(&str, &str); 5] = [
+    ("AciOff", "AciOff: En_aci page 1 0x15[1] = 0 (Table 6, p. 20: '0: Disable adjacent channel rejection'; 9.3 calls it 'an adjacent channel canceller'). AMBIGUOUS placement: the document puts it in the DDC (9.3, the front half), not the DVB-T back end; turned off here as an itemised choice"),
+    ("CciOff", "CciOff: En_cci page 1 0x40[1] = 0 (Table 8, p. 21: '0: Disable CCI cancellation'; 9.5 co-channel interference rejection)"),
+    ("IncOff", "IncOff: en_inc page 1 0x5D[0] = 0 (Table 9, p. 21: '0: Disable impulse noise cancellation'; 9.6)"),
+    ("AutoScanOff", "AutoScanOff: dis_auto_scan page 1 0x5F[0] = 1 (Table 11, p. 22: '1: Disable auto mode detection'; 9.8 FFT mode detection). The bit's polarity is inverted against the others (1 = off), as printed"),
+    ("PidPassAll", "PidPassAll: the PID filter at its documented pass-all setting (9.11, Table 13, p. 25; Fig. 7): mode_PID page 0 0x61[6] = 1 and en_PID[31:0] page 0 0x62-0x65 = 0 — no individual filter enabled, so the XOR with mode_PID passes every packet ('the default register setting will let all PID transport streams pass through'). The document has no 'filter off' bit other than this; enable_PID is the output gate (not changed, see below)"),
+];
+
 /// The power-on baseline's two items.
 pub const POWER_ON_ITEMS: [&str; 2] = ["DemodPll", "Endpoint"];
 
@@ -107,6 +170,9 @@ pub enum Baseline {
     /// low-if with page 0 0x07 bit 7 set: the bulk endpoint's data path
     /// held open (data/step3-confirm-lowif-p0-07-bc.json).
     LowIfOpen,
+    /// low-if-open with the front half at the datasheet's DAB example
+    /// (9.3, 9.4) and every documented DVB-T back-end enable off.
+    DabOpen,
     PowerOn,
 }
 
@@ -116,8 +182,9 @@ impl Baseline {
             "zero-if" => Ok(Baseline::ZeroIf),
             "low-if" => Ok(Baseline::LowIf),
             "low-if-open" => Ok(Baseline::LowIfOpen),
+            "dab-open" => Ok(Baseline::DabOpen),
             "power-on" => Ok(Baseline::PowerOn),
-            _ => Err(format!("--baseline {s}: zero-if | low-if | low-if-open | power-on")),
+            _ => Err(format!("--baseline {s}: zero-if | low-if | low-if-open | dab-open | power-on")),
         }
     }
 
@@ -126,6 +193,7 @@ impl Baseline {
             Baseline::ZeroIf => "zero-if",
             Baseline::LowIf => "low-if",
             Baseline::LowIfOpen => "low-if-open",
+            Baseline::DabOpen => "dab-open",
             Baseline::PowerOn => "power-on",
         }
     }
@@ -136,8 +204,15 @@ impl Baseline {
             Baseline::ZeroIf => "step3-scan.jsonl",
             Baseline::LowIf => "step3-scan-lowif.jsonl",
             Baseline::LowIfOpen => "step3-scan-lowif-open.jsonl",
+            Baseline::DabOpen => "step7-scan-dab-open.jsonl",
             Baseline::PowerOn => "step3-scan-poweron.jsonl",
         }
+    }
+
+    /// The data path held open by page 0 0x07 bit 7 (the content
+    /// detector's baselines).
+    pub fn is_open(self) -> bool {
+        matches!(self, Baseline::LowIfOpen | Baseline::DabOpen)
     }
 
     /// The sample rate a stream is judged against: the rate the baseline
@@ -145,7 +220,37 @@ impl Baseline {
     pub fn rate_hz(self) -> f64 {
         match self {
             Baseline::ZeroIf | Baseline::LowIf | Baseline::LowIfOpen => step3::RATE_HZ,
+            Baseline::DabOpen => dab_rate_hz(),
             Baseline::PowerOn => power_on_rate_hz(),
+        }
+    }
+
+    /// The rates a confirmation tracks: the baseline's and two others.
+    pub fn confirm_rates_hz(self) -> Vec<f64> {
+        match self {
+            Baseline::PowerOn => vec![self.rate_hz()],
+            // The DAB example, then its ratio x2 and x1/2 (rate /2, x2).
+            Baseline::DabOpen => vec![dab_rate_hz(), dab_rate_hz() / 2.0, dab_rate_hz() * 2.0],
+            _ => step3::CONFIRM_RATES_HZ.to_vec(),
+        }
+    }
+
+    /// The RF at the DDC's centre: the tone the controls use sits here
+    /// (plus an offset). low-if: the tuned RF (IF 4.57 MHz = the DDC's).
+    /// dab-open: the DDC is at the DAB example's f_IF_D, so the RF whose
+    /// IF lands there under the same high-side LO.
+    pub fn ddc_centre_rf_hz(self) -> f64 {
+        match self {
+            Baseline::DabOpen => low_if_pll().lo_hz().unwrap_or(0.0) - dab_if_hz(),
+            _ => LOWIF_RF_HZ,
+        }
+    }
+
+    /// Byte rates (bytes/s) flagged in addition to the stream band.
+    pub fn rate_targets(self) -> Vec<f64> {
+        match self {
+            Baseline::DabOpen => DAB_RATE_TARGETS.to_vec(),
+            _ => Vec::new(),
         }
     }
 
@@ -155,6 +260,12 @@ impl Baseline {
             Baseline::ZeroIf => step3::ITEMS.iter().map(|i| format!("{i:?}")).collect(),
             Baseline::LowIf => LOW_ITEMS.iter().map(|i| format!("{i:?}")).collect(),
             Baseline::LowIfOpen => LOW_ITEMS.iter().map(|i| format!("{i:?}")).chain([OPEN_PATH_ITEM.to_string()]).collect(),
+            Baseline::DabOpen => LOW_ITEMS
+                .iter()
+                .map(|i| format!("{i:?}"))
+                .chain(DAB_ITEMS.iter().map(|(n, ..)| n.to_string()))
+                .chain([OPEN_PATH_ITEM.to_string()])
+                .collect(),
             Baseline::PowerOn => POWER_ON_ITEMS.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -166,7 +277,7 @@ impl Baseline {
             Baseline::ZeroIf => &[
                 "the documented-only baseline of findings step 3 (step3::apply_baseline): DEMOD_CTL PLL|ADC_I|ADC_Q|reset-release (Table 15); GPIO3 tuner power (Tables 16-19); AD_EN_reg = AD_EN_reg1 = 1, en_bbin = 1 (Table 4, zero-IF 9.1); pset_iffreq = 0 (Table 6, 9.3); rsamp_ratio for 2.4 Msps (Table 7, 9.4); USB_EPA_MAXPKT, USB_EPA_CFG, USB_EPA_CTL FIFO reset pulse, USB_SYSCTL DMA (Tables 30-33)",
             ],
-            Baseline::LowIf | Baseline::LowIfOpen => &[
+            Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen => &[
                 "a power cycle, then in order, every write a read-modify-write read back (tuner::setup_demod's writes, rsamp_ratio at the scan's rate instead of its 8 MHz):",
                 "DemodCtl: DEMOD_CTL |= PLL|ADC_I|ADC_Q|reset-release (Table 15; the PLL makes the demodulator answer, findings 1C)",
                 "TunerPower: GPIO3 GPD[3] = 0, GPOE[3] = 1, GPO[3] = 0, then 50 ms (Tables 16-19, p. 29)",
@@ -190,11 +301,35 @@ impl Baseline {
             ],
         };
         let mut items: Vec<&str> = items.to_vec();
-        if self == Baseline::LowIfOpen {
-            items.push("OpenPath (low-if-open only, last): page 0 0x07 |= 0x80 (0x3C -> 0xBC), read back. data/step3-confirm-lowif-p0-07-bc.json: with the tuner programmed this bit makes the bulk endpoint deliver at the bus's full rate (45 MB/s, FIFO dropped-block counter 255) the FIFO memory's 3,760 bytes (20 x 188) round and round; needs DemodCtl, IicRepeat, TunerImage");
+        if self == Baseline::DabOpen {
+            items.extend_from_slice(&[
+                "dab-open replaces three low-if items' values: IfFreq = the DAB example of 9.3 (p. 19): pset_iffreq = -1066988 = 0x2FB814 (22-bit two's complement), i.e. f_IF_D = 1066988 / 2^22 x 28.8 MHz = 7.32643 MHz; the tuner stays at low-if's LO (304.57 MHz, high side), so the DDC's centre is RF 297.2436 MHz, where the controls put the tone; Rsamp = the DAB example of 9.4 (p. 20): rsamp_ratio = 14745600 = 0xE10000, i.e. f_symbol = 28.8 MHz x 2^22 / 0xE10000 = 8.192 MHz (= 4 x 2.048 MHz); Dagc = en_dagc 0, page 1 0x11[0] (Table 10, '0: Disable DAGC')",
+                "then the documented DVB-T back-end enables off (DAB_ITEMS), each a read-modify-write read back:",
+            ]);
+            for (_, what) in DAB_ITEM_TEXT {
+                items.push(what);
+            }
+            items.push("NOT changed, with the reason: enable_PID page 0 0x61[7] stays 1 — Table 13 documents it as 'Set 1 to Enable Output of PID Filter / Set 0 No Output', the output gate, which the held-open path needs (the solo measures enable_PID = 0 separately); err_pass page 0 0x61[5] stays 1 ('Pass All Error Packets', not an enable); pset_mode_gi page 1 0x5F[3:1] left as read (a preset used only with auto detection off; Table 11 prints default 3, findings 1C read 0); cfreq_off_ratio page 1 0x9D-0x9F stays 0xAEBAF (9.9 says it 'must be set according to the sampling frequency' but the DAB example gives no value); the AGC loops (Table 2) stay on (the tuner's VGA is closed through them, findings 4b); en_dc_est / en_iq_comp / en_iq_est (Table 5) are zero-IF blocks already bypassed by en_bbin = 0 (9.2)");
         }
-        J::obj()
-            .with("baseline", self.name())
+        if self.is_open() {
+            items.push("OpenPath (last): page 0 0x07 |= 0x80 (0x3C -> 0xBC), read back. data/step3-confirm-lowif-p0-07-bc.json: with the tuner programmed this bit makes the bulk endpoint deliver at the bus's full rate (45 MB/s, FIFO dropped-block counter 255) the FIFO memory's 3,760 bytes (20 x 188) round and round; needs DemodCtl, IicRepeat, TunerImage");
+        }
+        let mut def = J::obj();
+        if self == Baseline::DabOpen {
+            def.set(
+                "dab_example",
+                J::obj()
+                    .with("pset_iffreq", DAB_PSET_IFFREQ)
+                    .with("pset_iffreq_bytes", J::Arr(dab_pset_bytes().iter().map(|b| hex8(*b)).collect()))
+                    .with("f_if_d_hz", dab_if_hz())
+                    .with("rsamp_ratio", hex32(DAB_RSAMP_RATIO))
+                    .with("rsamp_ratio_written", hex32(rsamp_ratio(DAB_RATE_HZ)))
+                    .with("f_symbol_hz", DAB_RATE_HZ)
+                    .with("ddc_centre_rf_hz", self.ddc_centre_rf_hz())
+                    .with("rate_targets_bytes_per_s", J::Arr(DAB_RATE_TARGETS.iter().map(|t| J::from(*t)).collect())),
+            );
+        }
+        def.with("baseline", self.name())
             .with("items", J::Arr(items.iter().map(|s| J::from(*s)).collect()))
             .with("rate_hz_judged_against", self.rate_hz())
             .with("expected_bytes_per_s", step3::expected_bytes_per_s(self.rate_hz()))
@@ -210,9 +345,23 @@ impl Baseline {
                 let items: Vec<Item> = step3::ITEMS.into_iter().filter(|i| skip.contains(&format!("{i:?}"))).collect();
                 step3::apply_baseline(rtl, rate, &items)
             }
-            Baseline::LowIf => apply_low_if(rtl, rate, skip),
-            Baseline::LowIfOpen => {
-                let mut log = apply_low_if(rtl, rate, skip);
+            Baseline::LowIf => apply_low_if(rtl, rate, skip, false),
+            Baseline::LowIfOpen | Baseline::DabOpen => {
+                let dab = self == Baseline::DabOpen;
+                let mut log = apply_low_if(rtl, rate, skip, dab);
+                if dab {
+                    for (name, page, regs) in DAB_ITEMS.iter().filter(|(n, ..)| !skip.iter().any(|s| s == n)) {
+                        let mut v = Vec::new();
+                        let mut err = None;
+                        for &(off, mask, val) in regs.iter() {
+                            match rmw_demod(rtl, *page, off, mask, val) {
+                                Ok(j) => v.push(j.with("page", *page).with("offset", hex8(off)).with("mask", hex8(mask)).with("value", hex8(val))),
+                                Err(e) => err = Some(e.to_string()),
+                            }
+                        }
+                        log.push(J::obj().with("item", *name).with("record", J::Arr(v)).with("error", err));
+                    }
+                }
                 if !skip.iter().any(|s| s == OPEN_PATH_ITEM) {
                     let r = step3::step("page 0 0x07[7] = 1: the endpoint data path open (data/step3-confirm-lowif-p0-07-bc.json)", rmw_demod(rtl, OPEN_PATH_PAGE, OPEN_PATH_OFF, OPEN_PATH_BIT, OPEN_PATH_BIT));
                     log.push(J::obj().with("item", OPEN_PATH_ITEM).with("record", r));
@@ -232,9 +381,22 @@ impl Baseline {
     pub fn disturbed(self, rtl: &Rtl) -> Vec<String> {
         match self {
             Baseline::ZeroIf => step3::baseline_disturbed(rtl, step3::RATE_HZ),
-            Baseline::LowIf => low_if_disturbed(rtl, step3::RATE_HZ),
-            Baseline::LowIfOpen => {
-                let mut bad = low_if_disturbed(rtl, step3::RATE_HZ);
+            Baseline::LowIf => low_if_disturbed(rtl, step3::RATE_HZ, false),
+            Baseline::LowIfOpen | Baseline::DabOpen => {
+                let dab = self == Baseline::DabOpen;
+                let mut bad = low_if_disturbed(rtl, self.rate_hz(), dab);
+                if dab {
+                    for (name, page, regs) in DAB_ITEMS {
+                        for &(off, mask, val) in regs.iter() {
+                            if rtl.demod_read8(page, off).ok().map(|v| v & mask == val & mask) != Some(true) {
+                                bad.push(format!("{name} p{page} 0x{off:02X}"));
+                            }
+                        }
+                    }
+                    if rtl.demod_read8(1, 0x11).ok().map(|v| v & 1 == 0) != Some(true) {
+                        bad.push("en_dagc = 0".into());
+                    }
+                }
                 if rtl.demod_read8(OPEN_PATH_PAGE, OPEN_PATH_OFF).ok().map(|v| v & OPEN_PATH_BIT != 0) != Some(true) {
                     bad.push("page 0 0x07[7] = 1".into());
                 }
@@ -309,7 +471,7 @@ fn windows_content(bulk: &mut usb::BulkCounter, rate: f64, n: usize, content: bo
 /// streamed).
 pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, bool, Vec<Content>), String> {
     let rate = b.rate_hz();
-    let open = b == Baseline::LowIfOpen;
+    let open = b.is_open();
     let (ws, mut streams, total, contents) = windows_content(bulk, rate, 10, open);
     println!("{} alone: {total} B in 10 x 100 ms", b.name());
     for c in &contents {
@@ -318,18 +480,49 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
     let mut rec = J::obj().with("windows", ws).with("bytes_total", total).with("any_window_streams", streams);
     if open {
         rec.set("content_legend", content::LEGEND);
+        // A held state that already delivers something other than the
+        // replay is the finding itself: the scan does not start.
+        let nr = nonreplay(&contents);
+        rec.set("nonreplay_content", nr);
+        streams |= nr;
     }
-    if matches!(b, Baseline::LowIf | Baseline::LowIfOpen) && source::command().is_some() {
+    if b == Baseline::DabOpen {
+        // The one documented back-end bit dab-open leaves on, measured:
+        // enable_PID page 0 0x61[7], 'Set 0 No Output' (Table 13).
+        let w = rmw_demod(rtl, 0, 0x61, 0x80, 0x00);
+        let (wp, _, np, cp) = windows_content(bulk, rate, 10, true);
+        let r = rmw_demod(rtl, 0, 0x61, 0x80, 0x80);
+        let (wr, _, nr, _) = windows_content(bulk, rate, 3, true);
+        println!("enable_PID = 0: {np} B in 10 x 100 ms; restored: {nr} B in 3 windows");
+        rec.set(
+            "enable_pid_0",
+            J::obj()
+                .with("why", "enable_PID (page 0 0x61[7]) is the only documented back-end bit dab-open does not turn off (documented 'Set 0 No Output'); measured here, then restored")
+                .with("write", w.map_err(|e| e.to_string()).unwrap_or_else(J::from))
+                .with("windows", wp)
+                .with("bytes_total", np)
+                .with("content", J::Arr(cp.iter().map(Content::compact).collect()))
+                .with("restore", r.map_err(|e| e.to_string()).unwrap_or_else(J::from))
+                .with("windows_after_restore", wr)
+                .with("bytes_after_restore", nr),
+        );
+    }
+    if matches!(b, Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen) && source::command().is_some() {
         let start = Instant::now();
         let mut src = Source::open()?;
         let described = src.describe();
         let off_src = src.off()?;
         let off = Reading::take(rtl, start, false, None);
-        let on_src = src.level(LOWIF_RF_HZ, CONTROL_LEVEL)?;
+        let on_src = src.level(b.ddc_centre_rf_hz(), CONTROL_LEVEL)?;
         let on = Reading::take(rtl, start, false, None);
         let (w_on, s_on, n_on, c_on) = windows_content(bulk, rate, 10, open);
         for c in &c_on {
             println!("  tone on: {}", c.compact().render());
+        }
+        if open {
+            let nr = nonreplay(&c_on);
+            rec.set("nonreplay_content_tone_on", nr);
+            streams |= nr;
         }
         let off_again = src.off()?;
         src.quit();
@@ -355,6 +548,12 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
     Ok((rec, streams, contents))
 }
 
+/// Any window that carried enough bytes to score and is not the replay
+/// (period score below 1 - the detector's margin).
+fn nonreplay(cs: &[Content]) -> bool {
+    cs.iter().any(|c| c.bytes >= content::MIN_BYTES_FOR_PERIOD && c.period_score.is_some_and(|p| p < 1.0 - content::PERIOD_MARGIN))
+}
+
 /// The positive control's level: +10 dB relative, where findings 4c-4e
 /// received the tone at full strength (if_agc_val about -800).
 pub const CONTROL_LEVEL: Level = Level { txvga_db: 10, backoff_db: 0 };
@@ -368,7 +567,9 @@ fn rmw_demod(rtl: &Rtl, page: u8, off: u8, mask: u8, value: u8) -> Result<J, usb
     Ok(J::obj().with("before", hex8(old)).with("after", hex8(back)).with("verified", back & mask == value & mask))
 }
 
-fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String]) -> J {
+/// The low-if items; with `dab`, IfFreq is the DAB example's pset_iffreq
+/// and Dagc writes en_dagc = 0 (dab-open's definition).
+fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String], dab: bool) -> J {
     let d = DemodIf::default();
     let mut log = J::Arr(Vec::new());
     for item in LOW_ITEMS.into_iter().filter(|i| !skip.contains(&format!("{i:?}"))) {
@@ -391,8 +592,12 @@ fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String]) -> J {
             ),
             LowItem::EnBbinOff => step3::step("page 1 0xB1[0] = 0 en_bbin (IF mode 9.1)", rmw_demod(rtl, BBIN_PAGE, BBIN_OFF, EN_BBIN, 0)),
             LowItem::IfFreq => {
-                let b = tuner::pset_iffreq_bytes(d.if_hz);
-                step3::step(&format!("pset_iffreq = {} for {} Hz (Table 6, 9.3)", tuner::pset_iffreq(d.if_hz), d.if_hz), (|| {
+                let (b, what) = if dab {
+                    (dab_pset_bytes(), format!("pset_iffreq = {DAB_PSET_IFFREQ} = 0x2FB814, the DAB example (9.3, p. 19)"))
+                } else {
+                    (tuner::pset_iffreq_bytes(d.if_hz), format!("pset_iffreq = {} for {} Hz (Table 6, 9.3)", tuner::pset_iffreq(d.if_hz), d.if_hz))
+                };
+                step3::step(&what, (|| {
                     let x = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB, 0x3F, b[0])?;
                     let y = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 1, 0xFF, b[1])?;
                     let z = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 2, 0xFF, b[2])?;
@@ -401,6 +606,7 @@ fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String]) -> J {
             }
             LowItem::SpecInv => step3::step(&format!("page 1 0x15[0] = {} Spec_inv (Table 6, 9.3)", d.spec_inv as u8), rmw_demod(rtl, 1, 0x15, 0x01, d.spec_inv as u8)),
             LowItem::AgcLoops => step3::step("page 1 0x04[7:5] = 1 1 0: en_if_agc, en_rf_agc, aagc_hold (Table 2)", rmw_demod(rtl, 1, 0x04, 0xE0, 0xC0)),
+            LowItem::Dagc if dab => step3::step("page 1 0x11[0] = 0 en_dagc: '0: Disable DAGC' (Table 10)", rmw_demod(rtl, 1, 0x11, 0x01, 0x00)),
             LowItem::Dagc => step3::step("page 1 0x11[0] = 1 en_dagc (Table 10)", rmw_demod(rtl, 1, 0x11, 0x01, 0x01)),
             LowItem::AgcPolarity => step3::step(
                 &format!("page 0 0x0E[1:0] = polar_rf_agc {}, polar_if_agc {} (Table 2)", d.polar_rf_agc as u8, d.polar_if_agc as u8),
@@ -442,7 +648,7 @@ fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String]) -> J {
     log
 }
 
-fn low_if_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
+fn low_if_disturbed(rtl: &Rtl, rate: f64, dab: bool) -> Vec<String> {
     let mut bad = Vec::new();
     let mut check = |name: &str, ok: Option<bool>| {
         if ok != Some(true) {
@@ -455,7 +661,7 @@ fn low_if_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
     check("en_bbin = 0", rtl.demod_read8(BBIN_PAGE, BBIN_OFF).ok().map(|v| v & EN_BBIN == 0));
     check("IIC_repeat", rtl.demod_read8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF).ok().map(|v| v & IIC_REPEAT_BIT_TABLE3 != 0));
     check("Spec_inv = 1", rtl.demod_read8(1, 0x15).ok().map(|v| v & 1 == 1));
-    let p = tuner::pset_iffreq_bytes(tuner::IF_HZ);
+    let p = if dab { dab_pset_bytes() } else { tuner::pset_iffreq_bytes(tuner::IF_HZ) };
     check(
         "pset_iffreq",
         rtl.demod_read(IFFREQ_PAGE, IFFREQ_MSB, 3).ok().map(|v| v[0] & 0x3F == p[0] & 0x3F && v[1] == p[1] && v[2] == p[2]),

@@ -6,6 +6,8 @@ Status (2026-10-09): **the single-write hypothesis is exhausted.** From the docu
 
 Step 5 (the chip's firmware), 2026-10-09: the 8 KiB ROM read through `GetROMCode`, mapped with our own 8051 disassembler. **The firmware never touches the data path**: it configures bulk endpoint A at SET_CONFIGURATION / SET_INTERFACE and acknowledges its interrupt, and nothing else; it has no mode variable, no mode table and no source selector. The demodulator is an I²C slave the firmware reaches only on the host's behalf. What feeds the FIFO is hardware, steered (on the bench evidence) from the demodulator's register file. Two spaces the scans never covered follow from the code: **demodulator pages 5–15** (the page nibble is masked to 4 bits, not 0–4) and **external-data addresses outside 0x2000–0x21FF / 0x3000–0x30FF** (blocks 1 and 2 are a raw window on the whole 16-bit space). Section "Step 5 — the firmware" below.
 
+Step 7 (the datasheet's DAB example), 2026-10-09: the front half at §9.3/§9.4's DAB example (pset_iffreq 0x2FB814, rsamp_ratio 0xE10000 = 8.192 MHz), every documented DVB-T back-end enable off (ACI, CCI, impulse-noise cancellation, DAGC, auto mode detection; PID filter at its documented pass-all), the output held open: alone it is the same replay; the bit scan (10,240) with the content detector and the DAB rate targets found **no candidate that carries the tone or changes the content** (period 1.000 in all 10,225 scorable windows; 5 rate-flagged candidates confirmed as the replay). Section "Step 7" below.
+
 Step 6 (the spaces step 5 opened), 2026-10-09: a read-only survey of demodulator pages 5–15 and the 8051's external data outside the scanned blocks, and the single-bit scan of pages 5–15 (22,440, register 0x00 excluded) from the held-open data path with the content detector: **0 interesting**, period score 1.000 in all 22,423 scorable windows. Pages 8–15 alias pages 0–7 on read (8 = 0, 9 ≈ 1, 10 ≈ 2, 12 = 4), writes alias by page mod 4 (on the bench evidence); 5–7, 11, 13–15 read like the live page 3. External data outside the blocks is zero except X:2F00–X:2FFF (a few bytes, X:2F80 live), the data RAM X:4000–X:41FF and the IR range X:FC00–X:FD3F. Section "Step 6" below.
 
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
@@ -18,6 +20,129 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 7 — the datasheet's DAB example with the back end off and the path held open — `data/step7-scan-dab-open.jsonl` — `harness scan --baseline dab-open` — COMPLETE, 0 candidates carry the tone
+
+Hypothesis (the project owner's, 2026-10-09; in the record's header):
+the document configures a "DAB mode" only in its pset_iffreq and
+rsamp_ratio examples (§9.3 p. 19: −1066988 = 0x2FB814; §9.4 p. 20:
+14745600 = 0xE10000, f_symbol 8.192 MHz = 4 × 2.048 MHz). With the front
+half at that example, the DVB-T back end disabled through its documented
+enables and the output held open (page 0 0x07 bit 7), a single control
+may route the baseband samples (Figure 1: between the LPFs and the FFT)
+into the packetiser/FIFO.
+
+### The baseline `dab-open` (`examples/harness/baselines.rs`), itemised
+
+The low-if-open items in order, three with dab-open values, then the
+back-end items, then OpenPath; every write a read-modify-write read back
+(all 21 verified in the header):
+
+| item | write | document | read back |
+|---|---|---|---|
+| IfFreq | pset_iffreq = −1066988 = 0x2FB814 (f_IF_D = 1066988 / 2²² × 28.8 MHz = 7.32643 MHz) | §9.3 DAB example | `35 D7 5D` → `2F B8 14` |
+| Rsamp | rsamp_ratio = 0xE10000 (f_symbol 8.192 MHz) | §9.4 DAB example, Table 7 | `F3 26 66 64` → `F3 84 00 00` (0xE10000 << 2; the high nibble of 0x9F is cfreq_off_ratio's) |
+| Dagc | en_dagc page 1 0x11[0] = 0 | Table 10 "0: Disable DAGC" | 0x07 → 0x06 |
+| AciOff | En_aci page 1 0x15[1] = 0 | Table 6 "0: Disable adjacent channel rejection" — **ambiguous placement**: §9.3 puts the canceller in the DDC (the front half); turned off as an itemised choice | 0x07 → 0x05 |
+| CciOff | En_cci page 1 0x40[1] = 0 | Table 8 "0: Disable CCI cancellation" (§9.5) | 0x4F → 0x4D |
+| IncOff | en_inc page 1 0x5D[0] = 0 | Table 9 "0: Disable impulse noise cancellation" (§9.6) | 0x33 → 0x32 |
+| AutoScanOff | dis_auto_scan page 1 0x5F[0] = 1 | Table 11 "1: Disable auto mode detection" (§9.8; inverted polarity, as printed) | 0x40 → 0x41 |
+| PidPassAll | mode_PID page 0 0x61[6] = 1, en_PID[31:0] 0x62–0x65 = 0 | Table 13 / Fig. 7: no individual filter enabled, XOR with mode_PID passes all (§9.11 "the default register setting will let all PID transport streams pass through"); the document has no other "filter off" | already so (0xE0, 0, 0, 0, 0) |
+| OpenPath | page 0 0x07 \|= 0x80 | this derivation's finding (step 3) | 0x3C → 0xBC |
+
+Not changed, with the reason (in the header): **enable_PID** page 0
+0x61[7] stays 1 — Table 13: "Set 1 to Enable Output of PID Filter / Set
+0 No Output", the output gate the held path needs (measured, below);
+err_pass stays 1 (not an enable); pset_mode_gi left as read (a preset for
+auto-detection off; Table 11 prints default 3, the chip reads 0, 1C);
+cfreq_off_ratio stays 0xAEBAF (§9.9 says it "must be set according to
+the sampling frequency" but the DAB example gives no value); the AGC
+loops stay on (the tuner's VGA is closed through them, 4b); the Table 5
+DC/IQ blocks are zero-IF blocks already bypassed by en_bbin = 0 (§9.2).
+The tuner keeps low-if's LO (304.57 MHz, high side), so the DDC centre
+is RF 304.570 − 7.326 = **297.2436 MHz**; the controls put the tone
+there (+200 kHz, −300 kHz).
+
+### Solo (header): the replay, unchanged
+
+| state | bytes/s (10 × 100 ms) | period score | entropy | I/Q unsigned mean / var | two's complement mean / var |
+|---|---|---|---|---|---|
+| dab-open, tone off | 44.41–44.58 MB/s | 1.000 every window | 7.9460 | 124.98 / 127.61; 5537 / 5649 | 1.20 / −0.26; 5401 / 5213 |
+| tone on at 297.2436 MHz | 36.96–37.18 MB/s (the transmitter shares the host's USB) | 1.000 | 7.9460 | the same to 3 decimals | the same |
+| enable_PID = 0 ("No Output") | 44.97 MB in 10 windows: **no effect on the replay** | 1.000 | 7.946 | the same | the same |
+
+Positive control: `if_agc_val` 8191 → −1008 with the tone at the DDC
+centre RF. No solo window was non-replay, so the scan ran.
+
+### The scan: 10,240 candidates, 0 carry the tone
+
+Detector and flow check as in steps 3 and 6, thresholds from this solo;
+interesting additionally when bytes/s is within 20 % of 4.096, 8.192,
+16.384 or 32.768 MB/s (2 × 2.048 / 2 × 8.192 MHz, 8- or 16-bit), plus
+the stream band 8.19–32.77 MB/s (½–2 × 2 × 8.192 MHz). Each interesting
+candidate ended its chunk with a full `confirm-write` (rates 8.192 /
+4.096 / 16.384 Msps = the DAB ratio, ×2, ×½; tone off, DDC centre RF
++200 kHz, −300 kHz, off; statistics; minimisation of the 22 items).
+12 chunks.
+
+**Detector revision (2026-10-09, after line 301, a `detector_revision`
+line in the record):** the 32.768 MB/s band reaches 39.3 MB/s, and one
+slow window of the unchanged replay fell into it (p0 0x25 b4: 36.6 MB/s;
+its confirmation read 45.0 MB/s at every rate). From then on a window
+flagged by rate alone (period intact) is measured once more with the flip
+in place, and is interesting only if that second window is flagged too;
+a period break would count at once. Eight flags were cleared this way,
+each first window being the replay (period 1.000) running down to 0 B:
+p1 0x04 b7 (12.9 MB/s), p1 0x94 b0 (8.9), p4 0x01 b2–b7 (16.3–31.3).
+
+| | count |
+|---|---|
+| interesting (all confirmed) | 5: p0 0x01 b1, p0 0x06 b4, p0 0x25 b4 (before the revision), p1 0xC7 b5, p4 0x06 b4 |
+| period score < 1.000 | **0 of 10,225** scorable windows |
+| entropy | 7.9368–7.9483 bits |
+| first windows within 20 % of 2 × 8.192 MB/s | 4 (p4 0x01 b2, b4, b5, b6) — the replay (period 1.000) on its way to 0 B, cleared by the recheck |
+| zero-byte windows | 0 |
+| rate changed (throttle/stop) | 38 (the step-3 set, plus p1 0x04 b5 b7, p1 0x94 b0, p1 0xC7 b5, p4 0x01 b2–b7 mirroring page 0 0x01) |
+| held flow lost before a candidate | 10, all restored (9 by a power cycle) |
+| wedged, recovered | 6 (p0/p4 0x20 b4, 0xA7 b5 b6) |
+| detector check | 0 halts, 1 transfer error |
+
+The five confirmations (`data/step3-confirm-dabopen-p{page}-{offset}-{value}.json`):
+
+| candidate | bytes/s at 8.192 / 4.096 / 16.384 Msps (× 2 × rate) | period, every state | tone off / +200 kHz / −300 kHz / off | needed (minimisation) |
+|---|---|---|---|---|
+| p0 0x01 = 0x06 (b1) | 1.63 / 7.71 / 3.39 MB/s (0.10 / 0.94 / 0.10) | 3,760 (match 1.000) | 0.03 / **37.58** / **37.56** / 0.05 MB/s | DemodCtl, IicRepeat, TunerImage, OpenPath |
+| p0 0x06 = 0x10 (b4) | 23.86 / 24.90 / 22.91 (1.46 / 3.04 / 0.70) | 3,760 | 25.03 / 34.68 / 33.40 / 24.71 | **DemodCtl, OpenPath only** |
+| p0 0x25 = 0x10 (b4) | 44.99 / 45.01 / 45.03 — the held replay | 3,760 | 45.13 / 37.70 / 37.77 / 44.97 | DemodCtl, IicRepeat, TunerImage, OpenPath |
+| p1 0xC7 = 0x38 (b5) | 19.37 / 31.27 / 19.82 (1.18 / 3.82 / 0.61) | 3,760 | 19.40 / 33.77 / 32.93 / 19.39 | DemodCtl, IicRepeat, TunerImage, OpenPath |
+| p4 0x06 = 0x10 (b4) | 26.27 / 27.05 / 24.96 (1.60 / 3.30 / 0.76) | 3,760 | 24.66 / 34.01 / 35.16 / 26.41 | **DemodCtl, OpenPath only** |
+
+In every state of every confirmation the complex spectrum's top peaks
+are the replay's own fixed bins (−0.2517, 0.3723, 0.1733, −0.1155
+cycles/sample, 10–12 dB), identical with the tone off and on; nothing
+at the expected +0.0244 / −0.0366 (offset / 8.192 Msps, either sign).
+**No candidate carries the tone.** None tracks rsamp_ratio.
+
+Two side observations, both about the flow of the replay, not its
+content:
+
+- **p0 0x01 bit 1 gates the replay by signal presence**: 30–50 kB/s with
+  the tone off, the full 37.6 MB/s with the tone on at either offset
+  (repeated off → on → on → off). The content stays the 3,760-byte
+  replay. The register's other bits only throttle (b0) or nothing.
+- **p0 0x06 bit 4** (and its page-4 alias) runs the replay without the
+  tuner image or the I²C repeater (needed: DemodCtl and OpenPath only),
+  where page 0 0x07 bit 7 alone needed the tuner programmed (step 3).
+  With the tone on, its rate rises (25 → 34 MB/s).
+
+### Replay
+
+```
+SRC='--source-cmd "cargo run --release --example tone_source -- --cabled"'
+cargo run --release -p sdr-rtl --example harness -- scan --baseline dab-open --limit 0 $SRC      # header: definition, solo, enable_PID = 0, thresholds
+cargo run --release -p sdr-rtl --example harness -- scan --baseline dab-open --limit 1200 $SRC   # repeat to 10240 (an interesting candidate ends its chunk with the confirmation)
+cargo run --release -p sdr-rtl --example harness -- confirm-write 0 0x01 0x06 --baseline dab-open $SRC
+```
 
 ## Step 6 — the spaces the firmware opens: pages 5–15 and the rest of external data — `data/step6-survey.json`, `data/step6-scan-p5-15.jsonl` — `harness survey`, `harness scan --baseline low-if-open --pages 5-15 --offset-from 1 --record step6-scan-p5-15.jsonl`
 
