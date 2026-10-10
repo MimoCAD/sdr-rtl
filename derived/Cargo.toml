@@ -54,3 +54,7 @@ required-features = ["bench"]
 [[example]]
 name = "bracket"
 required-features = ["bench"]
+
+[[example]]
+name = "cleanstart"
+required-features = ["bench"]

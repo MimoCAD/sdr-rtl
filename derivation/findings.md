@@ -225,6 +225,34 @@ them counted. A paused retune is lossless to 1.2 Msps (100 of 100) and
 nearly so at 1.4. 0 errors in 300 bracketed retunes. Measured on the
 M5 Max only; another host's request latency moves every boundary.
 
+### 16.4 The stream's own start and stop — `data/step16-clean-start-stop.jsonl` — `derived/examples/cleanstart.rs`
+
+3 s of stream with no control traffic, from a power cycle, the counter
+taken after the stop; 3 runs a cell. `clean start`: page 1 0x01 written
+0x14 before `RtlStream::start` (the chip starts paused), then 0x10 (one
+write each); `clean stop`: 0x14 written, 5 ms, then `RtlStream::stop`.
+
+| Rate (Msps) | plain | clean start | clean stop | both |
+|---|---|---|---|---|
+| 1.024 | 9, 9, 9 | 14, 14, 14 | **0, 0, 0** | 0, 0, 0 |
+| 1.2 | 18, 17, 17 | 22, 24, 23 | **0, 0, 0** | 3 × endpoint stalled |
+| 1.8 | 54, 54, 52 | 52, 52, 53 | 20, 19, 20 | 3 × endpoint stalled |
+| 2.4 | 96, 97, 98 | 81, 81, 81 | 52, 54, 52 | 15, stalled, 15 |
+
+- To 1.2 Msps the plain start drops nothing and the whole baseline was
+  the stop (its read-modify-write of page 0 0x06 with the samples
+  flowing): **a plain start and a clean stop lose nothing, 6 runs of 6.**
+  Starting paused costs ~5 blocks there.
+- At 2.4 Msps the plain start costs ~37 blocks and the plain stop ~66;
+  both clean leave 15, the pause write's own cost (16.2), in the last
+  millisecond before the stop.
+- `both` read the counter (a USB-block read) between the pause and the
+  stop, for attribution; then the stop's demodulator write was refused
+  ("endpoint stalled") in 7 runs of 9. The same steps without that read —
+  pause, stop, then the counter — did not fail in 21 runs (nor in 16.2's
+  300 bracketed retunes, whose reads come before demodulator writes on
+  page 1). Which access stalls is not yet isolated.
+
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 
 RF 200–232 MHz in 1 MHz steps; at each, the driver tunes (the band
