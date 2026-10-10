@@ -48,6 +48,13 @@ acknowledged, 162 stalled) and 954,067 acknowledged bulk IN packets on
 endpoint 0x81, every one 512 bytes (488,482,304 bytes); 45,125,015 IN
 tokens and 44,176,110 NAKs on that endpoint.
 
+**What the player was doing** (the operator's settings): a
+**multiple-channel scan** from DAB channel **5A (174.928 MHz)** to
+**13F (239.200 MHz)**; single-channel scan, antenna alignment, FIC dump
+and thorough scan all off. That accounts for the 38 tunings about 2.78 s
+apart through 5A–13F (9c): one dwell per channel. No station needed to
+be found for the stream to run.
+
 **Encodings seen** (all match steps 1, 2 and 5c): vendor requests with
 bRequest 0; demodulator wValue = register << 8 | 0x20, wIndex = page
 (Get) or 0x10 | page (Set); USB/system wValue = the address, data
