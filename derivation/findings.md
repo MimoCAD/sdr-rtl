@@ -204,6 +204,27 @@ places the pause to ~±2 ms (`shortfall_vs_streaming_time`, −154 k to
 −159 k over 50 cycles: samples kept arriving for part of each measured
 pause); the stream carries no marker of it.
 
+### 16.3 Where the boundaries fall, by rate (this Mac) — `data/step16-tiers-opcost.jsonl`, `data/step16-tiers-bracket.jsonl`
+
+Per rate from a power cycle: `opcost --ops none,usbread` (5 s; 1,000
+USB-block reads at 5 ms) and `bracket --blind` (50 paused retunes).
+
+| Rate (Msps) | 1,000 counter reads: blocks over the baseline / short | 50 paused retunes: blocks lost (max a cycle) |
+|---|---|---|
+| 1.024 | +17 / ≈ 0 | 0 |
+| 1.2 | +20 / ≈ 0 | 0 |
+| 1.4 | +24 / ≈ 0 | 3 (3) |
+| 1.6 | +26 / ≈ 0 | 93 (10) |
+| 1.8 | +35 / ≈ 0 | 328 (21) |
+| 2.048 | saturated / 224 k | 607 (33) |
+
+(Baselines, the start and the stop: 10, 18, 26, 41, 53, 73 blocks.) A
+counter read is nearly free up to 1.8 Msps but not exactly: ~0.02–0.035
+blocks a read, the reads whose latency outlasts the FIFO, every one of
+them counted. A paused retune is lossless to 1.2 Msps (100 of 100) and
+nearly so at 1.4. 0 errors in 300 bracketed retunes. Measured on the
+M5 Max only; another host's request latency moves every boundary.
+
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 
 RF 200–232 MHz in 1 MHz steps; at each, the driver tunes (the band
