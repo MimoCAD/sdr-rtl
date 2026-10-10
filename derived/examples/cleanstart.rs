@@ -3,7 +3,7 @@
 //! baselines (no operation during the stream) dropped 10 blocks at
 //! 1.024 Msps to 73 at 2.048, every run.
 //!
-//!   cleanstart [--rates a,b,…] [--reps N] [--seconds S]
+//!   cleanstart [--rates a,b,…] [--reps N] [--seconds S] [--modes a,b,…]
 //!
 //! Built with `--features bench`. Per rate, mode and repetition, from a
 //! power cycle (gains 8/8/2): the stream started, read without pause for
@@ -52,11 +52,11 @@ fn one(mode: &str, rate: f64, secs: f64) -> Result<String, String> {
     let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     if clean_start {
-        pause(&rtl, true)?;
+        pause(&rtl, true).map_err(|e| format!("pause before start: {e}"))?;
     }
-    s.start().map_err(|e| e.to_string())?;
+    s.start().map_err(|e| format!("start: {e}"))?;
     if clean_start {
-        pause(&rtl, false)?;
+        pause(&rtl, false).map_err(|e| format!("resume after start: {e}"))?;
     }
     let t = Instant::now();
     let mut n = 0u64;
@@ -70,16 +70,16 @@ fn one(mode: &str, rate: f64, secs: f64) -> Result<String, String> {
     }
     let mut before_stop = None;
     if clean_stop {
-        pause(&rtl, true)?;
+        pause(&rtl, true).map_err(|e| format!("pause before stop: {e}"))?;
         std::thread::sleep(DRAIN);
         if mode == "both" {
-            before_stop = Some(rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(|e| e.to_string())?);
+            before_stop = Some(rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(|e| format!("counter read before stop: {e}"))?);
         }
     }
-    s.stop().map_err(|e| e.to_string())?;
-    let d = s.take_dropped_blocks().map_err(|e| e.to_string())?;
+    s.stop().map_err(|e| format!("stop: {e}"))?;
+    let d = s.take_dropped_blocks().map_err(|e| format!("take after stop: {e}"))?;
     if clean_stop {
-        pause(&rtl, false)?;
+        pause(&rtl, false).map_err(|e| format!("resume after stop: {e}"))?;
     }
     Ok(format!(
         "\"cycle\":\"{cycle}\",\"mode\":\"{mode}\",\"rate\":{rate},\"seconds\":{secs},\"samples\":{n},\"first_samples_ms\":{first_ms:.2},\"blocks_before_stop\":{},\"blocks_total\":{},\"saturated\":{}",
@@ -95,8 +95,9 @@ fn run() -> Result<(), String> {
     let rates: Vec<f64> = get("--rates").unwrap_or_else(|| "1024000,1200000,1800000,2400000".into()).split(',').filter_map(|v| v.parse().ok()).collect();
     let reps: u32 = get("--reps").and_then(|v| v.parse().ok()).unwrap_or(3);
     let secs: f64 = get("--seconds").and_then(|v| v.parse().ok()).unwrap_or(3.0);
+    let modes: Vec<String> = get("--modes").map(|m| m.split(',').map(String::from).collect()).unwrap_or_else(|| MODES.iter().map(|m| m.to_string()).collect());
     for &rate in &rates {
-        for mode in MODES {
+        for mode in modes.iter().map(String::as_str) {
             for _ in 0..reps {
                 match one(mode, rate, secs) {
                     Ok(body) => println!("{{{body}}}"),

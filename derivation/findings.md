@@ -252,6 +252,14 @@ write each); `clean stop`: 0x14 written, 5 ms, then `RtlStream::stop`.
   pause, stop, then the counter — did not fail in 21 runs (nor in 16.2's
   300 bracketed retunes, whose reads come before demodulator writes on
   page 1). Which access stalls is not yet isolated.
+- **Not reproduced** (`data/step16-stall-probe.jsonl`, `stallprobe.rs`): at
+  1.2 Msps, 10 runs each of eight orders after 0.5 s of stream — pause,
+  read, stop (16.4's); pause, read, demodulator read; pause, read,
+  demodulator write on page 0 and on page 1; pause, demodulator read and
+  write; read and stop unpaused; pause, 50 ms, read, stop; pause, stop,
+  read — 0 failures in 80; then `cleanstart --modes both` at 1.2 Msps,
+  6 runs, 0 failures and 0 blocks each. The refusal is intermittent, not
+  bound to the order; 7 of its 9 came in one sequence of runs. Open.
 
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 

@@ -1,0 +1,14 @@
+{"seq":"s1","steps":["pause", "usbread", "stop"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"seq":"s2","steps":["pause", "usbread", "demodread"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"seq":"s3","steps":["pause", "usbread", "demodwrite_p0"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"seq":"s4","steps":["pause", "usbread", "demodwrite_p1"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"seq":"s5","steps":["pause", "demodread", "demodwrite_p0"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"seq":"s6","steps":["usbread", "stop"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"seq":"s7","steps":["pause", "wait50", "usbread", "stop"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"seq":"s8","steps":["pause", "stop", "usbread"],"rate":1200000,"runs":10,"failures":0,"first":[]}
+{"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 523 ms","mode":"both","rate":1200000,"seconds":3,"samples":3600106,"first_samples_ms":0.09,"blocks_before_stop":0,"blocks_total":0,"saturated":false}
+{"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 519 ms","mode":"both","rate":1200000,"seconds":3,"samples":3600106,"first_samples_ms":0.12,"blocks_before_stop":0,"blocks_total":0,"saturated":false}
+{"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 526 ms","mode":"both","rate":1200000,"seconds":3,"samples":3600106,"first_samples_ms":0.07,"blocks_before_stop":0,"blocks_total":0,"saturated":false}
+{"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 527 ms","mode":"both","rate":1200000,"seconds":3,"samples":3600106,"first_samples_ms":0.07,"blocks_before_stop":0,"blocks_total":0,"saturated":false}
+{"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 521 ms","mode":"both","rate":1200000,"seconds":3,"samples":3600106,"first_samples_ms":0.06,"blocks_before_stop":0,"blocks_total":0,"saturated":false}
+{"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 528 ms","mode":"both","rate":1200000,"seconds":3,"samples":3600200,"first_samples_ms":0.09,"blocks_before_stop":0,"blocks_total":0,"saturated":false}
