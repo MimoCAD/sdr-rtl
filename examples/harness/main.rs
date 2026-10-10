@@ -28,6 +28,12 @@
 //!               (the endpoint path held open), each window's content
 //!               judged by content.rs; an interesting candidate ends the
 //!               chunk and is confirmed (confirm-write) at once
+//!               --baseline zero-if-open: the documented zero-IF input
+//!               (9.1, 9.3) with the tuner tuned and the path held open
+//!               (step 8; record data/step8-scan-zero-if-open.jsonl)
+//!   fifo-watch [--baseline B] [--seconds S]  step 8: the replayed FIFO
+//!               pattern window by window, tone off/on alternating: when
+//!               it changes, and the new bytes (0x47 test)
 //!   confirm P O B   step 3: confirm a scan hit (page, offset, bit)
 //!   survey      step 6, read-only: demodulator pages 5-15 and the 8051's
 //!               external data outside the scanned ranges (64-byte reads),
@@ -98,6 +104,7 @@ mod blockscan;
 mod bytescan;
 mod confirm_write;
 mod content;
+mod fifo_watch;
 mod json;
 mod meter;
 mod regs;
@@ -209,6 +216,7 @@ fn main() {
         Some("confirm") => step3::confirm(&args[1..]),
         Some("confirm-write") => confirm_write::run(&args[1..]),
         Some("survey") => survey::run(),
+        Some("fifo-watch") => fifo_watch::run(&args[1..]),
         Some("bytescan") => bytescan::run(&args[1..]),
         Some("blockscan") => blockscan::run(&args[1..]),
         Some("restart-probe") => restart::probe(),

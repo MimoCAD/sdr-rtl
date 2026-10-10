@@ -160,6 +160,14 @@ pub const DAB_ITEM_TEXT: [(&str, &str); 5] = [
     ("PidPassAll", "PidPassAll: the PID filter at its documented pass-all setting (9.11, Table 13, p. 25; Fig. 7): mode_PID page 0 0x61[6] = 1 and en_PID[31:0] page 0 0x62-0x65 = 0 — no individual filter enabled, so the XOR with mode_PID passes every packet ('the default register setting will let all PID transport streams pass through'). The document has no 'filter off' bit other than this; enable_PID is the output gate (not changed, see below)"),
 ];
 
+/// zero-if-open's tone offsets from RF = LO - 4.57 MHz (the RF the tuner
+/// puts at its IF): 0, then +-0.2, +-0.5, +-1.0 MHz.
+pub const ZERO_OPEN_TONE_OFFSETS_HZ: [f64; 7] = [0.0, 200e3, -200e3, 500e3, -500e3, 1.0e6, -1.0e6];
+
+/// Why zero-if-open's scan keeps the tone keyed (at the positive control's
+/// RF, 300 MHz, CONTROL_LEVEL).
+pub const SCAN_TONE_WHY: &str = "data/step8-fifo-watch.json and data/step8-fifo-watch-lowif-open.json: in the held-open states the only new bytes that ever enter the FIFO memory are 4 bytes at one fixed position of each 188-byte block, rewritten in bursts ~2.5-3 s apart, and only while the tone is on (0 changed windows in 3 of 4 tone-off states each; the 4th is the window right after unkeying). A bit that changed what this signal-driven writer writes (whole blocks, every period) shows only with a signal present, so the scan keeps the tone keyed at the positive control's RF; its thresholds come from the tone-on solo windows (the transmitter shares the host's USB: ~37 MB/s)";
+
 /// The power-on baseline's two items.
 pub const POWER_ON_ITEMS: [&str; 2] = ["DemodPll", "Endpoint"];
 
@@ -173,6 +181,9 @@ pub enum Baseline {
     /// low-if-open with the front half at the datasheet's DAB example
     /// (9.3, 9.4) and every documented DVB-T back-end enable off.
     DabOpen,
+    /// The documented zero-IF input (9.1, 9.3) with the tuner configured
+    /// and tuned and the path held open (findings step 8).
+    ZeroIfOpen,
     PowerOn,
 }
 
@@ -183,8 +194,9 @@ impl Baseline {
             "low-if" => Ok(Baseline::LowIf),
             "low-if-open" => Ok(Baseline::LowIfOpen),
             "dab-open" => Ok(Baseline::DabOpen),
+            "zero-if-open" => Ok(Baseline::ZeroIfOpen),
             "power-on" => Ok(Baseline::PowerOn),
-            _ => Err(format!("--baseline {s}: zero-if | low-if | low-if-open | dab-open | power-on")),
+            _ => Err(format!("--baseline {s}: zero-if | low-if | low-if-open | dab-open | zero-if-open | power-on")),
         }
     }
 
@@ -194,6 +206,7 @@ impl Baseline {
             Baseline::LowIf => "low-if",
             Baseline::LowIfOpen => "low-if-open",
             Baseline::DabOpen => "dab-open",
+            Baseline::ZeroIfOpen => "zero-if-open",
             Baseline::PowerOn => "power-on",
         }
     }
@@ -205,6 +218,7 @@ impl Baseline {
             Baseline::LowIf => "step3-scan-lowif.jsonl",
             Baseline::LowIfOpen => "step3-scan-lowif-open.jsonl",
             Baseline::DabOpen => "step7-scan-dab-open.jsonl",
+            Baseline::ZeroIfOpen => "step8-scan-zero-if-open.jsonl",
             Baseline::PowerOn => "step3-scan-poweron.jsonl",
         }
     }
@@ -212,14 +226,14 @@ impl Baseline {
     /// The data path held open by page 0 0x07 bit 7 (the content
     /// detector's baselines).
     pub fn is_open(self) -> bool {
-        matches!(self, Baseline::LowIfOpen | Baseline::DabOpen)
+        matches!(self, Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen)
     }
 
     /// The sample rate a stream is judged against: the rate the baseline
     /// programs into rsamp_ratio, or the power-on ratio's.
     pub fn rate_hz(self) -> f64 {
         match self {
-            Baseline::ZeroIf | Baseline::LowIf | Baseline::LowIfOpen => step3::RATE_HZ,
+            Baseline::ZeroIf | Baseline::LowIf | Baseline::LowIfOpen | Baseline::ZeroIfOpen => step3::RATE_HZ,
             Baseline::DabOpen => dab_rate_hz(),
             Baseline::PowerOn => power_on_rate_hz(),
         }
@@ -246,6 +260,30 @@ impl Baseline {
         }
     }
 
+    /// The tone test's states: (name, RF or None for the source off). The
+    /// first and last are off; the off states are the reference the tone
+    /// states are compared with.
+    pub fn tone_plan(self) -> Vec<(String, Option<f64>)> {
+        let mut plan: Vec<(String, Option<f64>)> = vec![("tone off".into(), None)];
+        match self {
+            Baseline::ZeroIfOpen => {
+                let lo = low_if_pll().lo_hz().unwrap_or(0.0);
+                let at_if = lo - tuner::IF_HZ;
+                for o in ZERO_OPEN_TONE_OFFSETS_HZ {
+                    plan.push((format!("tone at LO - 4.57 MHz {o:+} Hz"), Some(at_if + o)));
+                }
+                plan.push(("tone at the LO".into(), Some(lo)));
+            }
+            _ => {
+                for o in crate::confirm_write::TONE_OFFSETS_HZ {
+                    plan.push((format!("tone at the DDC centre RF {o:+} Hz"), Some(self.ddc_centre_rf_hz() + o)));
+                }
+            }
+        }
+        plan.push(("tone off again".into(), None));
+        plan
+    }
+
     /// Byte rates (bytes/s) flagged in addition to the stream band.
     pub fn rate_targets(self) -> Vec<f64> {
         match self {
@@ -266,6 +304,7 @@ impl Baseline {
                 .chain(DAB_ITEMS.iter().map(|(n, ..)| n.to_string()))
                 .chain([OPEN_PATH_ITEM.to_string()])
                 .collect(),
+            Baseline::ZeroIfOpen => ZERO_OPEN_ITEMS.iter().map(|s| s.to_string()).collect(),
             Baseline::PowerOn => POWER_ON_ITEMS.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -293,6 +332,23 @@ impl Baseline {
                 "TunerImage: tuner::image (every fixed cell of [R820T2] Table 1-2 as printed, every other field the stated choice of tuner::IMAGE_NOTES) in the vagc configuration (VGA_MODE = 1, the IF gain from the VAGC pin wired to the demodulator's IF AGC output, findings 4b), CLK_OUT_ENB = 0 (the demodulator is clocked from it, findings 4a), PLL for LO = 300 MHz + 4.57 MHz (high side), SEL_DIV 010 /8, REF_DIV2 1: Nint 84, SDM 39504 (findings 4c, 4e); R5-R15 checked by the 32-byte read-back (R16-R31 cannot be read back, findings 4a); after 10 ms R2 VCO_INDICATOR checked in 70..=127 (findings 4c)",
                 "EpaMaxPkt, EpaCfg, EpaFifoReset, Dma: the bulk endpoint as the zero-IF baseline sets it: USB_EPA_MAXPKT = the descriptor's wMaxPacketSize (Table 33); USB_EPA_CFG enable, bulk, endpoint number (Table 31); USB_EPA_CTL FIFO reset 1 then 0, stall 0 (Table 32); USB_SYSCTL DMA (Table 30)",
             ],
+            Baseline::ZeroIfOpen => &[
+                "a power cycle, then in order (ZERO_OPEN_ITEMS), every demodulator write a read-modify-write read back, every USB/system write read back:",
+                "DemodCtl: DEMOD_CTL |= PLL|ADC_I|ADC_Q|reset-release (Table 15) — the zero-IF baseline's item",
+                "TunerPower: GPIO3 GPD[3] = 0, GPOE[3] = 1, GPO[3] = 0, then 50 ms (Tables 16-19, p. 29) — as low-if (the zero-IF baseline's item without the 50 ms)",
+                "IicRepeat: page 1 0x01[3] = 1 (Table 3; the tuner path, findings 2) — as low-if",
+                "AdEn: page 0 0x08[7:6] = 11, AD_EN_reg = AD_EN_reg1 = 1 (Table 4, zero-IF input 9.1) — the zero-IF baseline's item",
+                "EnBbin: page 1 0xB1[0] = 1 en_bbin (Table 4, zero-IF input 9.1; 9.2: DC cancellation and IQ compensation default on with it) — the zero-IF baseline's item",
+                "IfFreqZero: pset_iffreq = 0 over page 1 0x19-0x1B (Table 6, 9.3 zero-IF example) — the zero-IF baseline's item",
+                "AgcLoops: page 1 0x04[7:5] = 110, en_if_agc = en_rf_agc = 1, aagc_hold = 0 (Table 2) — as low-if",
+                "Dagc: page 1 0x11[0] = 1 en_dagc (Table 10) — as low-if",
+                "AgcPolarity: page 0 0x0E[1:0] = 00 (Table 2; findings 4b: polarity 0 closes the IF loop through VAGC) — as low-if",
+                "Rsamp: rsamp_ratio = floor(28.8e6 / rate * 2^22) over page 1 0x9F-0xA2 [27:2] (9.4 formula, Table 7); 0x3000000 at 2.4 Msps",
+                "TunerImage: tuner::image in the vagc configuration, CLK_OUT_ENB = 0 (findings 4a), PLL for LO = 300 MHz + 4.57 MHz = 304.57 MHz (high side), SEL_DIV 010 /8, REF_DIV2 1: Nint 84, SDM 39504 (findings 4c, 4e); R5-R15 checked by the read-back; R2 VCO_INDICATOR checked in 70..=127 after 10 ms — exactly low-if's item. The tuner itself stays a low-IF part: its output is RF 300 MHz at IF 4.57 MHz ([R820T] Table 4-1), so with pset_iffreq = 0 a tone lands 4.57 MHz off the DDC's centre (or wherever the resampler folds it); the tone test steps it across offsets for that reason",
+                "EpaMaxPkt, EpaCfg, EpaFifoReset, Dma: the bulk endpoint as the zero-IF baseline sets it (Tables 30-33)",
+                "OpenPath (last): page 0 0x07 |= 0x80 (0x3C -> 0xBC), read back. data/step3-confirm-lowif-p0-07-bc.json: with the tuner programmed this bit makes the bulk endpoint deliver at the bus's full rate the FIFO memory's 3,760 bytes round and round; needs DemodCtl, IicRepeat, TunerImage",
+                "NOT written, with the reason: Spec_inv / En_aci page 1 0x15 (the zero-IF baseline does not write them; their power-on values stand and are read into the setup record); the Table 5 DC/IQ enables (on by default with en_bbin, 9.2); opt_adc_iq page 0 0x06[5:4] (no reason to swap); the tuner's own IF stays 4.57 MHz (it is a low-IF part)",
+            ],
             Baseline::PowerOn => &[
                 "a power cycle (VBUS off/on through the analyzer), then only:",
                 "DemodPll: DEMOD_CTL bit 7 = 1, demodulator PLL enable (Table 15), read back. Unavoidable: with it 0 every demodulator read and write stalls (findings 1B/1C: 3/59 oracle bytes as booted, 58/59 with the PLL on), and every candidate of the scan is a demodulator write. The ADC enables (bits 6, 3) are NOT set: findings 1C needed only the PLL.",
@@ -311,7 +367,7 @@ impl Baseline {
             }
             items.push("NOT changed, with the reason: enable_PID page 0 0x61[7] stays 1 — Table 13 documents it as 'Set 1 to Enable Output of PID Filter / Set 0 No Output', the output gate, which the held-open path needs (the solo measures enable_PID = 0 separately); err_pass page 0 0x61[5] stays 1 ('Pass All Error Packets', not an enable); pset_mode_gi page 1 0x5F[3:1] left as read (a preset used only with auto detection off; Table 11 prints default 3, findings 1C read 0); cfreq_off_ratio page 1 0x9D-0x9F stays 0xAEBAF (9.9 says it 'must be set according to the sampling frequency' but the DAB example gives no value); the AGC loops (Table 2) stay on (the tuner's VGA is closed through them, findings 4b); en_dc_est / en_iq_comp / en_iq_est (Table 5) are zero-IF blocks already bypassed by en_bbin = 0 (9.2)");
         }
-        if self.is_open() {
+        if self.is_open() && self != Baseline::ZeroIfOpen {
             items.push("OpenPath (last): page 0 0x07 |= 0x80 (0x3C -> 0xBC), read back. data/step3-confirm-lowif-p0-07-bc.json: with the tuner programmed this bit makes the bulk endpoint deliver at the bus's full rate (45 MB/s, FIFO dropped-block counter 255) the FIFO memory's 3,760 bytes (20 x 188) round and round; needs DemodCtl, IicRepeat, TunerImage");
         }
         let mut def = J::obj();
@@ -327,6 +383,16 @@ impl Baseline {
                     .with("f_symbol_hz", DAB_RATE_HZ)
                     .with("ddc_centre_rf_hz", self.ddc_centre_rf_hz())
                     .with("rate_targets_bytes_per_s", J::Arr(DAB_RATE_TARGETS.iter().map(|t| J::from(*t)).collect())),
+            );
+        }
+        if self == Baseline::ZeroIfOpen {
+            def.set(
+                "tone_plan",
+                J::obj()
+                    .with("lo_hz", low_if_pll().lo_hz())
+                    .with("tuner_if_hz", tuner::IF_HZ)
+                    .with("states", J::Arr(self.tone_plan().iter().map(|(n, hz)| J::obj().with("state", n.as_str()).with("rf_hz", *hz)).collect()))
+                    .with("why", "in zero-IF the DDC sits at 0 Hz (pset_iffreq = 0) while the tuner delivers RF 300 MHz at its 4.57 MHz IF: the tone is stepped across RF = LO - 4.57 MHz + {0, +-0.2, +-0.5, +-1.0} MHz and RF = LO itself, and ANY spectral line that moves with it is looked for (tone_lines), not one expected bin"),
             );
         }
         def.with("baseline", self.name())
@@ -368,6 +434,7 @@ impl Baseline {
                 }
                 log
             }
+            Baseline::ZeroIfOpen => apply_zero_if_open(rtl, rate, skip),
             Baseline::PowerOn => apply_power_on(rtl, skip),
         }
     }
@@ -402,6 +469,7 @@ impl Baseline {
                 }
                 bad
             }
+            Baseline::ZeroIfOpen => zero_if_open_disturbed(rtl, step3::RATE_HZ),
             Baseline::PowerOn => power_on_disturbed(rtl),
         }
     }
@@ -478,6 +546,9 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
         println!("  {}", c.compact().render());
     }
     let mut rec = J::obj().with("windows", ws).with("bytes_total", total).with("any_window_streams", streams);
+    // zero-if-open's scan runs with the tone keyed (SCAN_TONE_WHY): its
+    // thresholds come from the tone-on windows.
+    let mut threshold_basis: Option<Vec<Content>> = None;
     if open {
         rec.set("content_legend", content::LEGEND);
         // A held state that already delivers something other than the
@@ -507,7 +578,7 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
                 .with("bytes_after_restore", nr),
         );
     }
-    if matches!(b, Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen) && source::command().is_some() {
+    if matches!(b, Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen) && source::command().is_some() {
         let start = Instant::now();
         let mut src = Source::open()?;
         let described = src.describe();
@@ -525,6 +596,45 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
             streams |= nr;
         }
         let off_again = src.off()?;
+        if b == Baseline::ZeroIfOpen {
+            threshold_basis = Some(c_on.clone());
+            rec.set("thresholds_from", "the ten tone-on windows (positive_control.windows_tone_on): the scan runs with the tone keyed (header scan_tone)");
+            // The multi-offset tone test of the held state alone: every
+            // state's windows judged for content, the bytes kept for the
+            // spectra, then any line that moves with the tone.
+            let mut states = J::Arr(Vec::new());
+            let mut kept = Vec::new();
+            for (name, hz) in b.tone_plan() {
+                let s = match hz {
+                    Some(h) => src.level(h, CONTROL_LEVEL)?,
+                    None => src.off()?,
+                };
+                let mut all = Vec::new();
+                let mut cs = Vec::new();
+                let mut ws = J::Arr(Vec::new());
+                for _ in 0..10 {
+                    let mut data = Vec::new();
+                    let w = bulk.measure(step3::WINDOW, Some(&mut data));
+                    let c = Content::of(&data, w.elapsed.as_secs_f64());
+                    ws.push(step3::window_record(&w, rate).with("c", c.compact()));
+                    cs.push(c);
+                    if all.len() < crate::confirm_write::TONE_KEEP_BYTES {
+                        all.extend_from_slice(&data);
+                    }
+                }
+                let nr = nonreplay(&cs);
+                streams |= nr;
+                let n: usize = cs.iter().map(|c| c.bytes).sum();
+                println!("  {name}: {n} B; {}", cs.first().map(|c| c.compact().render()).unwrap_or_default());
+                states.push(J::obj().with("state", name.as_str()).with("rf_hz", hz).with("source", s).with("windows", ws).with("nonreplay_content", nr));
+                all.truncate(crate::confirm_write::TONE_KEEP_BYTES);
+                kept.push((name, hz, all));
+            }
+            src.off()?;
+            let lines = crate::confirm_write::tone_lines(&kept);
+            println!("tone lines: {}", lines.render());
+            rec.set("tone_sweep", J::obj().with("plan", "Baseline::tone_plan (header baseline_definition.tone_plan)").with("states", states).with("tone_lines", lines));
+        }
         src.quit();
         let moved = meter::moved(&off, &on, Meter::IfAgcMsbFirst).map(|(a, c, m)| J::obj().with("off", a).with("on", c).with("moved", m));
         println!("{} with the tone on: {n_on} B in 10 x 100 ms; if_agc_val off -> on: {}", b.name(), moved.as_ref().map(J::render).unwrap_or_default());
@@ -545,7 +655,7 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
                 .with("tone_off_after", off_again),
         );
     }
-    Ok((rec, streams, contents))
+    Ok((rec, streams, threshold_basis.unwrap_or(contents)))
 }
 
 /// Any window that carried enough bytes to score and is not the replay
@@ -570,10 +680,19 @@ fn rmw_demod(rtl: &Rtl, page: u8, off: u8, mask: u8, value: u8) -> Result<J, usb
 /// The low-if items; with `dab`, IfFreq is the DAB example's pset_iffreq
 /// and Dagc writes en_dagc = 0 (dab-open's definition).
 fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String], dab: bool) -> J {
-    let d = DemodIf::default();
     let mut log = J::Arr(Vec::new());
     for item in LOW_ITEMS.into_iter().filter(|i| !skip.contains(&format!("{i:?}"))) {
-        let rec = match item {
+        log.push(J::obj().with("item", format!("{item:?}")).with("record", low_item(rtl, item, rate, dab)));
+    }
+    log
+}
+
+/// One low-if item applied (every demodulator write a read-modify-write
+/// read back); with `dab`, IfFreq and Dagc take dab-open's values.
+fn low_item(rtl: &Rtl, item: LowItem, rate: f64, dab: bool) -> J {
+    let d = DemodIf::default();
+    {
+        match item {
             LowItem::DemodCtl => step3::step(
                 "DEMOD_CTL |= PLL|ADC_I|ADC_Q|reset-release (Table 15)",
                 step3::rmw_sys8(rtl, DEMOD_CTL, 0, DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE),
@@ -642,10 +761,93 @@ fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String], dab: bool) -> J {
                 let all_but: Vec<Item> = step3::ITEMS.into_iter().filter(|i| format!("{i:?}") != name).collect();
                 step3::apply_baseline(rtl, rate, &all_but)
             }
-        };
-        log.push(J::obj().with("item", format!("{item:?}")).with("record", rec));
+        }
     }
+}
+
+/// One zero-IF documented item (step3::ITEMS) alone, as the zero-IF
+/// baseline writes it.
+fn zero_item(rtl: &Rtl, item: Item, rate: f64) -> J {
+    let all_but: Vec<Item> = step3::ITEMS.into_iter().filter(|i| *i != item).collect();
+    step3::apply_baseline(rtl, rate, &all_but)
+}
+
+/// zero-if-open's items in order (names for the record and minimisation).
+pub const ZERO_OPEN_ITEMS: [&str; 16] = [
+    "DemodCtl",
+    "TunerPower",
+    "IicRepeat",
+    "AdEn",
+    "EnBbin",
+    "IfFreqZero",
+    "AgcLoops",
+    "Dagc",
+    "AgcPolarity",
+    "Rsamp",
+    "TunerImage",
+    "EpaMaxPkt",
+    "EpaCfg",
+    "EpaFifoReset",
+    "Dma",
+    OPEN_PATH_ITEM,
+];
+
+/// zero-if-open: the documented zero-IF input (9.1: AD_EN_reg = AD_EN_reg1
+/// = 1, en_bbin = 1; 9.3: pset_iffreq = 0) with the tuner powered,
+/// configured and tuned as low-if, the AGC items as low-if, the endpoint
+/// as zero-if, and the path held open.
+fn apply_zero_if_open(rtl: &Rtl, rate: f64, skip: &[String]) -> J {
+    let mut log = J::Arr(Vec::new());
+    for name in ZERO_OPEN_ITEMS.into_iter().filter(|n| !skip.iter().any(|s| s == n)) {
+        let rec = match name {
+            "DemodCtl" => low_item(rtl, LowItem::DemodCtl, rate, false),
+            "TunerPower" => low_item(rtl, LowItem::TunerPower, rate, false),
+            "IicRepeat" => low_item(rtl, LowItem::IicRepeat, rate, false),
+            "AdEn" => zero_item(rtl, Item::AdEn, rate),
+            "EnBbin" => zero_item(rtl, Item::EnBbin, rate),
+            "IfFreqZero" => zero_item(rtl, Item::IfFreqZero, rate),
+            "AgcLoops" => low_item(rtl, LowItem::AgcLoops, rate, false),
+            "Dagc" => low_item(rtl, LowItem::Dagc, rate, false),
+            "AgcPolarity" => low_item(rtl, LowItem::AgcPolarity, rate, false),
+            "Rsamp" => low_item(rtl, LowItem::Rsamp, rate, false),
+            "TunerImage" => low_item(rtl, LowItem::TunerImage, rate, false),
+            "EpaMaxPkt" => low_item(rtl, LowItem::EpaMaxPkt, rate, false),
+            "EpaCfg" => low_item(rtl, LowItem::EpaCfg, rate, false),
+            "EpaFifoReset" => low_item(rtl, LowItem::EpaFifoReset, rate, false),
+            "Dma" => low_item(rtl, LowItem::Dma, rate, false),
+            _ => step3::step("page 0 0x07[7] = 1: the endpoint data path open (data/step3-confirm-lowif-p0-07-bc.json)", rmw_demod(rtl, OPEN_PATH_PAGE, OPEN_PATH_OFF, OPEN_PATH_BIT, OPEN_PATH_BIT)),
+        };
+        log.push(J::obj().with("item", name).with("record", rec));
+    }
+    // Not an item: Spec_inv / En_aci (page 1 0x15) are left as found (the
+    // zero-IF baseline does not write them); recorded for the header.
+    log.push(J::obj().with("read_only", "page 1 0x15 (Spec_inv [0], En_aci [1]) as found, not written").with("value", rtl.demod_read8(1, 0x15).ok().map(hex8)));
     log
+}
+
+fn zero_if_open_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
+    let mut bad = Vec::new();
+    let mut check = |name: &str, ok: Option<bool>| {
+        if ok != Some(true) {
+            bad.push(name.to_string());
+        }
+    };
+    let want = DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE;
+    check("DEMOD_CTL", rtl.sys_read8(DEMOD_CTL).ok().map(|v| v & want == want));
+    check("AD_EN = 11", rtl.demod_read8(AD_EN_PAGE, AD_EN_OFF).ok().map(|v| v & (AD_EN_REG | AD_EN_REG1) == AD_EN_REG | AD_EN_REG1));
+    check("en_bbin = 1", rtl.demod_read8(BBIN_PAGE, BBIN_OFF).ok().map(|v| v & EN_BBIN == EN_BBIN));
+    check("IIC_repeat", rtl.demod_read8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF).ok().map(|v| v & IIC_REPEAT_BIT_TABLE3 != 0));
+    check("pset_iffreq = 0", rtl.demod_read(IFFREQ_PAGE, IFFREQ_MSB, 3).ok().map(|v| v[0] & 0x3F == 0 && v[1] == 0 && v[2] == 0));
+    let word = (rsamp_ratio(rate) & ((1 << RSAMP_BITS) - 1)) << RSAMP_SHIFT;
+    let b = word.to_be_bytes();
+    let masks = [0x0F, 0xFF, 0xFF, 0xFC];
+    check("rsamp_ratio", rtl.demod_read(RSAMP_PAGE, RSAMP_MSB, 4).ok().map(|v| (0..4).all(|k| v[k] & masks[k] == b[k] & masks[k])));
+    check(
+        "tuner R0 = 0x96, R2 in 70..=127",
+        tuner::read_status(rtl).ok().map(|s| s[0] == TUNER_R0_CHECK && VCO_INDICATOR_LOCKED.contains(&(s[2] & 0x7F))),
+    );
+    check("page 0 0x07[7] = 1", rtl.demod_read8(OPEN_PATH_PAGE, OPEN_PATH_OFF).ok().map(|v| v & OPEN_PATH_BIT != 0));
+    bad
 }
 
 fn low_if_disturbed(rtl: &Rtl, rate: f64, dab: bool) -> Vec<String> {

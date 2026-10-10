@@ -128,8 +128,13 @@ impl Thresholds {
         let min = |f: &dyn Fn(&Content) -> f64| solo.iter().map(f).fold(f64::INFINITY, f64::min);
         let max = |f: &dyn Fn(&Content) -> f64| solo.iter().map(f).fold(f64::NEG_INFINITY, f64::max);
         let two = step3::expected_bytes_per_s(rate_hz);
+        // A held state with no scorable window (no flow alone) judges a
+        // candidate's bytes against the replay's own score, 1.0: anything
+        // else that arrives is content.
+        let scored = solo.iter().filter_map(|c| c.period_score).fold(f64::INFINITY, f64::min);
+        let period_ref = if scored.is_finite() { scored } else { 1.0 };
         Thresholds {
-            period_min: min(&|c| c.period_score.unwrap_or(0.0)) - PERIOD_MARGIN,
+            period_min: period_ref - PERIOD_MARGIN,
             rate_lo: min(&|c| c.rate()) * (1.0 - RATE_CHANGE),
             rate_hi: max(&|c| c.rate()) * (1.0 + RATE_CHANGE),
             entropy_lo: min(&|c| c.entropy_bits) - ENTROPY_MARGIN,
