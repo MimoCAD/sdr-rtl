@@ -137,6 +137,34 @@ to full FIFO" ([RTL2832U] Table 34).
 So every control transfer during the stream — retune, gain, a status
 read — costs ~0.4–2 ms of samples, and the counter is how to see it.
 
+### 16.1 The FIFO's size — `data/step16-fifo-size.jsonl`, `data/step16-fifo-rate.jsonl` — `derived/examples/fifosize.rs`
+
+USB_EPA_FIFO_CFG's low byte, written with the stream stopped after a
+power cycle, read back; then 1 s of stream with no control traffic and
+50 USB-block reads at 100 ms, a tone at +300 kHz (2.4 Msps unless said).
+Candidates, declared and run in order: 0x05, 0x0A, 0x14, 0x18, 0x1C,
+0x1F, 0x20, 0x28, 0x30, 0x40, 0x60, 0x80, 0xFF; then 0x10–0x17.
+
+- **A 5-bit size field, writable**: 0x28 reads back 0x08, 0x30 → 0x10,
+  0xFF → 0x1F, 0x20/0x40/0x60/0x80 → 0x00 (and size 0 stops the stream:
+  ~1,500 samples, then nothing).
+- **It is the size**: samples short over the 50 reads — 5: 114 k, 10:
+  90 k, 16: 60 k, 20 (power-on): 40–45 k, 21: 36 k, 24: 23 k, 28: 3 k,
+  31: ≈ 0.
+- **The memory holds 21 blocks**: 21 is clean (5 phase jumps in the
+  clean second, the tone 61.5 dB over the median bin, as at 20); from
+  **22 the content is corrupt** — 3,705 jumps in the clean second at 22,
+  5,825 at 23, 6,343 at 24, 15,520 at 31, the tone falling to 52 dB —
+  blocks read from beyond the FIFO. So the FIFO cannot be enlarged past
+  21 × 188 bytes (~0.82 ms at 2.4 Msps), and 21 buys ~200 samples a read.
+- **By rate** (size 20): short over the 50 reads at 1.024 Msps −0.5 k,
+  1.4 Msps −2.2 k, 1.8 Msps −2.5 k (none), 2.048 Msps 12.6 k (~250 a
+  read), 2.4 Msps 43 k (~870 a read); the counter at the end 9, 27, 58,
+  240, 255 (the start's included). A USB-block read stalls the FIFO's
+  draining ~1.0–1.1 ms: at 1.8 Msps and below the 20 blocks outlast it.
+  (A demodulator read's stall, from 16's 2,100 samples at 2.4 Msps, is
+  ~1.7 ms; it was not measured by rate.)
+
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 
 RF 200–232 MHz in 1 MHz steps; at each, the driver tunes (the band
