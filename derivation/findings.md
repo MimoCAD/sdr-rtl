@@ -130,10 +130,11 @@ request) and writes it through block 3 Set; **block 0 must never address
 which on the EEPROM is the signature's first byte.
 
 The bench dongle, read (read only, 256 bytes; the owner's provenance
-record at 0x3C-0x7F redacted in the record):
+record at 0x3C-0x7F and the serial's characters redacted in the record):
 
 - bytes 1-0x3B as the layout says: 0x32, 0bda:2838, 0xA5, configuration
-  0x16, strings "MimoCAD", "MimoSDR", "GFD" chained by bLength exactly;
+  0x16, strings "MimoCAD", "MimoSDR" and a three-character serial,
+  chained by bLength exactly;
 - **byte 0 is 0x00, not 0x28: the signature is broken, so the firmware
   ignores the EEPROM** — the dongle has enumerated with the ROM's
   defaults (0bda:2832, "Generic", serial "77771111153705700") throughout
@@ -152,8 +153,8 @@ broken-EEPROM dongle shows on the bus.
 
 **Repaired, 2026-10-10** (the owner's go-ahead; `eepromwrite 00 28`): one
 block 3 Set of byte 0 ← 0x28, 20 ms, read back 0x28; after a power cycle
-the dongle enumerates as **0bda:2838, "MimoCAD" / "MimoSDR", serial
-"GFD"** — its EEPROM's own identity. The write path and the signature's
+the dongle enumerates as **0bda:2838, "MimoCAD" / "MimoSDR" and its
+serial** — its EEPROM's own identity. The write path and the signature's
 role confirmed on the bench.
 
 **The write page is 8 bytes, 2026-10-10** (`derived/examples/eepromcheck.rs`,
@@ -271,7 +272,7 @@ places the pause to ~±2 ms (`shortfall_vs_streaming_time`, −154 k to
 −159 k over 50 cycles: samples kept arriving for part of each measured
 pause); the stream carries no marker of it.
 
-### 16.3 Where the boundaries fall, by rate (this Mac) — `data/step16-tiers-opcost.jsonl`, `data/step16-tiers-bracket.jsonl`
+### 16.3 Where the boundaries fall, by rate (one host) — `data/step16-tiers-opcost.jsonl`, `data/step16-tiers-bracket.jsonl`
 
 Per rate from a power cycle: `opcost --ops none,usbread` (5 s; 1,000
 USB-block reads at 5 ms) and `bracket --blind` (50 paused retunes).
@@ -289,8 +290,9 @@ USB-block reads at 5 ms) and `bracket --blind` (50 paused retunes).
 counter read is nearly free up to 1.8 Msps but not exactly: ~0.02–0.035
 blocks a read, the reads whose latency outlasts the FIFO, every one of
 them counted. A paused retune is lossless to 1.2 Msps (100 of 100) and
-nearly so at 1.4. 0 errors in 300 bracketed retunes. Measured on the
-M5 Max only; another host's request latency moves every boundary.
+nearly so at 1.4. 0 errors in 300 bracketed retunes. Measured on one
+host only, 16 transfers in flight; another host's request latency moves
+every boundary, and the queue's depth does (16.7).
 
 ### 16.4 The stream's own start and stop — `data/step16-clean-start-stop.jsonl` — `derived/examples/cleanstart.rs`
 
@@ -521,14 +523,14 @@ each ran at three and they are compared at matched output level.
   tone reads +1,266 to +1,282 Hz high through the earlier driver, +1,290 to
   +1,300 through the new — the same ~4.3 ppm source-to-dongle offset; the
   ~20 Hz between them is each PLL's rounding (the new one tunes 299,999,995.4 Hz).
-- **P25 decode.** `~/mimosdr-captures/cc_852675` (4 s of the 852.675 MHz
-  control channel, recorded on an RTL; 82 TSBKs ok / 12 CRC fail decoded
-  directly) looped by `examples/keyer.rs replay:` at its centre
-  852.97494 MHz, txvga 20, through the 20 dB pad; each driver records
-  20 s tuned there (earlier: gain 30 dB; new: codes 8/8/4); both decoded
-  by `mimosdr follow --cc 852.67904M` — the channel lands 4.0 kHz high on
-  this bench (the source's and the dongle's crystals, ~4.7 ppm; at
-  852.675 the decoder found 17 ok of the earlier driver's capture). Three
+- **P25 decode.** A 4 s recording of a P25 control channel, made off
+  the air on an RTL and kept outside the repository (82 TSBKs ok / 12 CRC fail decoded directly), looped by the
+  HackRF at the recording's centre, txvga 20, through the 20 dB pad; each
+  driver records 20 s tuned there (earlier: gain 30 dB; new: codes
+  8/8/4); both decoded by a P25 control-channel decoder 4.0 kHz above the
+  channel's nominal frequency — where it lands on this bench (the
+  source's and the dongle's crystals, ~4.7 ppm; at the nominal frequency
+  the decoder found 17 ok of the earlier driver's capture). Three
   runs each, TSBKs ok / CRC fail: **earlier 403/74, 413/71, 404/73;
   new 410/72, 410/70, 417/68.** Channel 15.4–16.0 dB over the noise in a
   10 kHz band in every capture (the recording's own: 15.7).

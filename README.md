@@ -12,7 +12,7 @@ every finding — is in [`derivation/`](derivation/) (start with
 is refused with the reason, never guessed.
 
 - Open by spec: `Rtl::open("")` (first found), `Rtl::open("0")` (index),
-  `Rtl::open("serial=UHF")`.
+  `Rtl::open("serial=00000001")`.
 - Tuning 42–1002 MHz, the actual frequency from the synthesizer words
   written.
 - Gain as one number or per stage (LNA, mixer, VGA — 16 levels each, dB

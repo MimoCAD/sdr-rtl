@@ -753,9 +753,9 @@ mod tests {
         assert_eq!(&ids.bytes()[VID_OFF..PID_OFF + 2], &[0x34, 0x12, 0x78, 0x56]);
         assert_eq!(ids.identity().unwrap().serial, "SN1");
 
-        let all = e.compose(&changes(Some("Ägypten"), Some("Ω"), Some("260"))).unwrap();
+        let all = e.compose(&changes(Some("Ägypten"), Some("Ω"), Some("123"))).unwrap();
         let id = all.identity().unwrap();
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("Ägypten", "Ω", "260"));
+        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("Ägypten", "Ω", "123"));
         assert_eq!(all.bytes()[STRINGS_OFF + 1], STRING_DESCRIPTOR_TYPE);
     }
 

@@ -1,10 +1,10 @@
     Finished `release` profile [optimized + debuginfo] target(s) in 0.14s
      Running `target/release/examples/tone_source --cabled --rate 8000000`
-source ready HackRF Pro (serial 0000000000000000147865de24652fdf) rate 8000000 offset 400000 amp off
+source ready HackRF Pro (serial redacted) rate 8000000 offset 400000 amp off
 {"run":"lossless","rate":1152000,"tier":"Lossless","samples":681312,"tail":1504,"dropped_blocks":0,"saturated":false,"breaks":6,"kept":681312,"retunes":6,"quiet_ms_mean":56.0,"tones_hz":[301163,201140],"break_offsets":[15, 22, 27, 23, 23, 27],"breaks_within_1_sample":0,"phase_windows":10532,"phase_jumps":0,"first_jumps_from_segment_start":[],"continuity_at_break_deg":[156, -124, -147, -105, 0, 157],"continuity_to_takeover_deg":[],"drain_ms":None,"break_dropped":[0, 0, 0, 0, 0, 0]}
     Finished `release` profile [optimized + debuginfo] target(s) in 0.05s
      Running `target/release/examples/tone_source --cabled --rate 8000000`
-source ready HackRF Pro (serial 0000000000000000147865de24652fdf) rate 8000000 offset 400000 amp off
+source ready HackRF Pro (serial redacted) rate 8000000 offset 400000 amp off
 {"run":"lossless","rate":1024000,"tier":"Lossless","samples":606394,"tail":1504,"dropped_blocks":0,"saturated":false,"breaks":6,"kept":606394,"retunes":6,"quiet_ms_mean":56.0,"tones_hz":[301167,201139],"break_offsets":[14, 22, 26, 24, 23, 25],"breaks_within_1_sample":0,"phase_windows":9362,"phase_jumps":0,"first_jumps_from_segment_start":[],"continuity_at_break_deg":[60, -153, 160, -70, -156, 168],"continuity_to_takeover_deg":[],"drain_ms":None,"break_dropped":[0, 0, 0, 0, 0, 0]}
 {"run":"lossless","rate":1152000,"tier":"Lossless","samples":1109200,"tail":1504,"dropped_blocks":0,"saturated":false,"breaks":10,"kept":1109200,"retunes":10,"quiet_ms_mean":56.3,"tones_hz":[301169,201146],"break_offsets":[13, 23, 24, 28, 24, 24, 27, 24, 24, 23],"breaks_within_1_sample":0,"phase_windows":17154,"phase_jumps":0,"first_jumps_from_segment_start":[],"continuity_at_break_deg":[44, -61, 63, -73, 44, 140, -15, 174, 82, 42],"continuity_to_takeover_deg":[],"drain_ms":None,"break_dropped":[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}
 {"run":"accounted","rate":1800000,"tier":"Accounted","samples":5152234,"tail":1504,"dropped_blocks":21,"saturated":false,"breaks":0,"received_before_finish":5150730}

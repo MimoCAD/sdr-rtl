@@ -1,16 +1,16 @@
-# Read-only, 2026-10-10, derived/examples/eepromread.rs. Bytes 0x3C-0x7F (and their mirror at 0xBC-0xFF) redacted: the owner's signed provenance record (mimosdr rtl write), not the layout's concern.
+# Read-only, 2026-10-10, derived/examples/eepromread.rs. Bytes 0x3C-0x7F (and their mirror at 0xBC-0xFF) redacted: the owner's signed provenance record (mimosdr rtl write), not the layout's concern. The serial's characters, 0x2B-0x30 (and 0xAB-0xB0), redacted: a device serial.
 00: 00 32 DA 0B 38 28 A5 16 02 10 03 4D 00 69 00 6D
 10: 00 6F 00 43 00 41 00 44 00 10 03 4D 00 69 00 6D
-20: 00 6F 00 53 00 44 00 52 00 08 03 47 00 46 00 44
-30: 00 00 00 00 00 00 00 00 00 00 00 00 -- -- -- --
+20: 00 6F 00 53 00 44 00 52 00 08 03 -- -- -- -- --
+30: -- 00 00 00 00 00 00 00 00 00 00 00 -- -- -- --
 40: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 50: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 60: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 70: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 80: 00 32 DA 0B 38 28 A5 16 02 10 03 4D 00 69 00 6D
 90: 00 6F 00 43 00 41 00 44 00 10 03 4D 00 69 00 6D
-A0: 00 6F 00 53 00 44 00 52 00 08 03 47 00 46 00 44
-B0: 00 00 00 00 00 00 00 00 00 00 00 00 -- -- -- --
+A0: 00 6F 00 53 00 44 00 52 00 08 03 -- -- -- -- --
+B0: -- 00 00 00 00 00 00 00 00 00 00 00 -- -- -- --
 C0: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 D0: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 E0: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
@@ -21,5 +21,5 @@ serial flag 0xA5 (present)
 configuration 0x16: remote wake-up 0, interface 1 1, GPIO3 out 1, DEMOD_CTL_1 bit 0 0, DEMOD_CTL_1 bit 1 clear 1
 manufacturer at 0x09: "MimoCAD" (bLength 16, bDescriptorType 0x03)
 product at 0x19: "MimoSDR" (bLength 16, bDescriptorType 0x03)
-serial at 0x29: "GFD" (bLength 8, bDescriptorType 0x03)
+serial at 0x29: three characters, redacted (bLength 8, bDescriptorType 0x03)
 patch list: marker 0x47 (absent), length 162

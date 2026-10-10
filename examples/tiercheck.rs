@@ -2,6 +2,7 @@
 //!
 //!   tiercheck [--retunes N] [--rate SPS] [--lossless-only] [--depth N]
 //!             [--drain-ms MS] [--fifo-reset] [--any-rate]   (the last three with --features bench)
+//!             [--no-source]   (no tone: the loss counts only)
 //!
 //! A tone at 300.3 MHz (the source at 8 Msps, backoff −15 dB). Three runs,
 //! each from a power cycle (gains 8/8/2):
@@ -264,8 +265,15 @@ fn plain(kind: &str, rate: f64) -> Result<String, String> {
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let retunes: u32 = args.iter().position(|a| a == "--retunes").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(20);
-    let mut src = Source::spawn(SOURCE_CMD, 0, -15)?;
-    src.tone(OPEN_RF_HZ + TONE_OFFSET_HZ)?;
+    // `--no-source`: no tone (a host without a port for the source); the
+    // loss counts hold, the break and phase analysis is of noise.
+    let mut src = if args.iter().any(|a| a == "--no-source") {
+        None
+    } else {
+        let mut s = Source::spawn(SOURCE_CMD, 0, -15)?;
+        s.tone(OPEN_RF_HZ + TONE_OFFSET_HZ)?;
+        Some(s)
+    };
     let only_lossless = args.iter().any(|a| a == "--lossless-only");
     let rate: f64 = args.iter().position(|a| a == "--rate").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(1.2e6);
     let drain_ms: Option<u64> = args.iter().position(|a| a == "--drain-ms").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok());
@@ -276,7 +284,9 @@ fn run() -> Result<(), String> {
             Err(e) => println!("{{\"error\":\"{e}\"}}"),
         }
     }
-    src.off()?;
+    if let Some(s) = src.as_mut() {
+        s.off()?;
+    }
     Ok(())
 }
 
