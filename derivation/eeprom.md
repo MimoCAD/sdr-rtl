@@ -2,9 +2,9 @@
 
 Clean-room derivation, 2026-10-10. Sources: the firmware image
 (`~/mimosdr-captures/rtl2832u-rom/rtl2832u-rom.bin`, SHA-256 per
-`crates/rtl/derivation/findings.md` Step 5a), its listing by our own
-disassembler (`crates/rtl/examples/rom51 … --inline 0x120B:4 --xref`,
-`listing.txt` beside the image), `crates/rtl/derivation/documents.md` and
+`derivation/findings.md` Step 5a), its listing by our own
+disassembler (`examples/rom51 … --inline 0x120B:4 --xref`,
+`listing.txt` beside the image), `derivation/documents.md` and
 `findings.md` Step 5. No other driver, tool or web page was read. Every fact is
 **code** (read from the disassembly) unless marked otherwise; nothing here was
 measured on a bench, and no EEPROM was read.

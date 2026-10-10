@@ -21,4 +21,4 @@ js-sys = "0.3"
 
 # Inside the mimosdr tree, the sibling sdr-core; on its own, crates.io's.
 [patch.crates-io]
-sdr-core = { path = "../../core" }
+sdr-core = { path = "../../sdr-core" }

@@ -2,7 +2,7 @@
 
 Rust source tables derived from the step 4 bench records under
 `derivation/data/`, written by `examples/tables` (the generator's source
-is `crates/rtl/examples/tables/`). Every file here but this README is
+is `examples/tables/`). Every file here but this README is
 generated: its first line names the generator, the record(s) it was read
 from and the harness commit that wrote them, and says "do not edit".
 Every number in a table is a record value or a stated formula over

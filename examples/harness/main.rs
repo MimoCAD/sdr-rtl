@@ -147,8 +147,9 @@ pub fn data_dir() -> PathBuf {
     p
 }
 
-/// The harness version: crates/rtl's git short hash, marked when the
-/// harness sources differ from it.
+/// The harness version: sdr-rtl's git short hash, marked when the
+/// harness sources differ from it (recorded as `crates_rtl_head`, the
+/// key the records have always used).
 pub fn version() -> J {
     let dir = env!("CARGO_MANIFEST_DIR");
     let hash = Command::new("git")

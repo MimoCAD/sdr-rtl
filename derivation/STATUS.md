@@ -78,10 +78,10 @@ cargo run --release -p sdr-rtl --example harness -- scan --baseline low-if-open 
 cargo run --release -p sdr-rtl --example harness -- stream-confirm replay        # also: rate, pause, coeff-probe --gain 8 8 12
 cargo run --release -p sdr-rtl --example harness -- stream-confirm minimal --windows 20 --source-cmd "cargo run --release --example tone_source -- --cabled"   # also: tone, coeff-response, coeffs, minimise, steady, seldiv
 cargo build -p sdr-rtl && cargo test -p sdr-rtl
-cargo run --release -p sdr-rtl --features bench --example hwcheck > crates/rtl/derivation/data/step11-derived-hwcheck.jsonl
+cargo run --release -p sdr-rtl --features bench --example hwcheck > crates/sdr-rtl/derivation/data/step11-derived-hwcheck.jsonl
 cargo run --release -p sdr-rtl --features bench --example filterstudy -- poweron | linearity [--gain 8 8 8] | sweep|matrix --gain 8 8 2 --level 0 -15 --rate 2400000 --set design [--set hex:… | fields:… | single:K:V | pair:K:V:K2:V2] [--from -6e6 --to 6e6 --step 50e3]
-cargo run --release -p sdr-rtl --example filterfit -- crates/rtl/derivation/data/step12-fold-clean.jsonl [--table]
-cargo run --release -p sdr-rtl --example tapfit -- crates/rtl/derivation/data/step12-singles.jsonl          # also --residual step12-chain.jsonl, --predict FOLD
+cargo run --release -p sdr-rtl --example filterfit -- crates/sdr-rtl/derivation/data/step12-fold-clean.jsonl [--table]
+cargo run --release -p sdr-rtl --example tapfit -- crates/sdr-rtl/derivation/data/step12-singles.jsonl          # also --residual step12-chain.jsonl, --predict FOLD
 cargo run --release -p sdr-rtl --features bench --example record -- --freq 300e6 --rate 2.4e6 --seconds 10 --out /tmp/x --gain 8 8 2
 cargo run --release -p sdr-rtl --example iqlevel -- /tmp/x.sigmf-data 2400000 300000 2000
 ```
