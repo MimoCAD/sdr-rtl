@@ -46,3 +46,11 @@ required-features = ["bench"]
 [[example]]
 name = "fifosize"
 required-features = ["bench"]
+
+[[example]]
+name = "opcost"
+required-features = ["bench"]
+
+[[example]]
+name = "bracket"
+required-features = ["bench"]

@@ -165,6 +165,45 @@ Candidates, declared and run in order: 0x05, 0x0A, 0x14, 0x18, 0x1C,
   (A demodulator read's stall, from 16's 2,100 samples at 2.4 Msps, is
   ~1.7 ms; it was not measured by rate.)
 
+### 16.2 What each operation costs mid-stream, and the pause bracket — `data/step16-op-cost.jsonl`, `data/step16-pause-bracket.jsonl` — `derived/examples/opcost.rs`, `bracket.rs`
+
+`opcost`: 5 s of stream from a power cycle (gains 8/8/2), one operation
+repeated; the counter taken after the stop (free); samples short of
+rate × time.
+
+| Operation (host time each) | 1.8 Msps | 2.4 Msps |
+|---|---|---|
+| none | −3 k short; 54 blocks (start and stop) | −3 k; 98 |
+| USB-block read every 5 ms, 1,000 (1.61 ms) | **151 short; 87 blocks** (33 over the baseline) | 827 k short; 255 (saturated) |
+| demodulator read every 100 ms, 50 (2.18 ms) | ~800 a read | ~2,200 a read |
+| `set_freq` every 100 ms, 50 (39 ms) | ~68 k a retune | ~91 k a retune |
+| `set_stage_level` VGA every 100 ms, 50 (23 ms) | ~37.5 k a change | ~51 k a change |
+
+A tuner operation (the I²C repeater opened, tuner registers written and
+read back, the PLL's 10 ms settle) costs the stream its whole duration,
+at either rate, and fills the counter (255 = 24 k samples) before it
+ends: such a loss cannot be counted. At 1.8 Msps a USB-block read per
+transfer is free (what it loses, ~3 samples a read, is counted).
+
+`bracket`: 50 cycles of pause (page 1 0x01 bit 2), the counter read,
+`set_freq` (300.0 / 300.1 MHz), the counter read again, cleared, resume;
+the stream read between cycles.
+
+| Pause and resume as | rate | errors | blocks before the pause: total / max | blocks during the retune |
+|---|---|---|---|---|
+| read, write, read back (`RtlStream::pause`) | 1.8 Msps | 0 | 4,425 / 91 | 0 |
+| | 2.4 Msps | 0 | 6,459 / 133 | 0 |
+| one write of the whole register | 1.024 Msps | 0 | **0 / 0** | 0 |
+| | 1.8 Msps | 0 | 323 / 22 | 0 |
+| | 2.4 Msps | 0 | 1,033 / 50 | 0 |
+
+**Paused, a retune loses nothing**, and the counter, read while paused,
+counts what the pause's own write cost (never near 255 with the single
+write). At 1.024 Msps the bracket costs nothing at all. The host clock
+places the pause to ~±2 ms (`shortfall_vs_streaming_time`, −154 k to
+−159 k over 50 cycles: samples kept arriving for part of each measured
+pause); the stream carries no marker of it.
+
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 
 RF 200–232 MHz in 1 MHz steps; at each, the driver tunes (the band
