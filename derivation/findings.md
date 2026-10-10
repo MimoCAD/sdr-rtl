@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 9 (the vendor's Windows driver observed on the wire), 2026-10-09: **an interoperability observation, not a bench result.** A USB analyzer capture of Realtek's own driver under a DAB player shows the chip streaming raw samples: 954,067 bulk packets of 512 bytes, 8-bit unsigned interleaved pairs centred on ≈ 126.7, ≈ 4.1 MB/s (2 × 2.048 Msps within the analyzer's timebase error), never the 3,760-byte replay. The stream begins **0.55 ms after the driver writes page 0 0x06 = 0x80**, the last of 22 demodulator writes made after a demodulator reset (t = 60.377 s); the driver **never writes page 0 0x07, page 0 0x08 (AD_EN) or page 1 0xB1 (en_bbin)**, and the stream runs before the tuner is programmed. A multi-register state none of our baselines held. Section "Step 9" below; the bench test that would confirm it is at its end (not run).
+
 Step 5 (the chip's firmware), 2026-10-09: the 8 KiB ROM read through `GetROMCode`, mapped with our own 8051 disassembler. **The firmware never touches the data path**: it configures bulk endpoint A at SET_CONFIGURATION / SET_INTERFACE and acknowledges its interrupt, and nothing else; it has no mode variable, no mode table and no source selector. The demodulator is an I²C slave the firmware reaches only on the host's behalf. What feeds the FIFO is hardware, steered (on the bench evidence) from the demodulator's register file. Two spaces the scans never covered follow from the code: **demodulator pages 5–15** (the page nibble is masked to 4 bits, not 0–4) and **external-data addresses outside 0x2000–0x21FF / 0x3000–0x30FF** (blocks 1 and 2 are a raw window on the whole 16-bit space). Section "Step 5 — the firmware" below.
 
 Step 7 (the datasheet's DAB example), 2026-10-09: the front half at §9.3/§9.4's DAB example (pset_iffreq 0x2FB814, rsamp_ratio 0xE10000 = 8.192 MHz), every documented DVB-T back-end enable off (ACI, CCI, impulse-noise cancellation, DAGC, auto mode detection; PID filter at its documented pass-all), the output held open: alone it is the same replay; the bit scan (10,240) with the content detector and the DAB rate targets found **no candidate that carries the tone or changes the content** (period 1.000 in all 10,225 scorable windows; 5 rate-flagged candidates confirmed as the replay). Section "Step 7" below.
@@ -22,6 +24,261 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 9 — the vendor driver on the wire (interoperability observation) — capture outside the repository (`~/mimosdr-captures/rtl2832u-windows/`)
+
+**Source of these facts.** Approved by the project owner on 2026-10-09
+under the rule of step 5: the driver we build never contains or uses any
+part of the vendor's code. What follows is what the vendor's Windows
+driver (Realtek's proprietary driver, under a DAB player that decodes in
+software) was **observed** to put on the USB wire: which requests, which
+registers, which values, in which order, and what the chip did. Every
+fact is cited by its capture time `t` (analyzer seconds). No line of the
+capture is reproduced here; the capture, the decoded transfer list and
+the throwaway parsing scripts stay in the capture folder. Nothing here
+was tested on our bench.
+
+**The capture.** 178.5 s, the dongle (VID 0BDA, PID 2832, high speed)
+behind the USB analyzer, replugged at the start, device address 7. One
+line per USB packet except start-of-frame (SOF) packets; data payloads
+longer than 64 bytes kept to their first 16 bytes. Decoded (scripts in
+the capture folder: `parse_capture.py`, `decode_control.py`,
+`tuner_track.py`, `bulk_stats.py`): 4,401 control transfers (4,239
+acknowledged, 162 stalled) and 954,067 acknowledged bulk IN packets on
+endpoint 0x81, every one 512 bytes (488,482,304 bytes); 45,125,015 IN
+tokens and 44,176,110 NAKs on that endpoint.
+
+**Encodings seen** (all match steps 1, 2 and 5c): vendor requests with
+bRequest 0; demodulator wValue = register << 8 | 0x20, wIndex = page
+(Get) or 0x10 | page (Set); USB/system wValue = the address, data
+little-endian; the tuner through **block 6** (standard I²C), wValue
+0x0034, the register as the first data byte and the values after it,
+reads (block 6, Get) returning R0 onward bit-reversed. After **every**
+demodulator write the driver reads page 10 register 0x01 (wIndex 0x000A;
+464 reads, always 0x09). Power-on values quoted below for comparison are
+our own bench's (the `original` field of `data/step3-scan-poweron.jsonl`).
+
+### 9a. Timeline
+
+| t (s) | what the wire shows |
+|---|---|
+| 56.58–56.67 | enumeration: device descriptor at address 0, SET_ADDRESS 7, descriptors, SET_CONFIGURATION 1 |
+| 56.675–56.707 | USB set-up: USB_SYSCTL ← 0x09 (DMA enable and bit 3, full-packet mode); USB_EPA_CFG read 0xD1; USB_EPA_MAXPKT ← 0x0200 and the next two bytes (0x215A) ← 0; USB_EPA_FIFO_CFG read 0x14, written 0x14, read 0x14; USB_EPA_CTL ← 0x0210 (FIFO reset and stall) then ← 0 |
+| 56.711–56.779 | GP_CFG0, GPO, GPD, GPOE, USB 0x2010 each read and written back unchanged; DEMOD_CTL_1 0x02 → 0x22; DEMOD_CTL 0x20 → 0xA0 → 0x80 → 0xA0 (PLL on, then a reset pulse on bit 5) |
+| 56.831–56.853 | page 0 0x01 read (0x04); DEMOD_CTL → 0xA8 → 0xE8 (ADC_Q, then ADC_I) |
+| 56.91–58.07 | **probing**: tuner reads through block 3 at I²C 0xC0, 0xAC, 0xC8, 0xC2 stall (three tries each); at 0x34 R0 = 0x96 (t = 57.353); block 0 reads at I²C 0x44, 0x3E, 0x24 and a block 6 access at 0x26 stall; each try bracketed by page 1 0x01 = 0x18 / 0x10 (the I²C repeater, step 2); GPO bits 0, 6, 7 and GPOE bits 6, 7 toggled between tries |
+| 58.10–58.17 | GPIO end state GPO 0x98, GPD 0x03, GPOE 0xDC |
+| 58.171–58.191 | DEMOD_CTL 0xE8 → 0xA8 → 0xA0 → 0x20 (ADCs off, PLL off). **No demodulator register was written in the whole driver-load phase** |
+| 58.19–59.88 | nothing on the wire |
+| 59.876–59.912 | GPIO read back unchanged; USB_EPA_CTL ← 0x0210 then ← 0; CLEAR_FEATURE(ENDPOINT_HALT) on 0x81 |
+| 59.919 | **the host starts polling endpoint 0x81** (first IN token); 186,007 IN tokens are NAKed until the first data |
+| 59.919–60.375 | **the stream-start sequence, 9b** |
+| **60.377394** | **first bulk data**, 0.552 ms after the data stage of the page 0 0x06 = 0x80 write was accepted (t = 60.376842) |
+| 60.383–60.801 | 9c's writes (the stream already running) |
+| 60.788–60.797 | page 1 0x01 = 0x14 then 0x10: the stream pauses 9.0 ms (9d) |
+| 65.584–70.83 | the tuner programmed and calibrated (9e) — 5.2 s **after** the stream began |
+| 70.73–173.77 | 38 tunings, one per ~2.78 s (9e), each followed by page 1 0x16–0x18 ← 0, 0x3E–0x3F ← 0 and the 0x01 bit 2 pause |
+| 173.77 | last control transfer |
+| 178.456 | last bulk packet; the capture ends with the stream still running. **No stop sequence is on the wire.** |
+
+### 9b. The stream-start sequence (t = 59.919–60.375), in order
+
+Every write below, nothing omitted (the read of page 10 0x01 after each
+demodulator write and the GPIO read-and-write-back pairs left out). "PO"
+= our bench's power-on value.
+
+| # | t (s) | write | PO |
+|---|---|---|---|
+| 1 | 59.923 | DEMOD_CTL_1 ← 0x02 (read 0x02) | |
+| 2 | 59.931–59.947 | DEMOD_CTL 0x20 → 0xA0 → 0x80 → 0xA0 (PLL on; demodulator reset held, then released) | 0x20 |
+| — | | 65 ms without a request | |
+| 3 | 60.012, 60.017 | reads: page 0 0x01 = 0x04, page 10 0x01 = 0x09 | |
+| 4 | 60.026, 60.034 | DEMOD_CTL → 0xA8 → 0xE8 | |
+| 5 | 60.041 | GPO 0x98 → 0x88 (GPIO4 low) | |
+| 6 | 60.061 | page 1 0x3E–0x3F ← 00 00 (one 2-byte write) | 40 00 |
+| 7 | 60.070 | page 1 0x15 ← 0x00 | 0x06 |
+| 8 | 60.079 | page 1 0x16–0x17 ← 00 00 | 3F CE |
+| 9 | 60.083 | page 1 0x18 ← 0x00 | 0xCC |
+| 10 | 60.092, 60.096 | page 1 0x19–0x1A ← 38 11, 0x1B ← 12: **pset_iffreq = 0x381112 = −519,918 → IF 3.570 MHz** (§9.3) | 35 D7 5D |
+| 11 | 60.105 | page 1 0x15 ← 0x01 (Spec_inv = 1, En_aci = 0) | 0x06 |
+| 12 | 60.113, 60.117 | page 1 0x9F–0xA0 ← 03 84, 0xA1–0xA2 ← 00 00: **rsamp_ratio = 0xE10000 (8.192 MHz)**, the high nibble of 0x9F (cfreq_off_ratio's) 0 | F3 26 66 64 |
+| 13 | 60.126–60.295 | page 1 0x1C … 0x2F, one byte each, ascending: CA DC D7 D8 E0 F2 0E 35 06 50 9C 0D 71 11 14 71 74 19 41 A5 (20 registers no document names) | 09 F6 D2 A7 9A C9 27 77 06 BF EC F4 4F 0B FC 01 63 35 54 A7 |
+| 14 | 60.304 | page 0 0x17 ← 0x11 | 0x13 |
+| 15 | 60.313 | page 0 0x18 ← 0x10 | 0x10 |
+| 16 | 60.322 | page 0 0x19 ← 0x25 | 0x20 |
+| 17 | 60.330 | page 1 0x92 ← 0x00 | 0x00 |
+| 18 | 60.339 | page 1 0x93 ← 0xF0 | 0x0F |
+| 19 | 60.348 | page 1 0x94 ← 0x0F | 0xFF |
+| 20 | 60.357 | page 0 0x61 ← 0x60 (Table 13: **enable_PID = 0** "No Output", mode_PID = 1) | 0xE0 |
+| 21 | 60.366 | page 0 0x20 ← 0x40 | 0x40 |
+| 22 | 60.375 | **page 0 0x06 ← 0x80** (bit 7; opt_adc_iq [5:4] = 0) | 0x00 |
+| | **60.377394** | **first bulk data** | |
+
+Of these, items 6–14, 16, 18–20 and 22 change a register from its
+power-on value; 15, 17 and 21 rewrite it. Between the endpoint polling
+start (59.919) and item 22 every IN token was NAKed; after item 21
+(60.366) the endpoint still NAKed for 11 ms; the first data came 0.55 ms
+after item 22's data stage.
+
+### 9c. Written after the stream began (t = 60.383–60.801)
+
+Read then written, in order: page 1 0x12 0x39 (unchanged), 0x02 0x40
+(unchanged), 0x03 0x2D → 0x40, 0xC7 0x18 → 0x2C, 0x04 0xC0 → 0xD0, 0x05
+0xBE (unchanged), 0xC8 0x1A → 0x18, 0x06 0x10 → 0x35, 0xC9 0x30 → 0x21,
+0xCA 0x28 → 0x21, 0xCB 0x02 → 0x00, 0x07 0x0F → 0x40, 0xCD 0x20 → 0x10,
+0xCE 0x30 → 0x10, 0x08–0x0B unchanged (0x80 0x7F 0x80 0x7F); page 0 0x0E
+0xFC twice (unchanged); page 0 0x11 0xC9 → 0xF4; page 1 0x01 0x10 → 0x14
+→ 0x10. None of these is needed for the first bytes (they come after
+them).
+
+**Never written by the driver in the whole capture:** page 0 0x07, page 0
+0x08 (AD_EN_reg / AD_EN_reg1), page 1 0xB1 (en_bbin and the DC/IQ
+enables), page 1 0x11 (en_dagc), page 1 0x9D–0x9E, any page 2, 3 or 4
+register, USB_EPA_CFG. **Never read:** any page 3 readback (no AGC or
+lock polling at all).
+
+### 9d. Stream pause: page 1 0x01 bit 2
+
+39 times (t = 60.788, then once per tuning from 71.130 to 173.730): page 1
+0x01 0x10 → 0x14, then ~9 ms later → 0x10. The bulk stream stops
+2.3 ms after the 0x14 write begins and resumes 2.4 ms after the 0x10
+write begins: 39 gaps of 8.94–9.02 ms, the only gaps over 0.4 ms in the
+stream but one (0.71 ms at t = 65.882, during the tuner's R16 write).
+Each such second carries ≈ 72 fewer packets (8,032 instead of 8,104).
+Bit 2 of page 1 0x01 is one of the 28 throttle/stop bits our held-open
+scan found (step 3).
+
+### 9e. The tuner (facts that bear on our open items)
+
+- Programmed through block 6 only, 5.2 s after the stream began: R5–R31
+  written in full at t = 65.603, 65.709 and 70.380; between them (t =
+  65.82–70.37) **a loop of 65 R8 and 65 R9 writes, R1 read back after
+  each** (IMR_G / IMR_P, [R820T2] Table 1-2), with PLL changes (R16,
+  R20–R22) and writes of R12, R26 and R31 — the vendor calibrates image
+  rejection, which our step 4h left open. 393 tuner reads in t =
+  65.60–70.83.
+- 38 tunings: channel 5A at t = 70.73, then 37 retune bursts of 42 writes,
+  one per ~2.78 s (t = 73.43–173.23).
+  With f_ref = 14.4 MHz (R16 bit 4 = 1) and f_LO = f_ref · 2 · (Nint +
+  SDM/2¹⁶) / div, **LO − 3.570 MHz lands on the 38 DAB Band III channel
+  centres 5A–13F (174.928–239.200 MHz) within 1 kHz** — if, and only if,
+  SEL_DIV 011 divides by 16: the driver uses **SEL_DIV 011 with VCO
+  2.856–3.528 GHz for LO 178.50–220.49 MHz** (5A–11A) and SEL_DIV 010
+  (/8, step 4c) with VCO 1.778–1.942 GHz for LO 222.21–242.77 MHz
+  (11B–13F). [R820T2] prints 011 as /1; our step 4c could not test it.
+  So the observation implies **SEL_DIV 011 = /16**, which reaches LO
+  106–228 MHz with our measured VCO range — the band step 4d found
+  unreachable. Bench confirmation pending.
+- ~249 ms after each retune the driver writes R29 = 0xDD and the chip
+  stalls it three times (accepted once, t = 148.726).
+- Final tuner state (t = 173.23, retune to 13F): R5 03, R6 12, R7 75,
+  R8 E1, R9 40, R10 D6, R11 6B, R12 F9, R13 53, R14 75, R15 68, R16 54,
+  R17 BB, R18 80, R19 31, R20 8D, R21 A6, R22 6F, R23 30, R24 48, R25 EC,
+  R26 3A, R27 13, R28 20, R29 C5, R30 6A, R31 40.
+
+### 9f. The bulk data (from the kept 16-byte packet prefixes)
+
+| | t 60.377–65.60 (tuner not programmed) | t 71.17–178.46 (scanning DAB) |
+|---|---|---|
+| packets / prefix bytes | 42,244 / 675,904 | 866,756 / 13,868,096 |
+| distinct 16-byte prefixes | 38,726 | 862,702 |
+| byte values | 124–128 only (126: 47 %, 127: 45 %) | all 256; entropy 6.94 bits; 0x47 at 0.24 % (uniform 0.39 %) |
+| even bytes: mean / variance | 126.54 / 0.39 | 126.73 / 922.5 |
+| odd bytes: mean / variance | 126.54 / 0.39 | 126.74 / 923.0 |
+| even/odd correlation | +0.03 | −0.0002 |
+| clipped (0 or 255) | 0 | 0.015 % |
+| lag-1 complex autocorrelation (8 pairs per prefix) | 0.73 | 0.125 at −15.7° |
+
+- **Not the replay.** A 3,760-byte replay read in 512-byte packets has at
+  most 235 distinct prefixes; this stream's prefixes are 92–99.5 %
+  distinct from the first packet on.
+- **8-bit unsigned interleaved pairs, both channels alive:** the two byte
+  positions have the same mean and variance and are uncorrelated; with
+  the tuner idle the bytes sit at 126–127 (a converter with no input),
+  and the per-second variance jumps to 365–1100 from the second the tuner
+  image is written (t = 65.6), changing with every retune. Which of the pair is I
+  cannot be read off the capture.
+- **Packets** all 512 bytes (USB_SYSCTL bit 3, full-packet mode, was set
+  at t = 56.675); median spacing 134.9 µs.
+- **Rate.** In analyzer time: 4,137,181 B/s over the whole stream, 8,104
+  packets = 4,149,248 B/s in every second without a 9d pause. The
+  analyzer's clock is not calibrated against the bus here (SOF packets
+  are not logged), and one fact says it reads short under the bulk load:
+  the host's control transfers, spaced 3.999 ms (median of 214) before
+  the polling began, are spaced 3.949 ms (median of 3,158) during it.
+  Taking the host's spacing as unchanged, the uninterrupted rate is
+  4,097,369 B/s = **2 × 2.0487 MB/s: 2.048 Msps of 8-bit pairs, which is
+  rsamp_ratio's 8.192 MHz / 4**, the DAB rate. Uncorrected it is
+  2 × 2.0746.
+
+### 9g. Against our bench
+
+- **Refuted as the switch:** page 0 0x07 bit 7 (the "floodgate"). The
+  driver never writes 0x07 (power-on 0x3C); its stream is real samples,
+  the 0x07 path only the FIFO replay.
+- **Not needed by the driver:** the documented zero-IF / low-IF input
+  bits — AD_EN (page 0 0x08, power-on 0x0D) and en_bbin (page 1 0xB1,
+  power-on 0x1F) are never written; the tuner image (the replay needed
+  it, step 3) comes 5.2 s after the stream; enable_PID is set to **0**
+  ("No Output"), not 1.
+- **Matches:** rsamp_ratio 0xE10000 (step 7's DAB example, with
+  cfreq_off_ratio's nibble of 0x9F at 0 where step 7 kept F); Spec_inv =
+  1 with En_aci = 0 (page 1 0x15 = 0x01); pset_iffreq for a low IF
+  (3.570 MHz, not step 7's 7.326 or low-if's 4.57); page 1 0x01 bit 2 as
+  a stream stop (one of the 28 throttle bits, 9d); the demodulator reset
+  pulse before configuration (our restart probe's DEMOD_CTL bit 5).
+- **Registers the driver writes that our single-write scans also wrote**
+  (each alone, one at a time, from the zero-IF baseline in the byte scan
+  and from five states in the bit scans): every one of 9b and 9c —
+  including page 0 0x06 = 0x80 itself (byte scan, zero-IF: 0 streams; in
+  the held-open bit scans bit 7 throttled or stopped the replay).
+- **Written by the driver, in no baseline of ours:** page 1 0x16–0x18
+  = 0, page 1 0x3E = 0, the 20 registers page 1 0x1C–0x2F, page 0 0x17
+  and 0x19, page 1 0x93–0x94, page 0 0x61 = 0x60 together with page 0
+  0x06 = 0x80, page 1 0xC7–0xCE and page 0 0x11 (after the start). The
+  stream needs, on this evidence, a **combination** — the single-write
+  hypothesis's failure (step 3) is consistent with it.
+- **Written by our baselines, never by the driver:** page 0 0x07, page 0
+  0x08, page 1 0xB1, page 1 0x11, the AGC enables of page 1 0x04 (the
+  driver writes 0x04 only after the start).
+
+### 9h. The bench test that would confirm it (NOT run)
+
+From a power cycle, every write read back, the bulk endpoint polled from
+before step 1 with the step-3 detector (period score, entropy, I/Q
+moments) and 10 × 100 ms windows after each numbered step:
+
+1. USB: USB_SYSCTL ← 0x09; USB_EPA_MAXPKT ← 0x0200; USB_EPA_CTL ← 0x0210
+   then ← 0; CLEAR_FEATURE(ENDPOINT_HALT) on 0x81.
+2. DEMOD_CTL ← 0xA0, ← 0x80, ← 0xA0; wait 65 ms; ← 0xA8; ← 0xE8.
+3. 9b items 6–21 in 9b's order with 9b's values (page 1 0x3E–0x3F, 0x15
+   = 0, 0x16–0x17, 0x18, 0x19–0x1B = 38 11 12, 0x15 = 1, 0x9F–0xA2 =
+   03 84 00 00, 0x1C–0x2F, page 0 0x17, 0x18, 0x19, page 1 0x92, 0x93,
+   0x94, page 0 0x61 = 0x60, 0x20 = 0x40). Expected: 0 bytes.
+4. Page 0 0x06 ← 0x80. Expected, by the capture: bytes within ~1 ms;
+   ≈ 4.1 MB/s; byte values 124–128 around 126.5 (tuner not programmed);
+   period score far below 1 (not the replay); 512-byte packets.
+5. Page 1 0x01 ← 0x14, then ← 0x10: the stream stops for the interval
+   and resumes.
+6. Rate tracking: rsamp_ratio at the 2.4 Msps value (×4: 9.6 MHz); the
+   rate should move to 2 × rate.
+7. Signal: the tuner image of step 4 tuned to the tone, IF 3.570 MHz
+   (or pset_iffreq re-set for step 4's IF): the variance rises and a
+   spectral line moves with the tone.
+8. Minimisation: from a power cycle, steps 1–4 with one item of 9b
+   removed at a time (and page 0 0x06 = 0x80 directly after step 2) —
+   which writes the stream needs.
+9. Separately: SEL_DIV 011 against the tone at 176.64 MHz (LO 180.21 MHz
+   by Nint 100, SDM 7646, R16 bit 4 = 1) to confirm /16.
+
+### Evidence kept outside the repository
+
+`~/mimosdr-captures/rtl2832u-windows/`: `capture-1.log` (the capture),
+`capture-1.summary.txt`, `control.tsv` (4,401 transfers, raw setup and
+data), `control-decoded.tsv` (each decoded), `tuner-writes.txt` (tuner
+bursts with the PLL words), `bulk.tsv` (954,067 packets: time, length,
+prefix), `ep1-per-10ms.tsv`, `bulk-stats.txt`, `bulk-gaps.txt`,
+`pass1-stats.txt` and the four scripts.
 
 ## Step 8 — zero-IF input, tuner tuned, path held open — `data/step8-scan-zero-if-open.jsonl` — `harness scan --baseline zero-if-open` — COMPLETE, 0 candidates carry the tone
 
