@@ -26,3 +26,7 @@ required-features = ["bench"]
 [[example]]
 name = "record"
 required-features = ["bench"]
+
+[[example]]
+name = "vcoedge"
+required-features = ["bench"]

@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 14 (R2 across the VCO's ends), 2026-10-10: **R2 64–69 are locked** (1.709–1.797 GHz, the tone at full strength); the driver's 70–127 span is too narrow at the bottom, the divider rule is right. Section "Step 14" below.
+
 Step 13 (side by side with the earlier driver), 2026-10-10: **equal on every measure.** Tone SNR within ~1 dB at matched level; frequency within ~20 Hz at 300 MHz; a replayed P25 control channel decodes 403–413 TSBKs (earlier) against 410–417 (new) over three 20 s runs; 600 s at 2.4 Msps with 0 samples lost by either. Section "Step 13" below.
 
 Step 12 (the filter study), 2026-10-10: **the 20 tap registers are a 32-tap symmetric FIR at f_xtal = 28.8 MHz** (field k sets taps k and 31 − k; one LSB weight), ahead of a fixed chain measured per rate. **The "2.4 MHz alias, 8–17 dB" of step 10 was the tone source's own DAC images** (it ran at 2.4 Msps) plus compression at 61 dB of gain: with the source at 8 Msps there is no 2.4 MHz alias and no image at 2.88 Msps. Our taps put aliases landing inside ±0.7 MHz 38 dB down at 2.048 Msps and inside ±0.8 MHz 42 dB down at 2.4; seven clean-room candidates did not beat them on both aliases and flatness, so they stay. Section "Step 12" below.
@@ -39,6 +41,33 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
+
+RF 200–232 MHz in 1 MHz steps; at each, the driver tunes (the band
+path), then the synthesizer is rewritten under /8 and under /16 in turn,
+R0–R4 read after 20 ms, and a tone 300 kHz above the RF measured (8/8/2,
+backoff −15 dB, the source at 8 Msps). R2 (VCO_INDICATOR) against the
+VCO, tone over the median bin:
+
+| VCO | R2 | tone |
+|---|---|---|
+| 1.629–1.693 GHz (/8) | 0 | 1.3–4.1 dB (none) |
+| 1.7006 GHz | 0 | 58.7 dB |
+| 1.709–1.797 GHz | 64, 65, 65, 66, 66, 67, 67, 67, 68, 68, 69, 69 | 58.7–59.1 dB |
+| 1.805–1.885 GHz | 70–74 | 59.0–59.1 dB |
+| 3.257–3.689 GHz (/16) | 120–127 | 58.7–59.0 dB |
+| 3.705, 3.721 GHz | 63 | 59.0 dB |
+| 3.737–3.769 GHz | 63 | 23.8, 2.6, 2.1 dB |
+
+R2 rises monotonically with the VCO and the synthesizer holds from
+1.7006 to 3.721 GHz. **64–69 are locked readings**: step 4c's sweep
+(Nint steps of 5) never sampled them, so `r2_locked_span` (70–127) reads
+the bottom 90 MHz of the VCO as unlocked — findings 11's 220 MHz at /8
+(R2 69) was locked. 0 and 63 are the ends: 0 below the range, 63 at and
+above the top, each including a sliver where the tone is still received.
+The divider rule (`Pll::program`, VCO 1.71–3.65 GHz) stays inside the
+measured range at both ends.
 
 ## Step 13 — side by side with the earlier driver (`crates/rtl/src`, through `mimosdr`'s `rtl:` backend) — `data/step13-side-by-side.jsonl`
 
