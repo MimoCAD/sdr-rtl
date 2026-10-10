@@ -38,8 +38,7 @@
 
 mod bench;
 
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use bench::*;
 use sdr_core::gain::Stage;
@@ -57,10 +56,6 @@ const STAGE_HZ: f64 = 2.4e6;
 const LINES: usize = 4;
 /// Bins two reported lines must be apart.
 const LINE_SEP_BINS: usize = 8;
-/// Off time and re-enumeration wait of the power cycle (findings step 0:
-/// gone after ~60 ms, back ~530 ms after power returns).
-const VBUS_OFF: Duration = Duration::from_millis(500);
-const ENUMERATE_DEADLINE: Duration = Duration::from_secs(5);
 const LINEARITY_BACKOFFS_DB: [i32; 8] = [-10, -15, -20, -25, -30, -35, -40, -45];
 const LINEARITY_OFFSET_HZ: f64 = 300e3;
 
@@ -114,31 +109,6 @@ fn parse_set(spec: &str) -> Result<[u8; TAP_REGS], String> {
 /// Fold `hz` into (−rate/2, rate/2].
 fn fold(hz: f64, rate: f64) -> f64 {
     hz - (hz / rate).round() * rate
-}
-
-fn witness(arg: &str) -> Result<String, String> {
-    let out = Command::new("cargo")
-        .args(["run", "--release", "--quiet", "--manifest-path", "tools/Cargo.toml", "--bin", "cynthion-witness", "--", "vbus", arg])
-        .current_dir(workspace_root())
-        .output()
-        .map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-fn power_cycle() -> Result<String, String> {
-    let off = witness("off")?;
-    std::thread::sleep(VBUS_OFF);
-    let on = witness("on")?;
-    let t = Instant::now();
-    while sdr_rtl_derived::list().is_empty() {
-        if t.elapsed() > ENUMERATE_DEADLINE {
-            return Err(format!("the dongle did not return within {ENUMERATE_DEADLINE:?} ({off}; {on})"));
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    // Let enumeration finish before the first request.
-    std::thread::sleep(Duration::from_millis(500));
-    Ok(format!("{off}; {on}; back after {} ms", t.elapsed().as_millis()))
 }
 
 fn poweron() -> Result<(), String> {

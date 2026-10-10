@@ -28,10 +28,17 @@
 //! findings 10.2a), and the tuner may be retuned while streaming (the
 //! bench tuned after the start in every minimisation run, findings 10.4).
 //!
-//! No USB-block register is written here: findings 10.4 found none
-//! needed after a power cycle, and USB-block offset 0x1C is the test-mode
-//! hazard (derivation/HAZARD-usb-0x1C.md). The tap registers at
-//! demodulator page 1 0x1C-0x2F are a different block.
+//! The start sequence writes no USB-block register: findings 10.4 found
+//! none needed after a power cycle, and USB-block offset 0x1C is the
+//! test-mode hazard (derivation/HAZARD-usb-0x1C.md; the request layer
+//! refuses it). The one USB-block write here is the dropped-block
+//! counter's clear, offset 0x163 ([`DroppedBlocks`], findings 16). The
+//! tap registers at demodulator page 1 0x1C-0x2F are a different block.
+//!
+//! Every control transfer made while the stream runs — a retune, a gain
+//! change, a register read — costs ~900 samples at 2.4 Msps: the chip's
+//! FIFO overflows while the request is served (findings 16). The host's
+//! ledger does not see it; the dropped-block counter does.
 
 use sdr_core::usb_stream::{BulkIqStream, WireSample};
 use sdr_core::{Iq, IqStream, RecvInfo, Result, RxSource, elevate_current_thread};
@@ -187,6 +194,34 @@ pub const PAUSE: BitWrite = BitWrite { page: PAUSE_PAGE, reg: PAUSE_OFF, mask: P
 /// Resume: page 1 0x01 bit 2 cleared (findings 10.2c: 0x14 → 0x10).
 pub const RESUME: BitWrite = BitWrite { page: PAUSE_PAGE, reg: PAUSE_OFF, mask: PAUSE_BIT, value: 0 };
 
+/// While running, [`RtlStream::take_dropped_blocks`] clears the counter
+/// only from here up: half its range, so it never reaches 255 between
+/// takes that come at least every ~12 control transfers.
+pub const BLK_DROP_CLEAR_AT: u8 = 128;
+
+/// The chip's count of 188-byte blocks dropped with its endpoint FIFO
+/// full (USB_EPA_FIFO_CFG[31:24], [RTL2832U] Table 34). Findings 16: each
+/// counted block is 94 samples missing from the stream (a phase jump on
+/// a steady tone), and the host's own ledger does not see them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DroppedBlocks {
+    pub blocks: u8,
+    /// The counter stopped at 255: at least that many.
+    pub saturated: bool,
+}
+
+impl DroppedBlocks {
+    /// The bytes dropped (at least, when saturated).
+    pub fn bytes(&self) -> usize {
+        self.blocks as usize * BLK_DROP_BLOCK_BYTES
+    }
+
+    /// The I/Q samples dropped: two bytes each.
+    pub fn samples(&self) -> usize {
+        self.bytes() / 2
+    }
+}
+
 /// Where a stream is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -208,6 +243,8 @@ pub struct RtlStream {
     taps: [u8; TAP_REGS],
     state: State,
     paused: bool,
+    /// The dropped-block counter as the last take left it.
+    drop_mark: u8,
 }
 
 impl RtlStream {
@@ -215,7 +252,7 @@ impl RtlStream {
     /// link must have been claimed for the stream (`Link::claim_stream`);
     /// dropping the stream releases it.
     pub fn new(inner: BulkIqStream, link: Link, ratio: u32, taps: [u8; TAP_REGS]) -> RtlStream {
-        RtlStream { inner, link, ratio, taps, state: State::Idle, paused: false }
+        RtlStream { inner, link, ratio, taps, state: State::Idle, paused: false, drop_mark: 0 }
     }
 
     /// The output rate, f_symbol / 4 of the ratio (findings 10.2a).
@@ -231,16 +268,20 @@ impl RtlStream {
         self.paused
     }
 
-    /// Start: transfers queued first, then the whole [`start_sequence`]
-    /// the first time, the start bit alone after a [`RtlStream::stop`].
-    /// A failed write leaves the state as it was and the transfers
-    /// cancelled. Starting a running stream does nothing.
+    /// Start: the chip's dropped-block counter cleared ([`DroppedBlocks`];
+    /// nothing streams yet, so the write costs no samples), transfers
+    /// queued, then the whole [`start_sequence`] the first time, the start
+    /// bit alone after a [`RtlStream::stop`]. A failed write leaves the
+    /// state as it was and the transfers cancelled. Starting a running
+    /// stream does nothing.
     pub fn start(&mut self) -> Result<()> {
         let writes: Vec<Write> = match self.state {
             State::Running => return Ok(()),
             State::Idle => start_sequence(self.ratio, &self.taps).into_iter().flat_map(|s| s.writes).collect(),
             State::Stopped => vec![restart_write()],
         };
+        self.link.usb_write8(BLK_DROP_COUNTER, 0)?;
+        self.drop_mark = 0;
         self.inner.start()?;
         for w in &writes {
             if let Err(e) = w.apply(&self.link) {
@@ -263,6 +304,28 @@ impl RtlStream {
         self.state = State::Stopped;
         wrote?;
         cancelled
+    }
+
+    /// The blocks the chip dropped since the stream started or since the
+    /// last take: the counter read and the change since the last take.
+    ///
+    /// Stopped, it costs nothing, and the counter is cleared (0 written to
+    /// its byte) once read. Running, it is one control transfer, which
+    /// itself loses ~950 samples at 2.4 Msps (findings 16; the next take
+    /// counts them); the counter is cleared only once it reaches
+    /// [`BLK_DROP_CLEAR_AT`], because a read and a clear back to back while
+    /// running lose ~4,800 samples and the clear erases the count of its
+    /// own loss. [`RtlStream::start`] clears it as well.
+    pub fn take_dropped_blocks(&mut self) -> Result<DroppedBlocks> {
+        let now = self.link.usb_read8(BLK_DROP_COUNTER)?;
+        // Below the mark only if something else cleared it: count from 0.
+        let blocks = if now >= self.drop_mark { now - self.drop_mark } else { now };
+        let clear = now != 0 && (self.state != State::Running || now >= BLK_DROP_CLEAR_AT);
+        if clear {
+            self.link.usb_write8(BLK_DROP_COUNTER, 0)?;
+        }
+        self.drop_mark = if clear { 0 } else { now };
+        Ok(DroppedBlocks { blocks, saturated: now == BLK_DROP_COUNTER_SATURATED })
     }
 
     /// Pause: page 1 0x01 bit 2 set ([`PAUSE`]); the endpoint goes quiet
@@ -403,8 +466,22 @@ mod tests {
         assert_eq!(differ(1.024e6), vec![(Space::Page(1), 0x9F, 0x07), (Space::Page(1), 0xA0, 0x08)]);
     }
 
-    /// No write of the sequence or of stop/pause touches the USB block,
-    /// let alone its offset 0x1C.
+    /// The dropped-block counter (findings 16): USB_EPA_FIFO_CFG's fourth
+    /// byte, 188 bytes = 94 samples a block.
+    #[test]
+    fn the_dropped_block_counter() {
+        // USB_EPA_FIFO_CFG's fourth byte, nowhere near the hazard.
+        assert_eq!(BLK_DROP_COUNTER, 0x163);
+        assert_ne!(BLK_DROP_COUNTER, USB_HAZARD_OFF);
+        let d = DroppedBlocks { blocks: 10, saturated: false };
+        assert_eq!((d.bytes(), d.samples()), (1880, 940));
+        let s = DroppedBlocks { blocks: BLK_DROP_COUNTER_SATURATED, saturated: true };
+        assert_eq!(s.samples(), 255 * 94);
+    }
+
+    /// No write of the start sequence or of stop/pause touches the USB
+    /// block (the counter's clear in `RtlStream::start` is outside the
+    /// sequence), let alone its offset 0x1C.
     #[test]
     fn nothing_is_written_to_the_usb_block() {
         for (space, reg, _) in flatten(&start_sequence(0xE10000, &design_registers())) {

@@ -133,6 +133,23 @@ pub const GPIO_TUNER_POWER: u8 = 1 << 3;
 /// the bias-tee refusal in the crate root.
 pub const GPIO_ANTENNA_POWER: u8 = 1 << 4;
 
+// ---- USB block ([RTL2832U] Tables 29-34, pp. 38-40) ----
+
+/// USB_EPA_FIFO_CFG (Table 34, p. 40), offset in the USB block; its
+/// bits 31:24, BLK_DROP_COUNTER, "Counts blocks dropped (each is 188
+/// bytes) due to full FIFO" — its fourth byte (32-bit registers read
+/// little-endian, findings step 1A).
+pub const USB_EPA_FIFO_CFG: u16 = 0x0160;
+pub const BLK_DROP_COUNTER: u16 = USB_EPA_FIFO_CFG + 3;
+/// The counter stops here (findings 16: 255 after every stall).
+pub const BLK_DROP_COUNTER_SATURATED: u8 = 0xFF;
+/// The bytes in one counted block.
+pub const BLK_DROP_BLOCK_BYTES: usize = 188;
+/// USB block offset 0x1C, the test-mode register: a write there wedges
+/// the chip (derivation/HAZARD-usb-0x1C.md). The request layer never
+/// writes it.
+pub const USB_HAZARD_OFF: u16 = 0x001C;
+
 // ---- Demodulator (Tables 2-13, pp. 12-26) ----
 
 /// IIC_repeat: page 1, 0x01, bit 3 (Table 3, p. 15). The note under

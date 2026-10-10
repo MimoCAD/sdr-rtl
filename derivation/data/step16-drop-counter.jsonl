@@ -1,0 +1,22 @@
+{"step":"after power cycle and open","bytes":[20,0,0,0],"fifo_size":4,"counter":0,"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 1042 ms"}
+{"step":"after 5 s read without pause","bytes":[20,0,0,33],"fifo_size":4,"counter":33,"samples":12002954,"overflows":0}
+{"step":"after a 2 s stall","bytes":[20,0,0,255],"fifo_size":4,"counter":255,"stall_s":2,"then_samples":2402922,"then_overflows":1,"then_s":1.00}
+{"step":"after writing 0 to the counter byte (0x163)","bytes":[20,0,0,42],"fifo_size":4,"counter":42}
+{"step":"after writing the register back with the counter byte 0","bytes":[20,0,0,42],"fifo_size":4,"counter":42,"wrote":[20,0,0,0]}
+{"step":"after a second 2 s stall","bytes":[20,0,0,255],"fifo_size":4,"counter":255,"stall_s":2,"then_samples":2402922,"then_overflows":1,"then_s":1.00}
+{"step":"after 2 s more read without pause","bytes":[20,0,0,255],"fifo_size":4,"counter":255,"samples":4803118,"overflows":0}
+{"step":"after power cycle and open","fifo_cfg":[20, 0, 0, 0],"counter":0,"cycle":"TARGET A vbus off (discharging); TARGET A vbus on; back after 1031 ms"}
+{"step":"streaming, read without pause, at 0.05 s","fifo_cfg":[20, 0, 0, 33],"counter":33,"samples":123046,"overflows":0}
+{"step":"streaming, read without pause, at 0.2 s","fifo_cfg":[20, 0, 0, 41],"counter":41,"samples":482126,"overflows":0}
+{"step":"streaming, read without pause, at 0.5 s","fifo_cfg":[20, 0, 0, 51],"counter":51,"samples":1201226,"overflows":0}
+{"step":"streaming, read without pause, at 1 s","fifo_cfg":[20, 0, 0, 61],"counter":61,"samples":2400290,"overflows":0}
+{"step":"streaming, read without pause, at 2 s","fifo_cfg":[20, 0, 0, 72],"counter":72,"samples":4799358,"overflows":0}
+{"step":"streaming, read without pause, at 4 s","fifo_cfg":[20, 0, 0, 82],"counter":82,"samples":9598434,"overflows":0}
+{"step":"streaming, read without pause, at 8 s","fifo_cfg":[20, 0, 0, 91],"counter":91,"samples":19197526,"overflows":0}
+{"step":"after a 2 s stall","fifo_cfg":[20, 0, 0, 255],"counter":255}
+{"step":"stream stopped","fifo_cfg":[20, 0, 0, 255],"counter":255}
+{"step":"stream stopped, 100 ms later","fifo_cfg":[20, 0, 0, 255],"counter":255}
+{"step":"(a) after 0 written to the counter byte 0x163","fifo_cfg":[20, 0, 0, 0],"counter":0}
+{"step":"restarted, read without pause, at 0.05 s","fifo_cfg":[20, 0, 0, 34],"counter":34,"samples":124832,"overflows":0}
+{"step":"restarted, read without pause, at 0.5 s","fifo_cfg":[20, 0, 0, 43],"counter":43,"samples":1204046,"overflows":0}
+{"step":"restarted, read without pause, at 2 s","fifo_cfg":[20, 0, 0, 53],"counter":53,"samples":4803118,"overflows":0}

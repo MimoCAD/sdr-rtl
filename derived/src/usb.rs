@@ -181,6 +181,22 @@ impl Link {
         Ok(())
     }
 
+    // ---- USB block: wValue = 0x2000 + offset (findings step 1A) ----
+
+    pub fn usb_read8(&self, off: u16) -> Result<u8> {
+        Ok(self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), 1, "USB register read")?[0])
+    }
+
+    /// One USB-block byte written. Offset 0x1C is refused: it is the
+    /// test-mode register whose write wedges the chip
+    /// (derivation/HAZARD-usb-0x1C.md).
+    pub fn usb_write8(&self, off: u16, v: u8) -> Result<()> {
+        if off == USB_HAZARD_OFF {
+            return Err(device_error("USB register write", format!("USB block 0x{off:03X} is the test-mode register; never written")));
+        }
+        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), &[v], "USB register write")
+    }
+
     // ---- Demodulator: wValue = offset << 8 | 0x20 (findings step 1B/1C) ----
 
     /// `len` bytes from `off` on `page`; multi-byte reads auto-increment

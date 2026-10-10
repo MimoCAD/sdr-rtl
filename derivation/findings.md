@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 16 (the dropped-block counter), 2026-10-10: **writing 0 to its byte clears it, and its blocks are samples lost**: every control transfer during the stream loses ~850–2,100 samples at 2.4 Msps, unseen by the host; the driver clears it at start and reports it through `take_dropped_blocks`. Section "Step 16" below.
+
 Step 15 (image rejection through the stream), 2026-10-10: **55–66 dB at the driver's IMR 32/32** across ±1.1 MHz at 100–500 MHz (≥ 48 at 850, floor-limited), not 4h's 10–20 dB; a small correction (G 34–35) lifts 500 MHz from 55 to 63 dB. Section "Step 15" below.
 
 Step 14 (R2 across the VCO's ends), 2026-10-10: **R2 64–69 are locked** (1.709–1.797 GHz, the tone at full strength); the driver's 70–127 span is too narrow at the bottom, the divider rule is right. Section "Step 14" below.
@@ -67,6 +69,73 @@ at backoff −10 dB, the image 10 dB stronger and corrected for it).
   magnitude); the tuner needs little or no correction, and a small one
   buys ~8 dB at 500 MHz. The 4,096-point grid was not run: 32/32 is at
   the floor where it was measured.
+
+### 15.1 The map, 42–1002 MHz — `data/step15-imr-map.jsonl`, `data/step15-imr-map-hi.jsonl`
+
+Every 20 MHz, G, P ∈ {0–3, 32–35} (64 candidates), the wanted tone at
+backoff −20 dB and the image tone 20 dB stronger (the rejection
+corrected for it; 66–75 dB measurable). **A correction to the above:**
+`imrsearch` looked for the tone within ±6 bins (±3.5 kHz) of where it
+belongs, and the source and the dongle differ by ~4.3 ppm — +3.2 kHz at
+742 MHz, +4.3 kHz at 1 GHz — so above ~760 MHz it read beside the tone.
+The 850 MHz profile above and the first map's rows above 742 MHz are
+that error (the "≥ 48 dB, floor-limited" and a wanted level that seemed
+to fall 45 dB toward 1 GHz). With ±16 bins (±9.4 kHz) 702–1002 MHz was
+run again (`step15-imr-map-hi`); 702–742 agree with the first run within
+0.9 dB. A tone through both drivers (findings 13's method, ±10 kHz)
+reads 52–58 dB over the median bin at every RF from 300 to 1002 MHz.
+
+| RF (MHz) | at 32/32 | best | at |
+|---|---|---|---|
+| 62–482, 522, 602–622, 682–702, 762–782 | 62.6–66.5 | 64.4–70.3 | G 33 (+0.4…+7.6 dB) |
+| 42 | 49.1 | 64.3 | G 3 |
+| 502, 542–582 | 49.6–55.3 | 57.1–72.1 | G 35 |
+| 642–662, 722–742, 802–822 | 44.2–49.6 | 51.4–57.3 | G 35, P 1 or 32 |
+| 842 | 53.8 | 67.8 | G 35 |
+| 862–1002 | 56.3–59.9 | 65.2–68.8 | G 2, P 0 or 32 |
+
+At the driver's 32/32 the image is ≥ 44 dB down everywhere and ≥ 62 dB
+over most of the range; the weak places are narrow (they alternate at
+the 20 MHz grid between 500 and 840 MHz) and each recovers 7–17 dB with
+G = 35. Above 840 MHz the other direction (G = 2) gives 5–14 dB. In the
+800 MHz public-safety band (851–869 MHz) that is 58–60 → 65–67 dB; the
+image of a channel there is 7.14 MHz above it.
+
+## Step 16 — the dropped-block counter, and what loses samples — `data/step16-drop-counter.jsonl`, `data/step16-drop-phase.jsonl` — `derived/examples/dropcounter.rs`, `dropphase.rs`
+
+USB_EPA_FIFO_CFG[31:24], "Counts blocks dropped (each is 188 bytes) due
+to full FIFO" ([RTL2832U] Table 34).
+
+- **It counts, and saturates:** 0 after a power cycle; 255 after a 2 s
+  stall of the host (the stream left unread).
+- **Writing 0 to its byte (0x163) clears it** (stream stopped, the
+  counter frozen at 255: one write, read back 0). Writing the register
+  back with the byte 0 does the same; USB_EPA_CTL was not needed.
+- **It climbs with control traffic, not time**: with the stream read
+  without pause it read 33, 41, 51, 61, 72, 82, 91 at 0.05, 0.2, 0.5, 1,
+  2, 4, 8 s — ~10 per reading whatever the interval, the readings
+  themselves the traffic.
+- **The blocks are samples lost** (`dropphase`: a tone at +300 kHz, a
+  lost run shows as a phase jump). 10 s at 2.4 Msps: with no control
+  traffic 1 jump and the full 24.00 M samples; with one register access
+  every 100 ms 66–92 jumps, 65–89 of them within 20 ms after an access,
+  and samples short of rate × time by — per access — USB-block read
+  ~950, USB-block write ~850, demodulator read ~2,100, a read and a
+  clear back to back ~4,800 (the clear erasing its own count: the
+  counter said ~940). A demodulator write while streaming failed with
+  the endpoint stalled. The host's own ledger flagged none of it
+  (overflows 0). Starting the stream drops 25–50 blocks within its first
+  ~20 ms.
+- **In the driver:** `RtlStream::start` clears the counter (nothing
+  streams yet: free); `take_dropped_blocks` reads it and reports the
+  change since the last take — stopped, it clears it too (free); running,
+  only once it reaches 128 (`BLK_DROP_CLEAR_AT`), so a take costs one
+  read. With takes every 100 ms the counter reported 1,169–1,181 blocks
+  (110–111 k samples) against a shortfall of 111–133 k; every 1 s, 301
+  blocks (28 k) against 15 k (the start's and the stop's included).
+
+So every control transfer during the stream — retune, gain, a status
+read — costs ~0.4–2 ms of samples, and the counter is how to see it.
 
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 

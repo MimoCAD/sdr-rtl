@@ -47,7 +47,7 @@ use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, Tune
 
 pub use gain::Codes as GainCodes;
 pub use pll::{Pll, PllState};
-pub use stream::RtlStream;
+pub use stream::{DroppedBlocks, RtlStream};
 
 use demod::ddc_if_hz;
 use image::{Front, R5, R6, R7, R10, R11, R12, R16, R20, R21, R22, R26, R27};

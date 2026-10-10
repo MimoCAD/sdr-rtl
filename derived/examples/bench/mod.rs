@@ -104,6 +104,58 @@ impl Drop for Source {
     }
 }
 
+/// Off time and re-enumeration wait of the power cycle (findings step 0:
+/// gone after ~60 ms, back ~530 ms after power returns).
+pub const VBUS_OFF: Duration = Duration::from_millis(500);
+pub const ENUMERATE_DEADLINE: Duration = Duration::from_secs(5);
+
+/// The analyzer's TARGET A power (`cynthion-witness vbus on|off`).
+pub fn witness(arg: &str) -> Result<String, String> {
+    let out = Command::new("cargo")
+        .args(["run", "--release", "--quiet", "--manifest-path", "tools/Cargo.toml", "--bin", "cynthion-witness", "--", "vbus", arg])
+        .current_dir(workspace_root())
+        .output()
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The off time of the retry when one cycle leaves the dongle absent
+/// (METHODS §3: "allow a longer off-time retry"; 2026-10-10 one 500 ms
+/// cycle left it absent for 5 s).
+pub const VBUS_OFF_RETRY: Duration = Duration::from_secs(2);
+
+fn cycle_once(off_time: Duration) -> Result<(String, bool, u128), String> {
+    let off = witness("off")?;
+    std::thread::sleep(off_time);
+    let on = witness("on")?;
+    let t = Instant::now();
+    while sdr_rtl_derived::list().is_empty() {
+        if t.elapsed() > ENUMERATE_DEADLINE {
+            return Ok((format!("{off}; {on}"), false, t.elapsed().as_millis()));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok((format!("{off}; {on}"), true, t.elapsed().as_millis()))
+}
+
+/// The dongle power-cycled through the analyzer, back and enumerated;
+/// once more with the longer off time if the first leaves it absent.
+pub fn power_cycle() -> Result<String, String> {
+    let (said, back, ms) = cycle_once(VBUS_OFF)?;
+    let report = if back {
+        format!("{said}; back after {ms} ms")
+    } else {
+        let (said2, back2, ms2) = cycle_once(VBUS_OFF_RETRY)?;
+        if !back2 {
+            return Err(format!("the dongle did not return within {ENUMERATE_DEADLINE:?}, twice ({said}; {said2})"));
+        }
+        format!("{said}; absent after {ms} ms; retried with {VBUS_OFF_RETRY:?} off: {said2}; back after {ms2} ms")
+    };
+    // Let enumeration finish before the first request.
+    std::thread::sleep(Duration::from_millis(500));
+    Ok(report)
+}
+
 /// derived → rtl → crates → the workspace.
 pub fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")

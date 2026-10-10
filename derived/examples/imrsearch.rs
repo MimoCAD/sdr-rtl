@@ -35,7 +35,11 @@ const R8: u8 = 8;
 const R9: u8 = 9;
 const IMR_MASK: u8 = 0x3F;
 const OFFSET_HZ: f64 = 300e3;
-const TOL_BINS: usize = 6;
+/// Bins a line may sit from where it is placed: the source and the dongle
+/// differ by ~4.3 ppm (findings 11), +4.3 kHz at 1 GHz; 16 bins is
+/// ±9.4 kHz at 2.048 Msps. (6 bins, ±3.5 kHz, lost the tone above
+/// ~760 MHz.)
+const TOL_BINS: usize = 16;
 /// After an R8/R9 write: the transfers queued before it drain first.
 const SETTLE: Duration = Duration::from_millis(40);
 const CAPTURE_SEGMENTS: usize = 8;
@@ -106,19 +110,24 @@ fn run() -> Result<(), String> {
         src.off()?;
         return Ok(());
     }
+    // `--boost`: the image tone that many dB stronger than the wanted one
+    // (for range); `wanted` below is the wanted level referred to the
+    // image tone's, so every rejection is wanted − image as before.
+    let boost = get("--boost", 0.0) as i32;
     src.tone(actual + OFFSET_HZ)?;
-    let (wanted, wmed) = level(&mut s, &mut buf, SEGMENTS)?;
+    let (wanted_measured, wmed) = level(&mut s, &mut buf, SEGMENTS)?;
+    let wanted = wanted_measured + boost as f64;
     let image_rf = actual + 2.0 * ddc_if_hz() - OFFSET_HZ;
-    src.tone(image_rf)?;
+    src.tone_at(image_rf, 0, backoff + boost)?;
     let (image_mid, _) = level(&mut s, &mut buf, SEGMENTS)?;
     src.off()?;
     let (off_level, off_med) = level(&mut s, &mut buf, SEGMENTS)?;
     println!(
-        "{{\"kind\":\"head\",\"rf\":{actual:.1},\"if_hz\":{:.1},\"image_tone_hz\":{image_rf:.1},\"offset_hz\":{OFFSET_HZ},\"backoff_db\":{backoff},\"gain\":[8,8,2],\"r8\":{r8},\"r9\":{r9},\"space\":\"G,P in 0..=63 step {step} (or --values), G then P ascending\",\"wanted_dbfs\":{wanted:.2},\"wanted_median_dbfs\":{wmed:.2},\"image_at_32_32_dbfs\":{image_mid:.2},\"rejection_at_32_32_db\":{:.2},\"tone_off_dbfs\":{off_level:.2},\"tone_off_median_dbfs\":{off_med:.2}}}",
+        "{{\"kind\":\"head\",\"rf\":{actual:.1},\"if_hz\":{:.1},\"image_tone_hz\":{image_rf:.1},\"offset_hz\":{OFFSET_HZ},\"backoff_db\":{backoff},\"boost_db\":{boost},\"wanted_measured_dbfs\":{wanted_measured:.2},\"gain\":[8,8,2],\"r8\":{r8},\"r9\":{r9},\"space\":\"G,P in 0..=63 step {step} (or --values), G then P ascending\",\"wanted_dbfs\":{wanted:.2},\"wanted_median_dbfs\":{wmed:.2},\"image_at_32_32_dbfs\":{image_mid:.2},\"rejection_at_32_32_db\":{:.2},\"tone_off_dbfs\":{off_level:.2},\"tone_off_median_dbfs\":{off_med:.2}}}",
         ddc_if_hz(),
         wanted - image_mid
     );
-    src.tone(image_rf)?;
+    src.tone_at(image_rf, 0, backoff + boost)?;
     let t = Instant::now();
     // `--values a,b,…`: the candidate values for both fields in place of
     // the stepped range (declared in the head line the same way).
@@ -130,7 +139,7 @@ fn run() -> Result<(), String> {
         for &p in &values {
             let ok = write(&rtl, g, p)?;
             let (img, med) = level(&mut s, &mut buf, CAPTURE_SEGMENTS)?;
-            println!("{{\"g\":{g},\"p\":{p},\"read_back\":{ok},\"image_dbfs\":{img:.2},\"median_dbfs\":{med:.2},\"rejection_db\":{:.2}}}", wanted - img);
+            println!("{{\"g\":{g},\"p\":{p},\"read_back\":{ok},\"image_dbfs\":{img:.2},\"median_dbfs\":{med:.2},\"rejection_db\":{:.2},\"floor_limited\":{}}}", wanted - img, img < med + 6.0);
         }
         eprintln!("G {g} done at {:.0} s", t.elapsed().as_secs_f64());
     }
