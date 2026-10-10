@@ -68,7 +68,7 @@ use alloc::vec::Vec;
 
 use sdr_core::gain::StageReading;
 
-pub use eeprom::{Eeprom, EepromConfig, EepromIdentity, EepromWriteReport, IdentityChanges};
+pub use eeprom::{Eeprom, EepromConfig, EepromIdentity, EepromWriteReport, EepromChanges};
 pub use gain::Codes as GainCodes;
 pub use pll::{Pll, PllState};
 #[cfg(feature = "std")]

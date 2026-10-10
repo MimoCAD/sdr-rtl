@@ -240,7 +240,7 @@ impl EepromIdentity {
 
 /// The fields [`Eeprom::compose`] changes; `None` keeps the image's.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct IdentityChanges {
+pub struct EepromChanges {
     pub vid: Option<u16>,
     pub pid: Option<u16>,
     pub manufacturer: Option<String>,
@@ -309,7 +309,7 @@ pub fn part_size(raw: &[u8]) -> usize {
 pub struct Eeprom {
     bytes: Vec<u8>,
     /// The image may be written with a patch-list marker at 0x4E
-    /// ([`Eeprom::allowing_patch_list`], `IdentityChanges::allow_patch_list`).
+    /// ([`Eeprom::allowing_patch_list`], `EepromChanges::allow_patch_list`).
     patch_list_allowed: bool,
 }
 
@@ -515,7 +515,7 @@ impl Eeprom {
     /// lengths only a character's high byte can land there, a character
     /// U+5C00-U+5CFF); strings reaching a patch list being kept. Every
     /// identity within the limits fits a 128-byte part.
-    pub fn compose(&self, changes: &IdentityChanges) -> Result<Eeprom> {
+    pub fn compose(&self, changes: &EepromChanges) -> Result<Eeprom> {
         let base = self.identity().unwrap_or_else(|_| self.served_identity());
         let manufacturer = changes.manufacturer.clone().unwrap_or(base.manufacturer);
         let product = changes.product.clone().unwrap_or(base.product);
@@ -661,8 +661,8 @@ mod tests {
         Eeprom::from_bytes(vec![0xFF; size]).unwrap()
     }
 
-    fn changes(m: Option<&str>, p: Option<&str>, s: Option<&str>) -> IdentityChanges {
-        IdentityChanges { manufacturer: m.map(Into::into), product: p.map(Into::into), serial: s.map(Into::into), ..Default::default() }
+    fn changes(m: Option<&str>, p: Option<&str>, s: Option<&str>) -> EepromChanges {
+        EepromChanges { manufacturer: m.map(Into::into), product: p.map(Into::into), serial: s.map(Into::into), ..Default::default() }
     }
 
     /// Findings 17's bench record with neutral strings of its strings'
@@ -742,7 +742,7 @@ mod tests {
         assert!(repaired.is_valid());
         assert_eq!(repaired, bench_record());
         // Composing with no change does the same.
-        assert_eq!(broken.compose(&IdentityChanges::default()).unwrap(), bench_record());
+        assert_eq!(broken.compose(&EepromChanges::default()).unwrap(), bench_record());
     }
 
     #[test]
@@ -755,7 +755,7 @@ mod tests {
         assert_eq!(new.bytes()[..STRINGS_OFF], e.bytes()[..STRINGS_OFF]);
         assert_eq!(changed_chunks(&e, &new), vec![0x28]);
 
-        let ids = e.compose(&IdentityChanges { vid: Some(0x1234), pid: Some(0x5678), ..Default::default() }).unwrap();
+        let ids = e.compose(&EepromChanges { vid: Some(0x1234), pid: Some(0x5678), ..Default::default() }).unwrap();
         assert_eq!(&ids.bytes()[VID_OFF..PID_OFF + 2], &[0x34, 0x12, 0x78, 0x56]);
         assert_eq!(ids.identity().unwrap().serial, "SN1");
 
@@ -816,7 +816,7 @@ mod tests {
         assert_eq!(descriptor(ROM_MANUFACTURER).len(), 16);
         assert_eq!(descriptor(ROM_PRODUCT).len(), 18);
         assert_eq!(descriptor(ROM_SERIAL).len(), 36);
-        assert!(blank(EEPROM_SMALL_PART).compose(&IdentityChanges::default()).unwrap().identity().unwrap().serial == ROM_SERIAL);
+        assert!(blank(EEPROM_SMALL_PART).compose(&EepromChanges::default()).unwrap().identity().unwrap().serial == ROM_SERIAL);
     }
 
     /// A valid record whose strings break the limits is served with its
@@ -863,7 +863,7 @@ mod tests {
         let c = changes(Some("A"), Some(&product), Some(""));
         let err = bench_record().compose(&c).unwrap_err().to_string();
         assert!(err.contains("0x4E") && err.contains("0x5C"), "{err}");
-        let c = IdentityChanges { allow_patch_list: true, ..c };
+        let c = EepromChanges { allow_patch_list: true, ..c };
         assert!(bench_record().compose(&c).is_err(), "the strings are never a patch list");
         // The same length with an ASCII character is fine: its high byte is 0.
         let product: String = "P".repeat(32);
@@ -890,12 +890,12 @@ mod tests {
         assert_eq!(removed.patch_list_len(), None);
         assert!(removed.bytes()[0x31..].iter().all(|&b| b == 0));
 
-        let kept = with_list.compose(&IdentityChanges { serial: Some("SN2".into()), allow_patch_list: true, ..Default::default() }).unwrap();
+        let kept = with_list.compose(&EepromChanges { serial: Some("SN2".into()), allow_patch_list: true, ..Default::default() }).unwrap();
         assert_eq!(&kept.bytes()[PATCH_MARKER_OFF..PATCH_RECORDS_OFF + 3], &[PATCH_MARKER, 3, 0x30, 0x03, 0x01]);
         assert_eq!(kept.bytes()[0x60], 0, "past the list the tail is zeroed");
         assert!(kept.check_writable().is_ok());
         // Strings reaching 0x4E would overwrite the list kept.
-        let long = IdentityChanges { manufacturer: Some("M".repeat(16)), product: Some("P".repeat(17)), allow_patch_list: true, ..Default::default() };
+        let long = EepromChanges { manufacturer: Some("M".repeat(16)), product: Some("P".repeat(17)), allow_patch_list: true, ..Default::default() };
         assert!(with_list.compose(&long).unwrap_err().to_string().contains("patch list kept"));
         // The cap: a length byte over 178 counts as 178 (eeprom.md §5).
         let mut b = with_list.bytes().to_vec();
@@ -913,7 +913,7 @@ mod tests {
             assert!(e.is_test_record());
             assert!(e.check_writable().unwrap_err().to_string().contains("test record"));
             assert_eq!(e.served_identity(), EepromIdentity::rom_defaults());
-            assert!(e.compose(&IdentityChanges::default()).unwrap().check_writable().is_ok(), "compose writes the signature");
+            assert!(e.compose(&EepromChanges::default()).unwrap().check_writable().is_ok(), "compose writes the signature");
         }
     }
 
