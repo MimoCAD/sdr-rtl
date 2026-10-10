@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 11 (the driver `derived/` on the bench), 2026-10-10: **it streams, tunes and controls the stream as specified.** The tuner programmed at open, before the start: six tones land on their predicted bins, 53.6–58.3 dB. stop → rate change → start runs at the new rate (1.024, 2.4, 2.88, 2.048 Msps, delivered within 0.2 %, no overflow). The restart bit alone restarts in 4.7 ms; the pause gives 0 samples in 500 ms. RF 100–220 MHz in 10 MHz steps: the tone at every step, 57.4–58.9 dB. Section "Step 11" below.
+
 Step 10 (step 9's sequence on our bench), 2026-10-09: **CONFIRMED — the chip streams raw samples on our bench.**
 - **Replay:** findings 9h's sequence from a power cycle gives 0 bytes through all 24 items, then the first bulk data 0.10–0.15 ms after page 0 0x06 ← 0x80, at 4,099,326 B/s (= 2 × 2.0497 Msps).
 - **Samples, not a replay:** the rate tracks rsamp_ratio as 2 × f_symbol / 4 at 1.024, 2.048, 2.4 and 2.88 Msps (every fresh run; 3.2 Msps in 6 of 8). A cabled tone lands at offset / rate cycles per sample, even byte I and odd byte Q, 54–57 dB over the median bin, and moves with the tone. Page 1 0x01 bit 2 pauses the stream (0 bytes) and resumes it.
@@ -33,6 +35,73 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 11 — the driver `derived/` on the bench — `data/step11-derived-hwcheck.jsonl` — `derived/examples/hwcheck.rs`
+
+The first run of the driver against the dongle, through its public API
+only (`Rtl::open`, `set_rate`, `set_freq`, `rx_stream`, `RtlStream`
+start / stop / pause / resume). The tone source is cabled through 20 dB
+at txvga 0, backoff −20 dB; gains are the open's (LNA 8, mixer 8, VGA 8;
+61.0 dB). The run follows a power cycle (`harness recovery`) and one
+earlier run of the same program, which stopped at a fault in the
+program's own capture code after its tone section; that section agrees
+with this record's to 0.5 dB. Spectra: 4,096-point FFT, Hann, 16
+segments averaged; SNR = the predicted bin (± 4) over the median bin.
+Every capture follows a 100 ms discard and, after a source change,
+tone_source's 150 ms settle.
+
+- **Open:** 248.5 ms; R0 = 0x96; 300 MHz at /8, R2 VCO_INDICATOR 92.
+- **The tuner before the start:** the first samples 132 ms after `start`
+  (the transfers queued, then the 32 writes of the sequence, each read
+  back). Tones at +100, +300, −200, −500, +700 and −900 kHz at 2.048 Msps:
+  every peak at its predicted bin (+2 to +3 bins), 58.3, 58.2, 58.2,
+  57.9, 57.8 and 53.6 dB; mirror bins −3.2 to +3.0 dB. Tone off: no line
+  (3.4 dB at the predicted bin).
+- **stop → rate change → start** (each stream dropped, `set_rate`, a new
+  stream with the whole sequence), a +300 kHz tone, 2 s windows after a
+  300 ms discard:
+
+  | Set (Msps) | Delivered (sps) | Delivered / set | Tone (dB) | Error (Hz) |
+  |---|---|---|---|---|
+  | 2.048 | 2,047,316 | 0.99967 | 58.0 | +1,349 |
+  | 1.024 | 1,023,717 | 0.99972 | 49.3 | +1,334 |
+  | 2.4 | 2,399,550 | 0.99981 | 58.2 | +1,317 |
+  | 2.88 | 2,874,084 | 0.99795 | 56.9 | +1,283 |
+  | 2.048 | 2,047,976 | 0.99999 | 57.1 | +1,264 |
+
+  0 overflows, 0 timeouts. A window counts whole 8,192-sample transfers,
+  so it reads up to ~0.2 % low at 2.88 Msps. At 1.024 Msps the peak is 5
+  bins (250 Hz each) from the predicted bin, outside the ± 4 tolerance;
+  that is the same +1.33 kHz offset as at every rate.
+- **Restart** (stop, 200 ms, the start bit alone): first samples 4.65 ms
+  after the write; 2,048,001 sps before, 2,047,983 after; tone 57.1 dB.
+- **Pause:** 3,384 samples drain in the first 100 ms (transfers in
+  flight); then **0 samples in 500 ms**; after the resume 2,048,005 sps,
+  tone 57.0 dB.
+- **Tuning 100–220 MHz** (one stream, `set_freq` while streaming, the
+  tone 300 kHz above each RF):
+
+  | RF (MHz) | Divider | R2 | Tone (dB) | Error (Hz) |
+  |---|---|---|---|---|
+  | 100 | 32 | 121 | 58.4 | +412 |
+  | 110–210 | 16 | 70–123 | 57.4–58.9 | +455 to +878 |
+  | 220 | 8 | **69** | 58.4 | +914 |
+
+  Band path RFFILT 2, RFMUX 1 throughout. Median bin with the tone off
+  102.8–104.0 dB.
+- **Frequency error:** +1.25 to +1.36 kHz at 300 MHz and +412 to +914 Hz
+  over 100–220 MHz, about 4.2 ppm at every RF. A fixed crystal offset
+  between source and dongle (findings 10.2b: ~5 ppm); which crystal is
+  off is not measured.
+
+**Open from this step:**
+- At 220 MHz the divider rule picks /8 (VCO 1.789 GHz, near the bottom
+  of the range) and R2 reads 69, one below the 70–127 span
+  `r2_says_locked` accepts, so `locked` reports false. The tone is
+  received normally, so either the span is too narrow at the VCO's low
+  end or /16 (VCO 3.577 GHz) is the better choice up to LO 228 MHz.
+- Sample loss under load and over long runs (the overflow counter at
+  USB_EPA_FIFO_CFG[31:24]) belongs to the side-by-side benchmark.
 
 ## Step 10 — step 9's sequence on our bench: raw samples CONFIRMED, minimised — `data/step10-*.json` — `harness stream-confirm <test>`
 

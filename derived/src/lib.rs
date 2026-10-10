@@ -12,7 +12,8 @@
 //!
 //! The raw-sample stream ([`Rtl::rx_stream`], `stream`) is the sequence
 //! findings step 10 confirmed and minimised on the bench; this code
-//! itself has not yet run against hardware.
+//! ran against the bench dongle in findings step 11
+//! (`examples/hwcheck.rs`).
 //!
 //! Modules: `protocol` (the vendor requests' encodings and the register
 //! addresses), `usb` (the request layer over nusb), `tables` (the
@@ -234,10 +235,9 @@ impl Rtl {
     ///
     /// Refused while a stream exists: changing the ratio of a running
     /// stream did not dependably take (findings 10.2a), so the rate is
-    /// fixed from `rx_stream` until the stream is dropped. Whether a
-    /// stream started again after a drop and a rate change runs at the
-    /// new rate as a power-cycled one does is open (derivation/STATUS.md,
-    /// "Writes while streaming").
+    /// fixed from `rx_stream` until the stream is dropped. A stream made
+    /// after a drop and a rate change runs at the new rate (findings
+    /// step 11: 1.024, 2.4, 2.88 and 2.048 Msps in turn).
     pub fn set_rate(&mut self, sps: f64) -> Result<()> {
         if self.link.stream_open() {
             return Err(unsupported(format!(
