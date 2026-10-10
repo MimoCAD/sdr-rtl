@@ -513,9 +513,10 @@ impl Rtl {
     /// while samples flow except what the stream itself offers.
     /// `transfer_bytes` is rounded down to whole packets (sdr-core's engine;
     /// at least one); `queue_depth` transfers are kept in flight (at least
-    /// two); 0 for either is the bench's size (`stream::DEFAULT_TRANSFER_BYTES`,
-    /// `stream::DEFAULT_QUEUE_DEPTH`: 16 KiB, 16). Nothing is written until
-    /// the first `recv_into` (or `start`).
+    /// two); 0 for either is the default (`stream::DEFAULT_TRANSFER_BYTES`,
+    /// `stream::DEFAULT_QUEUE_DEPTH`: 16 KiB, 128 — fewer in flight let a
+    /// pause or a request use the queue up, findings 16.7). Nothing is
+    /// written until the first `recv_into` (or `start`).
     pub fn into_stream(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<TieredStream, StreamError> {
         Ok(match Tier::for_rate(self.rate_set()) {
             Tier::Lossless => TieredStream::Lossless(LosslessStream::new(self, transfer_bytes, queue_depth)?),

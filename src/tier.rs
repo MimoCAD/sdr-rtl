@@ -10,8 +10,10 @@
 //! dropped-block counter, is itself read through that pipe.
 //!
 //! So the stream owns the receiver, and each kind offers only what it can
-//! do without loss at its rate (findings 16.2-16.4, measured on the
-//! M5 Max; another host's request latency moves the limits):
+//! do without loss at its rate (findings 16.2-16.4, measured with 16
+//! transfers in flight; with 128, paused retunes lost nothing to
+//! 2.88 Msps — findings 16.7 — so these limits are the shallow queue's,
+//! kept until the deeper one is measured on more hosts):
 //! - [`LosslessStream`], ≤ [`LOSSLESS_MAX_SPS`]: anything the receiver
 //!   does ([`LosslessStream::reconfigure`]: retune, gain, …) inside a
 //!   pause; nothing is lost, every sample before [`Break::at_sample`] is
@@ -201,9 +203,13 @@ struct Core {
 }
 
 impl Core {
-    fn new(mut rtl: Rtl, tier: Tier, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<Core, StreamError> {
+    fn new(rtl: Rtl, tier: Tier, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<Core, StreamError> {
+        Core::new_checked(rtl, tier, transfer_bytes, queue_depth, true)
+    }
+
+    fn new_checked(mut rtl: Rtl, tier: Tier, transfer_bytes: usize, queue_depth: usize, check_rate: bool) -> std::result::Result<Core, StreamError> {
         let rate = rtl.rate_set();
-        if rate > tier.max_sps() {
+        if check_rate && rate > tier.max_sps() {
             let error = Error::Unsupported {
                 backend: crate::BACKEND,
                 what: format!("{tier:?} stream at {:.3} Msps: the kind allows at most {:.3} Msps (findings 16.3)", rate / 1e6, tier.max_sps() / 1e6),
@@ -447,6 +453,13 @@ shared!(RestrictedStream);
 impl LosslessStream {
     pub(crate) fn new(rtl: Rtl, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<Self, StreamError> {
         Core::new(rtl, Tier::Lossless, transfer_bytes, queue_depth).map(LosslessStream)
+    }
+
+    /// A `LosslessStream` at any rate, for bench programs measuring where
+    /// the kind's limit lies.
+    #[cfg(feature = "bench")]
+    pub fn new_at_any_rate(rtl: Rtl, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<Self, StreamError> {
+        Core::new_checked(rtl, Tier::Lossless, transfer_bytes, queue_depth, false).map(LosslessStream)
     }
 
     /// Run `f` on the receiver inside a pause: the output paused with one

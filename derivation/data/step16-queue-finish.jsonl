@@ -1,0 +1,32 @@
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":28.7,"tail":1504,"received":7200400,"samples":7201904,"dropped_blocks":15,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":129.6,"tail":1504,"received":7200306,"samples":7201810,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 99.31 ms"]}
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":78.8,"tail":1504,"received":7200306,"samples":7201810,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 48.67 ms"]}
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":128.3,"tail":1504,"received":7200212,"samples":7201716,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 100.28 ms"]}
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":96.5,"tail":1504,"received":7200212,"samples":7201716,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 65.98 ms"]}
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":109.4,"tail":1504,"received":7200400,"samples":7201904,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 79.19 ms"]}
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":28.7,"tail":1504,"received":7200306,"samples":7201810,"dropped_blocks":15,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":16,"tier":"Restricted","finish_ms":115.0,"tail":1504,"received":7200306,"samples":7201810,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 84.65 ms"]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":102.8,"tail":3008,"received":7200400,"samples":7203408,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 72.45 ms"]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":81.8,"tail":3008,"received":7200306,"samples":7203314,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 51.95 ms"]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":27.1,"tail":3008,"received":7200306,"samples":7203314,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":27.2,"tail":3008,"received":7200306,"samples":7203314,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":104.2,"tail":3008,"received":7200306,"samples":7203314,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 73.94 ms"]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":78.9,"tail":3008,"received":7200400,"samples":7203408,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 48.58 ms"]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":27.2,"tail":3008,"received":7200400,"samples":7203408,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":32,"tier":"Restricted","finish_ms":110.1,"tail":3008,"received":7200212,"samples":7203220,"dropped_blocks":255,"saturated":true,"stall_retries":1,"refused":["set 0x0120 0x0011 at +0.00 ms, refused after 79.86 ms"]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.1,"tail":4888,"received":7200212,"samples":7205100,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.1,"tail":4794,"received":7200306,"samples":7205100,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.4,"tail":4888,"received":7200306,"samples":7205194,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.3,"tail":4794,"received":7200306,"samples":7205100,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.3,"tail":4888,"received":7200306,"samples":7205194,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.3,"tail":4888,"received":7200212,"samples":7205100,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.4,"tail":4888,"received":7200306,"samples":7205194,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":64,"tier":"Restricted","finish_ms":27.4,"tail":4794,"received":7200400,"samples":7205194,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.8,"tail":4888,"received":7200306,"samples":7205194,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.7,"tail":4888,"received":7200400,"samples":7205288,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.7,"tail":4888,"received":7200212,"samples":7205100,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.7,"tail":4888,"received":7200306,"samples":7205194,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.8,"tail":4888,"received":7200400,"samples":7205288,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.8,"tail":4794,"received":7200306,"samples":7205100,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.6,"tail":4794,"received":7200306,"samples":7205100,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+{"rate":2400000,"depth":128,"tier":"Restricted","finish_ms":27.8,"tail":4794,"received":7200212,"samples":7205006,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}

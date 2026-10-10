@@ -659,12 +659,13 @@ mod tests {
         IdentityChanges { manufacturer: m.map(Into::into), product: p.map(Into::into), serial: s.map(Into::into), ..Default::default() }
     }
 
-    /// Findings 17's bench record: 0bda:2838, serial flag 0xA5,
-    /// configuration 0x16, "MimoCAD" / "MimoSDR" / "GFD".
+    /// Findings 17's bench record with neutral strings of its strings'
+    /// lengths (7, 7, 3): 0bda:2838, serial flag 0xA5, configuration
+    /// 0x16, "Example" / "Product" / "SN1".
     fn bench_record() -> Eeprom {
         let mut b = vec![0u8; EEPROM_SMALL_PART];
         b[..9].copy_from_slice(&[0x28, 0x32, 0xDA, 0x0B, 0x38, 0x28, SERIAL_PRESENT, 0x16, 0x00]);
-        let strings = [descriptor("MimoCAD"), descriptor("MimoSDR"), descriptor("GFD")].concat();
+        let strings = [descriptor("Example"), descriptor("Product"), descriptor("SN1")].concat();
         b[STRINGS_OFF..STRINGS_OFF + strings.len()].copy_from_slice(&strings);
         Eeprom::from_bytes(b).unwrap()
     }
@@ -712,7 +713,7 @@ mod tests {
         let id = e.identity().unwrap();
         assert_eq!((id.vid, id.pid), (0x0BDA, 0x2838));
         assert!(id.serial_present);
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("MimoCAD", "MimoSDR", "GFD"));
+        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("Example", "Product", "SN1"));
         assert_eq!(id.config, EepromConfig(0x16));
         assert!(id.config.second_interface() && id.config.gpio_setup() && !id.config.remote_wakeup());
         assert!(!id.config.demod_ctl_1_set() && !id.config.demod_ctl_1_bit1_clear(), "bit 4 alone acts only with bit 3");
@@ -741,16 +742,16 @@ mod tests {
     #[test]
     fn compose_round_trips_and_changes_only_what_is_given() {
         let e = bench_record();
-        let new = e.compose(&changes(None, None, Some("UHF"))).unwrap();
+        let new = e.compose(&changes(None, None, Some("SN2"))).unwrap();
         let id = new.identity().unwrap();
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("MimoCAD", "MimoSDR", "UHF"));
+        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("Example", "Product", "SN2"));
         assert_eq!((id.vid, id.pid, id.config), (0x0BDA, 0x2838, EepromConfig(0x16)));
         assert_eq!(new.bytes()[..STRINGS_OFF], e.bytes()[..STRINGS_OFF]);
         assert_eq!(changed_chunks(&e, &new), vec![0x28]);
 
         let ids = e.compose(&IdentityChanges { vid: Some(0x1234), pid: Some(0x5678), ..Default::default() }).unwrap();
         assert_eq!(&ids.bytes()[VID_OFF..PID_OFF + 2], &[0x34, 0x12, 0x78, 0x56]);
-        assert_eq!(ids.identity().unwrap().serial, "GFD");
+        assert_eq!(ids.identity().unwrap().serial, "SN1");
 
         let all = e.compose(&changes(Some("Ägypten"), Some("Ω"), Some("260"))).unwrap();
         let id = all.identity().unwrap();
@@ -768,7 +769,7 @@ mod tests {
         assert_eq!(new.strings_end().unwrap(), 0x29);
         assert!(new.bytes()[0x29..].iter().all(|&b| b == 0), "the old serial is zeroed");
         // And back.
-        let again = new.compose(&changes(None, None, Some("GFD"))).unwrap();
+        let again = new.compose(&changes(None, None, Some("SN1"))).unwrap();
         assert_eq!(again, bench_record());
     }
 
@@ -797,11 +798,11 @@ mod tests {
         assert!(!e.is_valid());
         assert!(e.identity().is_err(), "bLength 0xFF breaks the limits");
         assert_eq!(e.served_identity(), EepromIdentity::rom_defaults());
-        let new = e.compose(&changes(None, None, Some("UHF"))).unwrap();
+        let new = e.compose(&changes(None, None, Some("SN2"))).unwrap();
         assert!(new.is_valid());
         let id = new.identity().unwrap();
         assert_eq!((id.vid, id.pid), (ROM_VID, ROM_PID));
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), (ROM_MANUFACTURER, ROM_PRODUCT, "UHF"));
+        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), (ROM_MANUFACTURER, ROM_PRODUCT, "SN2"));
         assert_eq!(id.config, EepromConfig(EepromConfig::REMOTE_WAKEUP | EepromConfig::GPIO_SETUP));
         assert_eq!(new.bytes()[TEST_SLAVE_OFF], 0xFF, "byte 8 is kept");
         // The ROM's own descriptors are 16 and 18 bytes (0x0E40, 0x0E50)
@@ -879,11 +880,11 @@ mod tests {
         assert!(with_list.check_writable().is_err());
         assert!(with_list.clone().allowing_patch_list().check_writable().is_ok());
 
-        let removed = with_list.compose(&changes(None, None, Some("UHF"))).unwrap();
+        let removed = with_list.compose(&changes(None, None, Some("SN2"))).unwrap();
         assert_eq!(removed.patch_list_len(), None);
         assert!(removed.bytes()[0x31..].iter().all(|&b| b == 0));
 
-        let kept = with_list.compose(&IdentityChanges { serial: Some("UHF".into()), allow_patch_list: true, ..Default::default() }).unwrap();
+        let kept = with_list.compose(&IdentityChanges { serial: Some("SN2".into()), allow_patch_list: true, ..Default::default() }).unwrap();
         assert_eq!(&kept.bytes()[PATCH_MARKER_OFF..PATCH_RECORDS_OFF + 3], &[PATCH_MARKER, 3, 0x30, 0x03, 0x01]);
         assert_eq!(kept.bytes()[0x60], 0, "past the list the tail is zeroed");
         assert!(kept.check_writable().is_ok());

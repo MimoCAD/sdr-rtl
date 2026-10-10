@@ -1,6 +1,7 @@
 //! The stream kinds on the bench, through the public API only.
 //!
-//!   tiercheck [--retunes N] [--rate SPS] [--lossless-only] [--drain-ms MS (with --features bench)]
+//!   tiercheck [--retunes N] [--rate SPS] [--lossless-only] [--depth N]
+//!             [--drain-ms MS] [--fifo-reset] [--any-rate]   (the last three with --features bench)
 //!
 //! A tone at 300.3 MHz (the source at 8 Msps, backoff −15 dB). Three runs,
 //! each from a power cycle (gains 8/8/2):
@@ -81,8 +82,15 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
         rtl.link().set(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_SET, 0), &[n, v[1], v[2], 0], "FIFO_CFG write").map_err(|e| e.to_string())?;
         eprintln!("FIFO size {n} (was {})", v[0]);
     }
+    // `--depth N`: transfers in flight; `--any-rate` (bench): a lossless
+    // stream above its limit, to measure where the limit lies.
+    let depth: usize = std::env::args().skip_while(|a| a != "--depth").nth(1).and_then(|v| v.parse().ok()).unwrap_or(QUEUE_DEPTH);
+    #[cfg(feature = "bench")]
+    let made = if std::env::args().any(|a| a == "--any-rate") { sdr_rtl::LosslessStream::new_at_any_rate(rtl, TRANSFER_BYTES, depth) } else { rtl.into_lossless(TRANSFER_BYTES, depth) };
+    #[cfg(not(feature = "bench"))]
+    let made = rtl.into_lossless(TRANSFER_BYTES, depth);
     #[allow(unused_mut)]
-    let mut s = rtl.into_lossless(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.error.to_string())?;
+    let mut s = made.map_err(|e| e.error.to_string())?;
     #[cfg(feature = "bench")]
     if let Some(ms) = drain_ms {
         s.set_drain(Duration::from_millis(ms));
@@ -213,7 +221,7 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
     let exact = offsets.iter().filter(|o| o.abs() <= 1).count();
     let quiet_mean = quiet_ms.iter().sum::<f64>() / quiet_ms.len().max(1) as f64;
     Ok(format!(
-        "\"run\":\"lossless\",\"rate\":{rate},{},\"kept\":{},\"retunes\":{done},\"quiet_ms_mean\":{quiet_mean:.1},\"tones_hz\":[{:.0},{:.0}],\"break_offsets\":{offsets:?},\"breaks_within_1_sample\":{exact},\"phase_windows\":{windows},\"phase_jumps\":{jumps},\"first_jumps_from_segment_start\":{jump_at:?},\"continuity_at_break_deg\":{cont_start:?},\"continuity_to_takeover_deg\":{cont_end:?},\"drain_ms\":{drain_ms:?},\"break_dropped\":{:?}",
+        "\"run\":\"lossless\",\"rate\":{rate},\"depth\":{depth},{},\"kept\":{},\"retunes\":{done},\"quiet_ms_mean\":{quiet_mean:.1},\"tones_hz\":[{:.0},{:.0}],\"break_offsets\":{offsets:?},\"breaks_within_1_sample\":{exact},\"phase_windows\":{windows},\"phase_jumps\":{jumps},\"first_jumps_from_segment_start\":{jump_at:?},\"continuity_at_break_deg\":{cont_start:?},\"continuity_to_takeover_deg\":{cont_end:?},\"drain_ms\":{drain_ms:?},\"break_dropped\":{:?}",
         report_json(&fin.report, fin.tail.len()),
         all.len(),
         tones[0],

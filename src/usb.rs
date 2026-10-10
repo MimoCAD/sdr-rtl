@@ -10,7 +10,7 @@
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nusb::MaybeFuture;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
@@ -30,6 +30,22 @@ pub const CONTROL_TIMEOUT: Duration = Duration::from_millis(300);
 /// How often a refused (STALLed) request is tried again, and how far apart.
 pub const STALL_RETRIES: u32 = 3;
 pub const STALL_RETRY_WAIT: Duration = Duration::from_millis(1);
+/// The refused requests kept for [`Link::refusals`], the most recent.
+pub const REFUSALS_KEPT: usize = 64;
+
+/// One request the chip refused (STALL) and that was tried again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub value: u16,
+    pub index: u16,
+    /// A Set (OUT); else a Get.
+    pub set: bool,
+    pub context: &'static str,
+    /// When the refused attempt was sent, and how long it took to be
+    /// refused.
+    pub at: Instant,
+    pub took: Duration,
+}
 
 /// An open dongle's control pipe. Clones share the device and the state
 /// below: the receiver and its stream each hold one, possibly on two
@@ -50,6 +66,8 @@ struct Shared {
     stream_open: AtomicBool,
     /// Requests the chip refused (STALL) and that were tried again.
     stall_retries: AtomicU64,
+    /// Which they were, the last [`REFUSALS_KEPT`].
+    refusals: Mutex<Vec<Refusal>>,
 }
 
 fn usb_error(context: &'static str, e: impl Display) -> Error {
@@ -79,7 +97,7 @@ fn refuse_block0_eeprom(value: u16, index: u16, context: &'static str) -> Result
 
 impl Link {
     pub fn new(dev: nusb::Device) -> Link {
-        Link { dev, shared: Arc::new(Shared { rmw: Mutex::new(()), stream_open: AtomicBool::new(false), stall_retries: AtomicU64::new(0) }) }
+        Link { dev, shared: Arc::new(Shared { rmw: Mutex::new(()), stream_open: AtomicBool::new(false), stall_retries: AtomicU64::new(0), refusals: Mutex::new(Vec::new()) }) }
     }
 
     pub fn device(&self) -> &nusb::Device {
@@ -113,7 +131,7 @@ impl Link {
     pub fn get(&self, value: u16, index: u16, len: u16, context: &'static str) -> Result<Vec<u8>> {
         refuse_block0_eeprom(value, index, context)?;
         let v = self
-            .retry_stall(|| {
+            .retry_stall(value, index, false, context, || {
                 self.dev
                     .control_in(
                         ControlIn {
@@ -140,7 +158,7 @@ impl Link {
     /// slave is refused ([`refuse_block0_eeprom`]).
     pub fn set(&self, value: u16, index: u16, data: &[u8], context: &'static str) -> Result<()> {
         refuse_block0_eeprom(value, index, context)?;
-        self.retry_stall(|| {
+        self.retry_stall(value, index, true, context, || {
             self.dev
                 .control_out(
                     ControlOut {
@@ -164,14 +182,22 @@ impl Link {
     /// intermittent, no order or rate isolated). Every request here is
     /// safe to repeat: reads, writes of whole values, and read-modify-
     /// writes judged by their read-back. Each retry is counted
-    /// ([`Link::stall_retries`]).
-    fn retry_stall<T>(&self, mut f: impl FnMut() -> std::result::Result<T, TransferError>) -> std::result::Result<T, TransferError> {
+    /// ([`Link::stall_retries`]) and kept ([`Link::refusals`]).
+    fn retry_stall<T>(&self, value: u16, index: u16, set: bool, context: &'static str, mut f: impl FnMut() -> std::result::Result<T, TransferError>) -> std::result::Result<T, TransferError> {
         let mut tries = 0;
         loop {
+            let at = Instant::now();
             match f() {
                 Err(TransferError::Stall) if tries < STALL_RETRIES => {
+                    let took = at.elapsed();
                     tries += 1;
                     self.shared.stall_retries.fetch_add(1, Ordering::Relaxed);
+                    let mut kept = self.shared.refusals.lock().unwrap_or_else(|e| e.into_inner());
+                    if kept.len() == REFUSALS_KEPT {
+                        kept.remove(0);
+                    }
+                    kept.push(Refusal { value, index, set, context, at, took });
+                    drop(kept);
                     std::thread::sleep(STALL_RETRY_WAIT);
                 }
                 r => return r,
@@ -182,6 +208,11 @@ impl Link {
     /// Requests the chip refused and that were tried again, since open.
     pub fn stall_retries(&self) -> u64 {
         self.shared.stall_retries.load(Ordering::Relaxed)
+    }
+
+    /// Which requests those were, the last [`REFUSALS_KEPT`], oldest first.
+    pub fn refusals(&self) -> Vec<Refusal> {
+        self.shared.refusals.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     // ---- System block: wValue = 0x3000 + offset (findings step 1A) ----

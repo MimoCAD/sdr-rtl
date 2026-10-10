@@ -1,6 +1,6 @@
-//! A SigMF capture through the driver, for the side-by-side benchmark:
-//! the same file format `mimosdr record` writes, so both drivers'
-//! captures go through one offline decoder.
+//! A SigMF capture through the driver, for the side-by-side benchmark
+//! (findings 13): ci16_le SigMF, the format the earlier driver's captures
+//! were taken in, so both go through one offline decoder.
 //!
 //!   record --freq HZ --seconds S --out NAME [--rate SPS] [--gain LNA MIX VGA]
 //!          [--transfer BYTES] [--depth N]   (default 16 KiB × 16)

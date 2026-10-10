@@ -8,6 +8,8 @@ The steps below name the paths as they were when each ran.
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 16.7 (the transfer queue), 2026-10-10: **the refused request is the finish's pause write, and it, like most of step 16's losses, comes from the host running out of transfers in flight** — after a pause each waiting transfer ends with one block. 128 transfers in flight: 0 refusals in 38 finishes, 600 mid-stream counter reads at 2.4 Msps lose 1 block, and paused retunes lose nothing at 1.2-2.88 Msps (16 deep at 2.4: 369 blocks).
+
 Step 17 (the configuration EEPROM), 2026-10-10: the layout derived from the firmware and confirmed on the bench dongle — whose signature byte reads 0x00, most likely zeroed by step 2's block-0 sweep, so the dongle has ignored its EEPROM throughout. Section "Step 17" below.
 
 Step 16.5 (the stream kinds), 2026-10-10: `LosslessStream` / `AccountedStream` / `RestrictedStream` built and benched — a paused retune loses nothing, but the new configuration begins up to the FIFO's fill (6–10 blocks) after the reported break, and 2.88 Msps carries periodic phase glitches. Section "16.5" below.
@@ -156,8 +158,8 @@ role confirmed on the bench.
 
 **The write page is 8 bytes, 2026-10-10** (`derived/examples/eepromcheck.rs`,
 through `Rtl::read_eeprom` / `Rtl::write_eeprom`): the read parsed as
-above (128 bytes, signature valid, 0bda:2838, "MimoCAD" / "MimoSDR" /
-"GFD"). A round trip of one free byte, 0x33 ← 0x55, written as the
+above (128 bytes, signature valid, 0bda:2838, the three strings). A
+round trip of one free byte, 0x33 ← 0x55, written as the
 16-byte chunk 0x30-0x3F in one block 3 Set, **read back 5 bytes wrong**:
 0x34-0x37 held 0x4D 0x43 0x01 0x40, the chunk's last 8 bytes — the second
 half wrapped onto 0x30-0x37, so **the part writes in 8-byte pages**. The
@@ -409,6 +411,64 @@ with nothing flowing and reading the counter.
   succeed), so the hardware is what `freq()` reports; if that fails too,
   the stream's `freq()` errs from then on and the report says
   `configuration_unknown`.
+
+### 16.7 The host's transfer queue, not the chip: the refused request and step 16's losses — `data/step16-queue-finish.jsonl`, `data/step16-queue-opcost.jsonl`, `data/step16-queue-lossless.jsonl` — `examples/finishloop.rs`, `opcost.rs --depth`, `tiercheck.rs --depth --any-rate`
+
+Every measurement in 16.1-16.6 ran with 16 transfers of 16 KiB in
+flight. `finishloop` repeats a plain application sequence (open, gain
+20 dB, 300 MHz, the stream the rate allows, 3 s, finish) without power
+cycles; the request layer now keeps each refused request
+(`Link::refusals`: wValue, wIndex, when, how long the chip took).
+
+- **The refused request is always the finish's pause write** (page 1
+  0x01 ← 0x14; wValue 0x0120, wIndex 0x0011), the finish's first
+  request, refused after **64-94 ms** where a demodulator write takes
+  1-5 ms; each such run's counter saturates (255). The tuner's status
+  read before the stream, a power cycle before each run, stage codes in
+  place of one gain number, a 0.25 s receive timeout and starting on the
+  first receive each left it refused in 3-5 runs of 6-8.
+- **The tail is one block per transfer in flight.** The samples handed
+  out after the pause are exactly depth × 94 at depth 16 (1,504) and 32
+  (3,008), in refused and clean runs alike: after the pause write each
+  pending transfer ends with one 188-byte block. At 64 and 128 the tail
+  is 51-52 blocks (4,794-4,888), fewer than the transfers waiting.
+- **The depth decides it** (2.4 Msps, 8 finishes each):
+
+| Transfers in flight | Refused, counter saturated | Clean runs' blocks |
+|---|---|---|
+| 16 | 6 | 15 (2 runs) |
+| 32 | 5 | 0 (3 runs) |
+| 64 | 0 | 0 |
+| 128 | 0 | 0 |
+
+  Live runs before the record (not in the file): 24 → 7 of 8 refused,
+  48 → 1 of 8, 64 → 1 of 6, 96 → 0 of 8; at 128, 30 more finishes at
+  1.8, 2.4 and 2.88 Msps, none refused, 0 blocks each.
+- **Mid-stream requests** (`opcost`, 2.4 Msps, 3 s, from a power cycle):
+
+| Operation | Depth 16 | Depth 128 |
+|---|---|---|
+| none (start and stop) | 98 | 0 |
+| USB-block read every 5 ms (600) | 255, saturated | 1 |
+| demodulator read every 100 ms (30) | 255, saturated | 25 |
+| unpaused retune every 100 ms (30) | 255, saturated | 255, saturated |
+
+- **`LosslessStream` above 1.2 Msps** (`tiercheck --any-rate
+  --fifo-reset`, 20 paused retunes, 128 deep): **0 blocks at every
+  break at 1.2, 1.8, 2.4 and 2.88 Msps**, no refusal, ~59 ms quiet;
+  the same at 2.4 Msps 16 deep: 369 blocks. Phase jumps inside segments:
+  1.2 Msps 544 (the after-break steps of 16.5), 2.88 Msps 414 (its
+  glitch, 16.5), 1.8 and 2.4 none.
+
+So what lost samples in 16.1-16.6 was mostly the host running out of
+transfers: while the chip is busy with a control request — and after a
+pause — it ends each waiting transfer early, so the count of transfers
+in flight, not their size, is what a request can use up; with the queue
+empty the FIFO fills and drops, and a pause write met in that state is
+held for tens of milliseconds and refused. The early ends are inferred
+from the tail; they have not been watched on the wire. The tier limits
+of 16.3 (1.2 and 1.8 Msps) are this 16-deep queue's on this host. An
+unpaused retune still loses its duration at 128.
 
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 

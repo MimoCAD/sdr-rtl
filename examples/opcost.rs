@@ -2,7 +2,7 @@
 //! samples the chip drops (its counter, read after the stop, when a read
 //! costs nothing) and the samples short of rate × time.
 //!
-//!   opcost [--rate SPS] [--ops none,usbread,demodread,retune,gain] [--every-ms N] [--seconds S]
+//!   opcost [--rate SPS] [--ops none,usbread,demodread,retune,gain] [--every-ms N] [--seconds S] [--depth N]
 //!
 //! Built with `--features bench`. Per operation, from a power cycle: open
 //! (300 MHz, gains 8/8/2), the stream started (the counter cleared by
@@ -34,14 +34,14 @@ use sdr_rtl::{OPEN_RF_HZ, Rtl};
 const RETUNE_STEP_HZ: f64 = 100e3;
 const VGA_CODES: [usize; 2] = [2, 3];
 
-fn one(op: &str, rate: f64, every: Duration, secs: f64) -> Result<String, String> {
+fn one(op: &str, rate: f64, every: Duration, secs: f64, depth: usize) -> Result<String, String> {
     let cycle = power_cycle()?;
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
     for (stage, code) in [(Stage::Lna, 8), (Stage::Mixer, 8), (Stage::Vga, 2)] {
         rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
     }
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl.rx_stream(TRANSFER_BYTES, depth).map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
     let t = Instant::now();
@@ -73,7 +73,7 @@ fn one(op: &str, rate: f64, every: Duration, secs: f64) -> Result<String, String
     s.stop().map_err(|e| e.to_string())?;
     let d = s.take_dropped_blocks().map_err(|e| e.to_string())?;
     Ok(format!(
-        "\"cycle\":\"{cycle}\",\"op\":\"{op}\",\"rate\":{rate},\"every_ms\":{},\"ops\":{ops},\"op_ms_mean\":{:.3},\"seconds\":{elapsed:.3},\"samples\":{n},\"shortfall\":{:.0},\"overflows\":{overflows},\"dropped_blocks\":{},\"saturated\":{},\"dropped_samples\":{},\"error\":\"{error}\"",
+        "\"cycle\":\"{cycle}\",\"op\":\"{op}\",\"rate\":{rate},\"depth\":{depth},\"every_ms\":{},\"ops\":{ops},\"op_ms_mean\":{:.3},\"seconds\":{elapsed:.3},\"samples\":{n},\"shortfall\":{:.0},\"overflows\":{overflows},\"dropped_blocks\":{},\"saturated\":{},\"dropped_samples\":{},\"error\":\"{error}\"",
         every.as_millis(),
         if ops > 0 { op_time.as_secs_f64() * 1e3 / ops as f64 } else { 0.0 },
         rate * elapsed - n as f64,
@@ -90,10 +90,11 @@ fn run() -> Result<(), String> {
     let secs: f64 = get("--seconds").and_then(|v| v.parse().ok()).unwrap_or(5.0);
     let every_ms: Option<u64> = get("--every-ms").and_then(|v| v.parse().ok());
     let ops = get("--ops").unwrap_or_else(|| "none,usbread,demodread,retune,gain".into());
+    let depth: usize = get("--depth").and_then(|v| v.parse().ok()).unwrap_or(QUEUE_DEPTH);
     for op in ops.split(',') {
         let default_ms = if op == "usbread" { 5 } else { 100 };
         let every = Duration::from_millis(every_ms.unwrap_or(default_ms));
-        match one(op, rate, every, secs) {
+        match one(op, rate, every, secs, depth) {
             Ok(body) => println!("{{{body}}}"),
             Err(e) => println!("{{\"op\":\"{op}\",\"rate\":{rate},\"error\":\"{e}\"}}"),
         }

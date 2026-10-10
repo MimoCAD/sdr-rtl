@@ -59,11 +59,15 @@ pub const BULK_IN_ENDPOINT: u8 = 0x81;
 pub const WIRE_FORMAT: WireSample = WireSample::OffsetU8;
 
 /// The bulk transfer size a stream uses when asked for 0: the size every
-/// bench step from 11 on streamed with (`examples/bench/mod.rs`), so the
-/// findings' loss and timing measurements hold for it.
+/// bench step from 11 on streamed with (`examples/bench/mod.rs`).
 pub const DEFAULT_TRANSFER_BYTES: usize = 16 * 1024;
-/// The transfers kept in flight when asked for 0, as on the bench.
-pub const DEFAULT_QUEUE_DEPTH: usize = 16;
+/// The transfers kept in flight when asked for 0. The count, not the
+/// size, is what a control request or a pause uses up: the chip ends each
+/// waiting transfer early, and with none left its FIFO drops and the
+/// pause write can be refused. At 16 the finish's pause was refused in 6
+/// of 8 runs at 2.4 Msps; at 128 in none of 38, and paused retunes lost
+/// nothing at 1.2-2.88 Msps (findings 16.7). 2 MiB at the default size.
+pub const DEFAULT_QUEUE_DEPTH: usize = 128;
 
 /// Where one byte of a write lands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
