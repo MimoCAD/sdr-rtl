@@ -14,9 +14,12 @@
 //! ranked at. Their rejection of out-of-band signals is unmeasured.
 //!
 //! Between two grid points the boundary is unknown (the grid is 10 MHz),
-//! so a frequency takes the nearest measured segment; across the
-//! unmeasured 112-202 MHz span (no divider reaches it, findings step 4d)
-//! the PLL refuses first.
+//! so a frequency takes the nearest measured segment. The 112-202 MHz
+//! span has no readings (no divider reached it when the table was
+//! taken, findings step 4d); SEL_DIV 011 = /16 now reaches it (findings
+//! 10.5), and a frequency there takes the nearer measured neighbour's
+//! path, unmeasured at that frequency (re-taking the band table there
+//! is an open item of derivation/STATUS.md).
 
 use crate::tables::band::BAND_PATH_SEGMENTS;
 use crate::tables::types::FrontPath;

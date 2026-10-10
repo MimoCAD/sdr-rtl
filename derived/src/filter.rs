@@ -3,8 +3,11 @@
 //! (`tables::if_filter`, findings step 4g: the LO fixed at 304.57 MHz,
 //! the tone stepped through the IF band, the DDC tracking it).
 //!
-//! The signal sits at the 4.57 MHz IF (`tables::band::IF_HZ`), so a
-//! bandwidth B needs the corner at or above IF + B/2; the setting chosen
+//! The signal sits at the driver's IF, 3.570 MHz (`demod::DDC_IF_HZ`,
+//! the stream's IF; the corners are IF frequencies, measured with the
+//! tone stepped through the passband, so they hold whatever the IF the
+//! driver centres on), so a bandwidth B needs the corner at or above
+//! IF + B/2; the setting chosen
 //! is the narrowest measured one that still meets that. Nineteen
 //! settings were measured: FILT_CODE 0-15 at FILT_BW 00 (10.82 down to
 //! 7.75 MHz) and FILT_BW 01, 10, 11 at FILT_CODE 0 (8.73, 8.70, 7.28 MHz);
@@ -14,11 +17,12 @@
 //!
 //! Not the tuner's to set: the passband also falls below about 0.5 MHz
 //! for every code (the roll-off is common to all and is not the tuner's
-//! HPF), which bounds the usable bandwidth at about 2 · (4.57 − 0.5) ≈
-//! 8 MHz whatever the upper corner; and the corners carry the
+//! HPF), which bounds the usable bandwidth at about 2 · (3.57 − 0.5) ≈
+//! 6 MHz whatever the upper corner — wider than the stream's widest
+//! output, 2.88 Msps (`demod::OUTPUT_RATE_GOOD_SPS`); and the corners carry the
 //! demodulator's own response at the tone.
 
-use crate::tables::band::IF_HZ;
+use crate::demod::DDC_IF_HZ as IF_HZ;
 use crate::tables::if_filter::{FILT_BW_UPPER_3DB, FILT_CODE_UPPER_3DB};
 
 /// One measured IF filter setting.
@@ -80,16 +84,18 @@ mod tests {
 
     #[test]
     fn bandwidth_to_code() {
-        // 12.5 MHz needs the widest corner exactly (10.82 = 4.57 + 6.25).
-        assert_eq!(setting_for_bandwidth(12.5e6), FilterSetting { filt_code: 0, filt_bw: 0, upper_3db_hz: 10.82e6 });
+        // 14.5 MHz needs the widest corner exactly (10.82 = 3.57 + 7.25).
+        assert_eq!(setting_for_bandwidth(14.5e6), FilterSetting { filt_code: 0, filt_bw: 0, upper_3db_hz: 10.82e6 });
         // Wider than any corner: clamped to the widest.
         assert_eq!(setting_for_bandwidth(20e6), widest());
-        // 6 MHz needs 7.57 MHz: FILT_CODE 15 (7.75), not FILT_BW 11 (7.28).
-        assert_eq!(setting_for_bandwidth(6e6), FilterSetting { filt_code: 15, filt_bw: 0, upper_3db_hz: 7.75e6 });
-        // 5 MHz needs 7.07 MHz: the coarse narrowest, 7.28.
-        assert_eq!(setting_for_bandwidth(5e6), FilterSetting { filt_code: 0, filt_bw: 3, upper_3db_hz: 7.28e6 });
-        // 8 MHz needs 8.57 MHz: code 10 (8.68) is the nearest above.
-        assert_eq!(setting_for_bandwidth(8e6), FilterSetting { filt_code: 10, filt_bw: 0, upper_3db_hz: 8.68e6 });
+        // 8 MHz needs 7.57 MHz: FILT_CODE 15 (7.75), not FILT_BW 11 (7.28).
+        assert_eq!(setting_for_bandwidth(8e6), FilterSetting { filt_code: 15, filt_bw: 0, upper_3db_hz: 7.75e6 });
+        // 7 MHz needs 7.07 MHz: the coarse narrowest, 7.28; so does the
+        // widest stream output, 2.88 MHz.
+        assert_eq!(setting_for_bandwidth(7e6), FilterSetting { filt_code: 0, filt_bw: 3, upper_3db_hz: 7.28e6 });
+        assert_eq!(setting_for_bandwidth(2.88e6), FilterSetting { filt_code: 0, filt_bw: 3, upper_3db_hz: 7.28e6 });
+        // 10 MHz needs 8.57 MHz: code 10 (8.68) is the nearest above.
+        assert_eq!(setting_for_bandwidth(10e6), FilterSetting { filt_code: 10, filt_bw: 0, upper_3db_hz: 8.68e6 });
         // Monotonic: a wider request never gets a lower corner.
         let mut last = 0.0;
         let mut hz = 1e6;
@@ -99,6 +105,6 @@ mod tests {
             last = c;
             hz += 0.1e6;
         }
-        assert!((bandwidth_of(10.82e6) - 12.5e6).abs() < 1.0);
+        assert!((bandwidth_of(10.82e6) - 14.5e6).abs() < 1.0);
     }
 }

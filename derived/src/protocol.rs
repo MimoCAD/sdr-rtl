@@ -138,13 +138,21 @@ pub const GPIO_ANTENNA_POWER: u8 = 1 << 4;
 /// IIC_repeat: page 1, 0x01, bit 3 (Table 3, p. 15). The note under
 /// Table 27 says "the 7th bit of the first byte"; findings step 2: bit 3
 /// opens the tuner path, bit 7 alone and bit 6 alone do not. Table 3 is
-/// right. Not cleared by a STOP.
+/// right. Not cleared by a STOP. The driver opens it around each tuner
+/// access and closes it after (`usb::Link::with_tuner`), as the vendor
+/// driver was observed to (findings 9a: page 1 0x01 = 0x18 / 0x10 around
+/// each try) and as the bench's stream tests did, so the register rests
+/// at 0x10 where the pause bit was measured (findings 10.2c).
 pub const IIC_REPEAT_PAGE: u8 = 1;
 pub const IIC_REPEAT_OFF: u8 = 0x01;
 pub const IIC_REPEAT_BIT: u8 = 1 << 3;
 
 /// AD_EN_reg (ADC_I) page 0, 0x08 bit 7; AD_EN_reg1 (ADC_Q) bit 6
 /// (Table 4, p. 17). Low-IF input (9.1, p. 17): only AD_EN_reg1 = 1.
+/// Named for the record; this driver writes neither these bits nor
+/// en_bbin below: the raw-sample stream ran with both at their power-on
+/// values (findings 9c, 9g, 10), and no bench run streamed with the
+/// documented input-mode values.
 pub const AD_EN_PAGE: u8 = 0;
 pub const AD_EN_OFF: u8 = 0x08;
 pub const AD_EN_REG: u8 = 1 << 7;
@@ -205,6 +213,75 @@ pub const POLAR_IF_AGC: u8 = 1 << 0;
 /// 2^22, the scale of the resampler and IF formulas (9.3, 9.4).
 pub const TWO_POW_22: f64 = 4_194_304.0;
 
+// ---- The raw-sample stream (findings steps 9 and 10) ----
+//
+// None of these registers is named by [RTL2832U] beyond what is cited;
+// their roles are what the bench measured (findings 10.4), nothing more.
+
+/// DEMOD_CTL as the stream's first write: the PLL, both ADCs and the
+/// reset released in one write, 0xE8 (Table 15's bits; findings 10.4:
+/// "DEMOD_CTL ← 0xE8 as one write equals 0xA8 then 0xE8"; without the
+/// ADC bits every byte is 0x80).
+pub const DEMOD_CTL_STREAM: u8 = DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_RESET_RELEASE | DEMOD_CTL_ADC_Q_EN;
+/// DEMOD_CTL's bit 2 never reads back (findings step 3's block scan):
+/// a read-back compares every other bit.
+pub const DEMOD_CTL_NOT_READ_BACK: u8 = 1 << 2;
+
+/// Page 1 0x16-0x18: the power-on 3F CE CC is a frequency offset (with
+/// 0x16-0x17 left at power-on the tone moved +87.5 kHz, with 0x18 left
+/// it moved 2 bins; findings 10.4); the stream writes 0 to all three, as
+/// 0x16-0x17 in one transfer and 0x18 in another (findings 9b items 8-9).
+pub const FREQ_OFFSET_PAGE: u8 = 1;
+pub const FREQ_OFFSET_FIRST: u8 = 0x16;
+pub const FREQ_OFFSET_LAST: u8 = 0x18;
+pub const FREQ_OFFSET_CLEARED: u8 = 0x00;
+
+/// Page 1 0x15 as the stream writes it: Spec_inv = 1, En_aci = 0, every
+/// other bit 0 (Table 6; findings 9b item 11; without it the tone is
+/// mirrored, findings 10.4).
+pub const SPEC_INV_STREAM: u8 = SPEC_INV;
+
+/// The 20 tap registers, page 1 0x1C-0x2F (findings 10.3; named by no
+/// document). Demodulator page 1 — not the USB block, whose offset 0x1C
+/// is the test-mode hazard and is never written by this driver.
+pub const TAP_PAGE: u8 = 1;
+pub const TAP_FIRST: u8 = 0x1C;
+
+/// Page 0 0x19: bit 0 is the stream's enable (0x24: 0 bytes), bit 2
+/// changes the content (0x21: near-constant output); the stream writes
+/// 0x25, the observed value (findings 9b item 16; 10.4; power-on 0x20).
+pub const STREAM_ENABLE_PAGE: u8 = 0;
+pub const STREAM_ENABLE_OFF: u8 = 0x19;
+pub const STREAM_ENABLE_VALUE: u8 = 0x25;
+
+/// Page 1 0x93 ← 0xF0 (or 0x94 ← 0x0F, either alone) keeps the rate
+/// steady and the level full; without both the rate wandered 3.35-4.13
+/// MB/s and the level dropped (findings 10.4, "rate steadiness").
+pub const RATE_STEADY_PAGE: u8 = 1;
+pub const RATE_STEADY_OFF: u8 = 0x93;
+pub const RATE_STEADY_VALUE: u8 = 0xF0;
+
+/// Page 0 0x06 bit 7 starts the stream; cleared it stops it, set again
+/// it restarts it within one 16 KiB transfer, ≤ 3.1 ms, with no power
+/// cycle (findings 9b item 22; 10.1; 10.4). The start writes the whole
+/// byte 0x80 (opt_adc_iq [5:4] = 0, Table 4: I and Q not swapped), as
+/// observed and benched; the stop clears bit 7 alone.
+pub const START_PAGE: u8 = 0;
+pub const START_OFF: u8 = 0x06;
+pub const START_BIT: u8 = 1 << 7;
+pub const START_VALUE: u8 = START_BIT;
+
+/// Page 1 0x01 bit 2 pauses the stream: 0x10 → 0x14 gave 0 bytes in
+/// 10 × 10 ms, back to 0x10 resumed it (findings 10.2c; 9d). The same
+/// register holds IIC_repeat (bit 3); 0x10 is its power-on value with
+/// the repeater closed (findings step 2: 0x10 → 0x18 opens it).
+pub const PAUSE_PAGE: u8 = 1;
+pub const PAUSE_OFF: u8 = 0x01;
+pub const PAUSE_BIT: u8 = 1 << 2;
+/// Page 1 0x01 at power-on (findings step 2), the state pause and
+/// resume were measured from.
+pub const PAGE1_0X01_POWER_ON: u8 = 0x10;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +337,21 @@ mod tests {
         let regs: Vec<u8> = raw.iter().map(|&b| tuner_read_byte(b)).collect();
         assert_eq!(regs[0], 0x96);
         assert_eq!(regs, [0x96, 0x80, 0xCB, 0xFF, 0xE0]);
+    }
+
+    /// The stream's register values as findings 10.4 lists them.
+    #[test]
+    fn stream_values_are_the_bench_sequences() {
+        assert_eq!(DEMOD_CTL_STREAM, 0xE8);
+        assert_eq!(DEMOD_CTL_STREAM & DEMOD_CTL_NOT_READ_BACK, 0, "the bit that never reads back is written 0");
+        assert_eq!(SPEC_INV_STREAM, 0x01);
+        assert_eq!((STREAM_ENABLE_PAGE, STREAM_ENABLE_OFF, STREAM_ENABLE_VALUE), (0, 0x19, 0x25));
+        assert_eq!((RATE_STEADY_PAGE, RATE_STEADY_OFF, RATE_STEADY_VALUE), (1, 0x93, 0xF0));
+        assert_eq!((START_PAGE, START_OFF, START_VALUE), (0, 0x06, 0x80));
+        assert_eq!((PAUSE_PAGE, PAUSE_OFF, PAGE1_0X01_POWER_ON | PAUSE_BIT), (1, 0x01, 0x14));
+        assert_eq!(PAGE1_0X01_POWER_ON & IIC_REPEAT_BIT, 0, "the repeater is closed at power-on");
+        assert_eq!((PAUSE_PAGE, PAUSE_OFF), (IIC_REPEAT_PAGE, IIC_REPEAT_OFF), "one register, two roles");
+        assert_eq!(FREQ_OFFSET_LAST - FREQ_OFFSET_FIRST + 1, 3);
     }
 
     #[test]

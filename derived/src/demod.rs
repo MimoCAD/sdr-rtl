@@ -1,10 +1,8 @@
-//! The demodulator's documented settings: the low-IF input mode, the
-//! DDC at the tuner's IF with the spectrum inverted for the high-side
-//! LO, the resampler, and the analog AGC loops — [RTL2832U] 9.1, 9.3,
-//! 9.4 and Tables 2, 4, 6, 7, 10 — in the order and with the read-backs
-//! the bench applied them (`examples/harness/tuner.rs` `setup_demod`,
-//! findings step 4). The raw-sample output mode is NOT here: the
-//! document has none and the bench has not found it (findings step 3).
+//! The demodulator: the bring-up state, the DDC at the tuner's IF with
+//! the spectrum inverted for the high-side LO, and the resampler with
+//! the output-rate rule the bench measured — [RTL2832U] 9.3, 9.4 and
+//! Tables 2, 6, 7, 10, 15, with findings steps 4 and 10. The writes that
+//! start, stop and pause the raw-sample stream are in `stream`.
 
 use std::time::Duration;
 
@@ -12,7 +10,6 @@ use sdr_core::{Error, Result};
 
 use crate::BACKEND;
 use crate::protocol::*;
-use crate::tables::band::IF_HZ;
 use crate::tables::pll::XTAL_HZ;
 use crate::usb::Link;
 
@@ -29,34 +26,51 @@ pub fn pset_iffreq_bytes(if_hz: f64) -> [u8; 3] {
     [(u >> 16) as u8, (u >> 8) as u8, u as u8]
 }
 
+/// The IF a pset_iffreq word shifts by: −word / 2^22 · f_xtal (9.3).
+pub fn iffreq_hz_of(word: i32) -> f64 {
+    -(word as f64) / TWO_POW_22 * XTAL_HZ
+}
+
+/// The IF: the LO sits this far above the RF (high-side mixing, the
+/// wanted sideband below the LO, findings 4h) and the DDC shifts it to
+/// 0 Hz with Spec_inv = 1 (9.3: "with a normal high-side-mixing tuner the
+/// demodulator requires an inverse spectrum"). 3.570 MHz is the value of
+/// the stream's sequence: pset_iffreq 0x381112 (findings 9b item 10),
+/// written in every step-10 session and confirmed there by a cabled tone
+/// landing at its predicted bin with the predicted sign (findings 10.2b:
+/// the LO at RF + 3.570 MHz, tones at ±0.1…0.9 MHz within 3 bins).
+/// Findings 4h's tuner measurements used 4.57 MHz; the tuner's IF is
+/// the driver's choice (LO − RF), and the stream was benched at 3.570.
+pub const DDC_IF_HZ: f64 = 3.57e6;
+
+/// The IF the DDC actually removes: [`DDC_IF_HZ`] through the field's
+/// floor, 519918 / 2^22 · 28.8 MHz = 3,569,993.6 Hz. The tuner's LO is
+/// placed this far above the wanted centre so the DDC's 0 Hz lands on it.
+pub fn ddc_if_hz() -> f64 {
+    iffreq_hz_of(pset_iffreq(DDC_IF_HZ))
+}
+
 /// The resampler field's largest value: 26 bits (Table 7, [27:2]).
 pub const RSAMP_MAX: u32 = (1 << RSAMP_BITS) - 1;
 
 /// rsamp_ratio = floor(f_xtal / f_s · 2^22) ([RTL2832U] 9.4, Table 7,
 /// p. 20; the document's examples at 28.8 MHz: 64/7 MHz → 0xC99999,
-/// 8 MHz → 0xE66666, 48/7 MHz → 0x10CCCCC).
+/// 8 MHz → 0xE66666, 48/7 MHz → 0x10CCCCC). Findings 10.2a calls the
+/// rate f_s here f_symbol.
 pub fn rsamp_ratio(rate_hz: f64) -> u32 {
     (XTAL_HZ / rate_hz * TWO_POW_22).floor() as u32
 }
 
-/// The rate a ratio gives back: f_xtal · 2^22 / ratio.
+/// The rate a ratio gives back: f_xtal · 2^22 / ratio (f_symbol).
 pub fn rate_of_ratio(ratio: u32) -> f64 {
     XTAL_HZ * TWO_POW_22 / ratio as f64
 }
 
-/// The rates the register can express: the 26-bit field bounds the low
-/// end (ratio ≤ 2^26 − 1 → f_s ≥ 1.8 MHz), and the ADC clock, 28.8 MHz
-/// from the internal PLL ([RTL2832U] p. 10), bounds the high end (a
-/// ratio below 2^22 would ask the resampler for more samples than the
-/// ADC takes). This is the register's reach; what the USB pipe sustains
-/// is not measured here (no bytes have streamed, findings step 3).
-pub fn rate_range_hz() -> (f64, f64) {
-    (rate_of_ratio(RSAMP_MAX), XTAL_HZ)
-}
-
-/// The four bytes rsamp_ratio occupies, MSB first, with the ratio in
-/// [27:2] and the other bits (cfreq_off_ratio's low nibble in 0x9F,
-/// bits 1:0 of 0xA2) left to the masks.
+/// The four bytes rsamp_ratio occupies, MSB first, the ratio in [27:2].
+/// The other bits are 0: the upper nibble of 0x9F (cfreq_off_ratio's
+/// [3:0], Table 12) and bits 1:0 of 0xA2 — as the vendor driver wrote
+/// them (findings 9b item 12: 03 84 00 00) and the bench's sequence did
+/// (`examples/harness/stream_confirm.rs` `rsamp_bytes`).
 pub fn rsamp_bytes(ratio: u32) -> [u8; 4] {
     ((ratio & RSAMP_MAX) << RSAMP_SHIFT).to_be_bytes()
 }
@@ -66,23 +80,107 @@ pub fn rsamp_from_bytes(b: [u8; 4]) -> u32 {
     (u32::from_be_bytes(b) >> RSAMP_SHIFT) & RSAMP_MAX
 }
 
+/// rsamp_ratio as two 2-byte transfers, 0x9F-0xA0 then 0xA1-0xA2, as
+/// observed (findings 9b item 12) and benched (stream_confirm.rs).
+pub fn rsamp_transfers(ratio: u32) -> [(u8, [u8; 2]); 2] {
+    let b = rsamp_bytes(ratio);
+    [(RSAMP_MSB, [b[0], b[1]]), (RSAMP_MSB + 2, [b[2], b[3]])]
+}
+
+// ---- The output rate (findings 10.2a) ----
+
+/// Output samples per f_symbol: the output rate is f_symbol / 4, the
+/// bytes 2 × f_symbol / 4 (findings 9f, measured in 10.2a at every
+/// ratio below).
+pub const OUTPUT_DECIMATION: f64 = 4.0;
+
+/// The output rates every fresh run delivered: 1.024 Msps (0x1C20000)
+/// to 2.88 Msps (0xA00000), with 2.048 (0xE10000) and 2.4 (0xC00000)
+/// between (findings 10.2a). A request inside the span is accepted; the
+/// points between the four measured ratios were not measured singly.
+pub const OUTPUT_RATE_GOOD_SPS: (f64, f64) = (1.024e6, 2.88e6);
+
+/// 3.2 Msps (0x900000, f_symbol 12.8 MHz) streamed at the rate in 6 runs
+/// of 8 and at half the rate in 2, with no error either way (findings
+/// 10.2a). A rate that is silently half of what was asked is worse than
+/// a refusal, so the driver refuses it and everything above 2.88 Msps.
+pub const OUTPUT_RATE_UNRELIABLE_SPS: f64 = 3.2e6;
+
+/// f_symbol at f_xtal / 2 = 14.4 MHz and above is broken: 0x800000 gave
+/// every byte 0x80, 0x708000 (16.384 MHz) bytes of the wrong rate and
+/// spread (findings 10.2a).
+pub const F_SYMBOL_BROKEN_HZ: f64 = XTAL_HZ / 2.0;
+
+/// The rate the receiver opens at: 2.048 Msps, the ratio of the observed
+/// sequence (0xE10000) and the most-measured on the bench (findings 9b,
+/// 10.1, 10.2a: 7 runs; every tone, minimisation and restart test).
+pub const DEFAULT_OUTPUT_RATE_SPS: f64 = 2.048e6;
+
+/// The output rate a ratio gives: f_symbol / 4.
+pub fn output_rate_of_ratio(ratio: u32) -> f64 {
+    rate_of_ratio(ratio) / OUTPUT_DECIMATION
+}
+
+fn unsupported(what: String) -> Error {
+    Error::Unsupported { backend: BACKEND, what }
+}
+
+/// The ratio for an output rate: rsamp_ratio(4 · rate). Only the
+/// measured-good span is accepted ([`OUTPUT_RATE_GOOD_SPS`]); the reason
+/// names the record for everything else.
+pub fn ratio_for_output_rate(sps: f64) -> Result<u32> {
+    let (lo, hi) = OUTPUT_RATE_GOOD_SPS;
+    if !sps.is_finite() || sps <= 0.0 {
+        return Err(unsupported(format!("rate {sps} sps is not a rate")));
+    }
+    let f_symbol = sps * OUTPUT_DECIMATION;
+    if f_symbol >= F_SYMBOL_BROKEN_HZ {
+        return Err(unsupported(format!(
+            "rate {:.6} Msps needs f_symbol {:.3} MHz; at f_xtal / 2 = {:.1} MHz and above the output is dead or broken (findings 10.2a)",
+            sps / 1e6,
+            f_symbol / 1e6,
+            F_SYMBOL_BROKEN_HZ / 1e6
+        )));
+    }
+    if sps > hi {
+        return Err(unsupported(format!(
+            "rate {:.6} Msps is above the {:.3} Msps every fresh run delivered; {:.1} Msps gave half the rate, silently, in 2 runs of 8 (findings 10.2a)",
+            sps / 1e6,
+            hi / 1e6,
+            OUTPUT_RATE_UNRELIABLE_SPS / 1e6
+        )));
+    }
+    if sps < lo {
+        return Err(unsupported(format!(
+            "rate {:.6} Msps is below {:.3} Msps, the lowest the bench measured (findings 10.2a)",
+            sps / 1e6,
+            lo / 1e6
+        )));
+    }
+    Ok(rsamp_ratio(f_symbol))
+}
+
 /// The PLL locking time, 5 ms max ([R820T] Table 1-2); the bench waited
 /// twice that after every PLL or image write.
 pub const PLL_SETTLE: Duration = Duration::from_millis(10);
 /// The settle the bench gave the tuner's power pin.
 pub const TUNER_POWER_SETTLE: Duration = Duration::from_millis(50);
 
-fn unsupported(what: String) -> Error {
-    Error::Unsupported { backend: BACKEND, what }
-}
-
-/// The documented demodulator state for a tuner measurement, every write
-/// read back (the order the bench used): clocks, tuner power, the I2C
-/// repeater, the low-IF input, the DDC, the AGC loops.
+/// The demodulator brought up for the tuner and the stream, every write
+/// read back: clocks and ADCs, tuner power, the DDC, the AGC loops, and
+/// the stream quiet.
+///
+/// Not written, by choice: the documented input-mode bits (AD_EN page 0
+/// 0x08, en_bbin page 1 0xB1, 9.1). The vendor driver never writes them
+/// (findings 9c, 9g) and every bench run that streamed had them at their
+/// power-on values (findings 10), so the driver leaves them there. The
+/// I2C repeater is not left open either: each tuner access opens and
+/// closes it (`usb::Link::with_tuner`).
 pub fn setup(link: &Link) -> Result<()> {
     // Table 15: the PLL (what tuner access needs, findings step 2), both
-    // ADCs, the reset released.
-    link.sys_rmw8(DEMOD_CTL, 0, DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE)?;
+    // ADCs (without them the stream is all 0x80, findings 10.4), the
+    // reset released — 0xE8 from the power-on 0x20.
+    link.sys_rmw8(DEMOD_CTL, 0, DEMOD_CTL_STREAM)?;
     // Tables 16-19 (p. 29): GPIO3 as an output driven 0 = tuner power on.
     // GPO's read-back is shown (findings step 3's block scan: every
     // value reads back); GPD's and GPOE's are not, so those two are read
@@ -91,15 +189,9 @@ pub fn setup(link: &Link) -> Result<()> {
     link.sys_rmw8_unjudged(GPOE, 0, GPIO_TUNER_POWER)?;
     link.sys_rmw8(GPO, GPIO_TUNER_POWER, 0)?;
     std::thread::sleep(TUNER_POWER_SETTLE);
-    // Table 3: IIC_repeat, the other thing tuner access needs (step 2).
-    link.demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, IIC_REPEAT_BIT)?;
-    // 9.1, low-IF input: AD_EN_reg1 = 1, AD_EN_reg = 0, en_bbin = 0 — the
-    // tuner's output is one differential IF ([R820T] Figure D, 4.3).
-    link.demod_rmw8(AD_EN_PAGE, AD_EN_OFF, AD_EN_REG | AD_EN_REG1, AD_EN_REG1)?;
-    link.demod_rmw8(BBIN_PAGE, BBIN_OFF, EN_BBIN, 0)?;
-    // 9.3: the DDC at the tuner's IF, the spectrum inverted for the
-    // high-side LO (findings step 4h: the wanted sideband is below the LO).
-    set_ddc(link, IF_HZ, true)?;
+    // 9.3: the DDC at the IF, the spectrum inverted for the high-side LO.
+    // The stream's sequence writes both again in its own form.
+    set_ddc(link, DDC_IF_HZ, true)?;
     // Table 2: both analog loops enabled and not held (their resets);
     // Table 10: the digital AGC enabled (its reset); Table 2: the pins'
     // polarity 0 (findings step 4b: polarity 0 closes the IF loop through
@@ -107,6 +199,11 @@ pub fn setup(link: &Link) -> Result<()> {
     link.demod_rmw8(AAGC_PAGE, AAGC_OFF, EN_IF_AGC | EN_RF_AGC | AAGC_HOLD, EN_IF_AGC | EN_RF_AGC)?;
     link.demod_rmw8(DAGC_PAGE, DAGC_OFF, EN_DAGC, EN_DAGC)?;
     link.demod_rmw8(AGC_POLARITY_PAGE, AGC_POLARITY_OFF, POLAR_RF_AGC | POLAR_IF_AGC, 0)?;
+    // A stream an earlier process left running or paused is stopped and
+    // unpaused: both bits to their power-on 0 (findings 9b: page 0 0x06
+    // power-on 0x00; step 2: page 1 0x01 power-on 0x10).
+    link.demod_rmw8(START_PAGE, START_OFF, START_BIT, 0)?;
+    link.demod_rmw8(PAUSE_PAGE, PAUSE_OFF, PAUSE_BIT, 0)?;
     Ok(())
 }
 
@@ -120,24 +217,18 @@ pub fn set_ddc(link: &Link, if_hz: f64, spec_inv: bool) -> Result<()> {
     Ok(())
 }
 
-/// The resampler for a rate (Table 7), each byte verified under its mask.
-pub fn set_rate(link: &Link, rate_hz: f64) -> Result<()> {
-    let (lo, hi) = rate_range_hz();
-    if !rate_hz.is_finite() || rate_hz < lo || rate_hz > hi {
-        return Err(unsupported(format!(
-            "rate {rate_hz} Hz is outside the resampler's reach {lo:.1}-{hi:.1} Hz (rsamp_ratio, [RTL2832U] Table 7: 26 bits; the ADC clock 28.8 MHz)"
-        )));
-    }
-    let bytes = rsamp_bytes(rsamp_ratio(rate_hz));
-    for (k, (mask, v)) in RSAMP_MASKS.iter().zip(bytes).enumerate() {
-        link.demod_rmw8(RSAMP_PAGE, RSAMP_MSB + k as u8, *mask, v)?;
+/// rsamp_ratio in the stream sequence's form ([`rsamp_transfers`]), each
+/// transfer read back.
+pub fn write_rsamp(link: &Link, ratio: u32) -> Result<()> {
+    for (reg, pair) in rsamp_transfers(ratio) {
+        link.demod_write_verified(RSAMP_PAGE, reg, &pair)?;
     }
     Ok(())
 }
 
-/// The rate the resampler register holds (one auto-incrementing read of
-/// the four bytes, findings step 1D).
-pub fn read_rate(link: &Link) -> Result<f64> {
+/// The f_symbol the resampler register holds (one auto-incrementing
+/// read of the four bytes, findings step 1D).
+pub fn read_f_symbol(link: &Link) -> Result<f64> {
     let b = link.demod_read(RSAMP_PAGE, RSAMP_MSB, 4)?;
     let ratio = rsamp_from_bytes([b[0], b[1], b[2], b[3]]);
     if ratio == 0 {
@@ -166,8 +257,19 @@ mod tests {
         assert_eq!(pset_iffreq_bytes(32.0e6 / 7.0), [0x35, 0xD7, 0x5E]);
     }
 
-    /// Table 7's three examples, the bench's 2.4 Msps (0x3000000, step 3)
-    /// and 2.048 Msps (0x3840000).
+    /// Findings 9b item 10: the stream's IF is pset_iffreq 0x381112 =
+    /// −519918, 3.570 MHz; the DDC removes 3,569,993.6 Hz.
+    #[test]
+    fn the_stream_if_is_the_benched_word() {
+        assert_eq!(pset_iffreq(DDC_IF_HZ), -519918);
+        assert_eq!(pset_iffreq_bytes(DDC_IF_HZ), [0x38, 0x11, 0x12]);
+        assert!((ddc_if_hz() - 519918.0 / TWO_POW_22 * XTAL_HZ).abs() < 1e-6);
+        assert!((ddc_if_hz() - 3_569_993.6).abs() < 0.1, "{}", ddc_if_hz());
+        assert!((iffreq_hz_of(-665554) - 4.57e6).abs() < 7.0);
+    }
+
+    /// Table 7's three examples, 2.4 Msps (0x3000000, step 3) and
+    /// 2.048 Msps (0x3840000) as rates of the resampler itself.
     #[test]
     fn rsamp_ratio_matches_table_7_and_the_bench() {
         assert_eq!(rsamp_ratio(64.0e6 / 7.0), 0xC99999);
@@ -177,34 +279,62 @@ mod tests {
         assert_eq!(rsamp_ratio(2.048e6), 0x3840000);
     }
 
-    /// The bytes over 0x9F..0xA2 for 2.4 Msps are `?C 00 00 00` with the
-    /// upper nibble of 0x9F left to cfreq_off_ratio (the bench read back
-    /// `FC 00 00 00`, findings step 3 baseline), and the reset 0xC99999
-    /// packs as Tables 7/12 print (`F3 26 66 64`, step 1D).
+    /// Findings 9b item 12: 0xE10000 is 03 84 00 00 over 0x9F-0xA2; the
+    /// power-on F3 26 66 64 decodes to 0xC99999 (step 1D).
     #[test]
     fn rsamp_bytes_pack_into_bits_27_2() {
-        let b = rsamp_bytes(0x3000000);
-        assert_eq!(b, [0x0C, 0x00, 0x00, 0x00]);
-        assert_eq!(RSAMP_MASKS, [0x0F, 0xFF, 0xFF, 0xFC]);
-        let merged = [0xF0 | (b[0] & RSAMP_MASKS[0]), b[1], b[2], b[3]];
-        assert_eq!(merged, [0xFC, 0x00, 0x00, 0x00]);
-        assert_eq!(rsamp_from_bytes(merged), 0x3000000);
-        let reset = rsamp_bytes(0xC99999);
-        assert_eq!([0xF0 | reset[0], reset[1], reset[2], reset[3]], [0xF3, 0x26, 0x66, 0x64]);
+        assert_eq!(rsamp_bytes(0xE10000), [0x03, 0x84, 0x00, 0x00]);
+        assert_eq!(rsamp_transfers(0xE10000), [(0x9F, [0x03, 0x84]), (0xA1, [0x00, 0x00])]);
+        assert_eq!(rsamp_bytes(0x3000000), [0x0C, 0x00, 0x00, 0x00]);
         assert_eq!(rsamp_from_bytes([0xF3, 0x26, 0x66, 0x64]), 0xC99999);
+        assert_eq!(rsamp_from_bytes([0xFC, 0x00, 0x00, 0x00]), 0x3000000, "the high nibble is cfreq_off_ratio's");
+        for r in [0x1C20000u32, 0xE10000, 0xC00000, 0xA00000, RSAMP_MAX] {
+            assert_eq!(rsamp_from_bytes(rsamp_bytes(r)), r);
+            assert_eq!(rsamp_bytes(r)[0] & !RSAMP_MASKS[0], 0, "cfreq_off_ratio's nibble written 0");
+        }
     }
 
+    /// Findings 10.2a's table: each measured ratio and its output rate.
     #[test]
-    fn rate_range_is_the_fields_reach() {
-        let (lo, hi) = rate_range_hz();
-        assert!((lo - 1.8e6).abs() < 1.0, "{lo}");
-        assert_eq!(hi, XTAL_HZ);
-        assert!(rsamp_ratio(lo) <= RSAMP_MAX);
-        assert_eq!(rsamp_ratio(hi), 1 << 22);
-        // The rate read back from a ratio is the ratio's own rate.
-        for r in [2.4e6, 2.048e6, 1.2e6 * 2.0, 8.0e6, 64.0e6 / 7.0] {
-            let back = rate_of_ratio(rsamp_ratio(r));
-            assert!(back >= r && back - r < r * 1e-6, "{r} -> {back}");
+    fn the_output_rate_is_f_symbol_over_4() {
+        let measured = [(1.024e6, 0x1C20000u32, 4.096e6), (2.048e6, 0xE10000, 8.192e6), (2.4e6, 0xC00000, 9.6e6), (2.88e6, 0xA00000, 11.52e6)];
+        for (sps, ratio, f_symbol) in measured {
+            assert_eq!(ratio_for_output_rate(sps).unwrap(), ratio, "{sps}");
+            assert!((rate_of_ratio(ratio) - f_symbol).abs() < 1e-6);
+            assert!((output_rate_of_ratio(ratio) - sps).abs() < 1e-6);
+            // The bytes per second the bench predicted: 2 × f_symbol / 4.
+            assert!((2.0 * output_rate_of_ratio(ratio) - 2.0 * f_symbol / 4.0).abs() < 1e-6);
         }
+        assert_eq!(ratio_for_output_rate(DEFAULT_OUTPUT_RATE_SPS).unwrap(), 0xE10000);
+        // Between the measured points the floor gives a rate at or just
+        // above the request.
+        for sps in [1.2e6, 1.5e6, 1.8e6, 2.0e6, 2.5e6, 2.7e6] {
+            let got = output_rate_of_ratio(ratio_for_output_rate(sps).unwrap());
+            assert!(got >= sps && got - sps < sps * 1e-6, "{sps} -> {got}");
+        }
+    }
+
+    /// The refusals: 3.2 Msps (unreliable), between 2.88 and 3.2, the
+    /// broken f_symbol ≥ 14.4 MHz, below 1.024 Msps, and non-rates.
+    #[test]
+    fn rates_outside_the_measured_span_are_refused() {
+        let refused = |sps: f64| match ratio_for_output_rate(sps) {
+            Err(Error::Unsupported { what, .. }) => what,
+            other => panic!("{sps}: {other:?}"),
+        };
+        assert!(refused(OUTPUT_RATE_UNRELIABLE_SPS).contains("half the rate"));
+        assert!(refused(3.0e6).contains("half the rate"));
+        assert!(refused(2.880001e6).contains("half the rate"));
+        assert!(refused(3.6e6).contains("dead or broken"), "f_symbol 14.4 MHz");
+        assert!(refused(4.096e6).contains("dead or broken"), "f_symbol 16.384 MHz");
+        assert!(refused(1.0e6).contains("lowest"));
+        assert!(refused(0.25e6).contains("lowest"));
+        refused(0.0);
+        refused(-2.048e6);
+        refused(f64::NAN);
+        refused(f64::INFINITY);
+        assert!(ratio_for_output_rate(OUTPUT_RATE_GOOD_SPS.0).is_ok());
+        assert!(ratio_for_output_rate(OUTPUT_RATE_GOOD_SPS.1).is_ok());
+        assert_eq!(F_SYMBOL_BROKEN_HZ, 14.4e6);
     }
 }

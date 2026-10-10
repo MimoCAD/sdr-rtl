@@ -7,15 +7,19 @@
 //! names them), a bench step (`derivation/findings.md`), or a generated
 //! table (`tables`, copied verbatim from `derivation/generated`). What
 //! the bench has not established is refused with `Error::Unsupported`
-//! and the reason, never guessed: the raw-sample output mode (so
-//! [`Rtl::rx_stream`] fails), the bias tee, and the LO span no divider
-//! reaches.
+//! and the reason, never guessed: rates outside the measured-good span,
+//! the bias tee, and any LO no divider reaches.
+//!
+//! The raw-sample stream ([`Rtl::rx_stream`], `stream`) is the sequence
+//! findings step 10 confirmed and minimised on the bench; this code
+//! itself has not yet run against hardware.
 //!
 //! Modules: `protocol` (the vendor requests' encodings and the register
 //! addresses), `usb` (the request layer over nusb), `tables` (the
 //! generated tables), `pll` (the synthesizer), `image` (the tuner's
-//! register image), `demod` (the demodulator's documented settings),
-//! `gain`, `band`, `filter`, `stream`.
+//! register image), `demod` (the demodulator's bring-up, IF and rate),
+//! `taps` (the demodulator's tap registers and our design), `gain`,
+//! `band`, `filter`, `stream`.
 
 pub mod band;
 pub mod demod;
@@ -25,6 +29,7 @@ pub mod image;
 pub mod pll;
 pub mod protocol;
 pub mod stream;
+pub mod taps;
 // The tables are generated copies (`derivation/generated`, "do not
 // edit"); the band grid's enum and array are as large as the record.
 #[allow(clippy::large_enum_variant, clippy::large_const_arrays)]
@@ -33,16 +38,18 @@ pub mod usb;
 
 use std::time::Duration;
 
+use nusb::transfer::{Bulk, In};
 use nusb::{DeviceInfo, MaybeFuture};
 use sdr_core::gain::{Stage, StageReading, nearest_level};
+use sdr_core::usb_stream::BulkIqStream;
 use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, TuneResult, open_with_deadline};
 
 pub use gain::Codes as GainCodes;
 pub use pll::{Pll, PllState};
 pub use stream::RtlStream;
 
+use demod::ddc_if_hz;
 use image::{Front, R5, R6, R7, R10, R11, R12, R16, R20, R21, R22, R26, R27};
-use tables::band::IF_HZ;
 use tables::pll::XTAL_HZ;
 use usb::Link;
 
@@ -85,8 +92,8 @@ pub struct RtlTunerStatus {
     /// The RF the baseband is centred on: LO − IF (the wanted sideband is
     /// below the LO, findings step 4h).
     pub rf_hz: f64,
-    /// The IF the LO sits above the RF by, 4.57 MHz ([R820T] Table 4-1,
-    /// the 8 MHz channel; `tables::band::IF_HZ`).
+    /// The IF the LO sits above the RF by: the DDC's 3,569,993.6 Hz
+    /// (`demod::ddc_if_hz`, the stream's pset_iffreq 0x381112).
     pub if_hz: f64,
     /// 28.8 MHz ([RTL2832U] p. 10; `tables::pll::XTAL_HZ`).
     pub xtal_hz: f64,
@@ -116,6 +123,9 @@ pub struct Rtl {
     pll: Pll,
     /// R0-R4 as last read after a PLL write or a status request.
     status: [u8; 5],
+    /// The resampler ratio written last (`set_rate`); a stream starts
+    /// with it.
+    ratio: u32,
 }
 
 fn unsupported(what: String) -> Error {
@@ -171,11 +181,12 @@ fn select(rest: &str) -> Result<DeviceInfo> {
 
 impl Rtl {
     /// Open a dongle by spec remainder and bring it to the bench's
-    /// measured state: the demodulator's documented settings (`demod`),
-    /// the tuner image (`image`) with the bring-up front end and the PLL
-    /// at the 300 MHz tune every table was taken against, every write
-    /// read back where the chip allows. Bounded by
-    /// `sdr_core::open_with_deadline`.
+    /// measured state: the demodulator's bring-up (`demod::setup`), the
+    /// rate at 2.048 Msps (`demod::DEFAULT_OUTPUT_RATE_SPS`), the tuner
+    /// image (`image`) with the bring-up front end and the PLL at the
+    /// 300 MHz tune every table and the stream's tone tests were taken
+    /// against (findings 4e, 10.2b), every write read back where the chip
+    /// allows. Bounded by `sdr_core::open_with_deadline`.
     pub fn open(rest: &str) -> Result<Rtl> {
         let rest = rest.to_string();
         open_with_deadline(BACKEND, move || Rtl::open_now(&rest))
@@ -187,18 +198,23 @@ impl Rtl {
         let dev = info.open().wait().map_err(|e| Error::Usb { backend: BACKEND, context: "open", message: e.to_string() })?;
         let link = Link::new(dev);
         demod::setup(&link)?;
+        let ratio = demod::ratio_for_output_rate(demod::DEFAULT_OUTPUT_RATE_SPS)?;
+        demod::write_rsamp(&link, ratio)?;
         // The image the bench's records were taken with: the bring-up
         // front end at the 300 MHz tune (findings step 4e; the recorded
-        // image in `tables::tuner_image`), the VGA under its code.
+        // image in `tables::tuner_image`), the VGA under its code; the LO
+        // above it by the stream's IF, as the step-10 tone tests placed it.
         let front = Front::BRING_UP;
-        let pll = Pll::program(300.0e6 + IF_HZ)?;
-        link.tuner_write_image(&front.image(&pll))?;
-        std::thread::sleep(demod::PLL_SETTLE);
-        let status = link.tuner_status()?;
+        let pll = Pll::program(OPEN_RF_HZ + ddc_if_hz())?;
+        let status = link.with_tuner(|l| {
+            l.tuner_write_image(&front.image(&pll))?;
+            std::thread::sleep(demod::PLL_SETTLE);
+            l.tuner_status()
+        })?;
         // The dongle must still answer after the image (findings step 4a:
         // the one write that stops it is refused by the request layer).
         link.sys_read8(protocol::DEMOD_CTL)?;
-        Ok(Rtl { link, label, front, pll, status })
+        Ok(Rtl { link, label, front, pll, status, ratio })
     }
 
     pub fn label(&self) -> &str {
@@ -209,23 +225,45 @@ impl Rtl {
         RtlTuner::R820TFamily
     }
 
-    /// The resampler's rate: rsamp_ratio = floor(f_xtal / f_s · 2^22)
-    /// ([RTL2832U] 9.4, Table 7), within the register's reach
-    /// (`demod::rate_range_hz`).
+    /// The output sample rate: rsamp_ratio = floor(f_xtal / (4 · rate) ·
+    /// 2^22) ([RTL2832U] 9.4 with findings 10.2a's rule, output = f_symbol
+    /// / 4), written now and again by the stream's start sequence. Only
+    /// 1.024-2.88 Msps is accepted, the span every fresh bench run
+    /// delivered; 3.2 Msps (half the rate in 2 runs of 8) and f_symbol ≥
+    /// 14.4 MHz (broken) are refused (`demod::ratio_for_output_rate`).
+    ///
+    /// Refused while a stream exists: changing the ratio of a running
+    /// stream did not dependably take (findings 10.2a), so the rate is
+    /// fixed from `rx_stream` until the stream is dropped. Whether a
+    /// stream started again after a drop and a rate change runs at the
+    /// new rate as a power-cycled one does is open (derivation/STATUS.md,
+    /// "Writes while streaming").
     pub fn set_rate(&mut self, sps: f64) -> Result<()> {
-        demod::set_rate(&self.link, sps)
+        if self.link.stream_open() {
+            return Err(unsupported(format!(
+                "rate {:.6} Msps: a stream exists; drop it first (a live rsamp_ratio change did not dependably take, findings 10.2a)",
+                sps / 1e6
+            )));
+        }
+        let ratio = demod::ratio_for_output_rate(sps)?;
+        demod::write_rsamp(&self.link, ratio)?;
+        self.ratio = ratio;
+        Ok(())
     }
 
-    /// The rate the resampler register holds now.
+    /// The output rate the resampler register holds now: its f_symbol / 4.
     pub fn rate(&self) -> Result<f64> {
-        demod::read_rate(&self.link)
+        Ok(demod::read_f_symbol(&self.link)? / demod::OUTPUT_DECIMATION)
     }
 
-    /// Tune: the LO at RF + 4.57 MHz (high side, findings step 4h), the
-    /// synthesizer by the documented formula with the measured divider
-    /// rule (`pll`), the front-end path from the band table (`band`),
-    /// the actual RF from the words written. The 110-208 MHz gap, and
-    /// anything outside 42-1002 MHz, is refused.
+    /// Tune: the LO above the RF by the DDC's IF (high side, findings 4h;
+    /// `demod::ddc_if_hz`, 3.570 MHz, findings 10.2b), the synthesizer by
+    /// the documented formula with the measured divider rule (`pll`,
+    /// /16 included, findings 10.5), the front-end path from the band
+    /// table (`band`), the actual RF from the words written. Anything
+    /// outside 42-1002 MHz is refused; inside it every RF is reachable.
+    /// Allowed while streaming: the bench programmed the tuner after the
+    /// start in every minimisation run (findings 10.4).
     pub fn set_freq(&mut self, req: &TuneRequest) -> Result<TuneResult> {
         let rf = match req.rf {
             TunePolicy::Manual(f) => f,
@@ -244,7 +282,7 @@ impl Rtl {
                 RF_RANGE_HZ.1 / 1e6
             )));
         }
-        let pll = Pll::program(rf + IF_HZ)?;
+        let pll = Pll::program(rf + ddc_if_hz())?;
         let path = band::path_for(rf).ok_or_else(|| unsupported("the band table is empty".into()))?;
         let mut front = self.front;
         front.rffilt = path.rffilt;
@@ -253,16 +291,19 @@ impl Rtl {
         front.tf_lp = path.tf_lp;
         // R26, R27 and the PLL words are above R15: written unverified
         // (findings step 4a: the read wraps after 16 registers).
-        self.link.tuner_write(R26, front.r26())?;
-        self.link.tuner_write(R27, front.r27())?;
-        for (reg, v) in [(R16, pll.r16()), (R20, pll.r20()), (R21, pll.r21()), (R22, pll.r22())] {
-            self.link.tuner_write(reg, v)?;
-        }
+        let status = self.link.with_tuner(|l| {
+            l.tuner_write(R26, front.r26())?;
+            l.tuner_write(R27, front.r27())?;
+            for (reg, v) in [(R16, pll.r16()), (R20, pll.r20()), (R21, pll.r21()), (R22, pll.r22())] {
+                l.tuner_write(reg, v)?;
+            }
+            std::thread::sleep(demod::PLL_SETTLE);
+            l.tuner_status()
+        })?;
         self.front = front;
         self.pll = pll;
-        std::thread::sleep(demod::PLL_SETTLE);
-        self.status = self.link.tuner_status()?;
-        let actual_rf = pll.lo_hz() - IF_HZ;
+        self.status = status;
+        let actual_rf = pll.lo_hz() - ddc_if_hz();
         Ok(TuneResult {
             clipped_rf_freq: rf,
             target_rf_freq: rf,
@@ -274,7 +315,7 @@ impl Rtl {
 
     /// The RF the baseband is centred on, from the PLL words written.
     pub fn freq(&self) -> Result<f64> {
-        Ok(self.pll.lo_hz() - IF_HZ)
+        Ok(self.pll.lo_hz() - ddc_if_hz())
     }
 
     fn codes(&self) -> GainCodes {
@@ -295,10 +336,12 @@ impl Rtl {
     /// R5-R15 against the register file.
     fn write_front_regs(&mut self, front: Front, regs: &[u8]) -> Result<()> {
         let img = front.image(&self.pll);
-        for &reg in regs {
-            self.link.tuner_write(reg, img[reg as usize])?;
-        }
-        self.link.tuner_verify(&img)?;
+        self.link.with_tuner(|l| {
+            for &reg in regs {
+                l.tuner_write(reg, img[reg as usize])?;
+            }
+            l.tuner_verify(&img)
+        })?;
         self.front = front;
         Ok(())
     }
@@ -409,14 +452,14 @@ impl Rtl {
 
     /// R0-R4 read now, with the synthesizer's words and the front end.
     pub fn tuner_status(&mut self) -> Result<RtlTunerStatus> {
-        self.status = self.link.tuner_status()?;
+        self.status = self.link.with_tuner(Link::tuner_status)?;
         let s = self.status;
         Ok(RtlTunerStatus {
             tuner: self.tuner_kind(),
             chip_id_ok: s[0] == protocol::TUNER_R0_CHECK,
             pll: PllState::new(&self.pll, s[2]),
-            rf_hz: self.pll.lo_hz() - IF_HZ,
-            if_hz: IF_HZ,
+            rf_hz: self.pll.lo_hz() - ddc_if_hz(),
+            if_hz: ddc_if_hz(),
             xtal_hz: XTAL_HZ,
             rf_indicator: s[3],
             r1: s[1],
@@ -432,31 +475,72 @@ impl Rtl {
         })
     }
 
-    /// Refused until the raw-sample output mode is derived
-    /// (`stream::raw_mode_not_derived`). When it is, the stream is
-    /// `RtlStream::new(BulkIqStream::new(BACKEND, endpoint, format,
-    /// transfer_bytes, queue_depth, rate))` over interface
-    /// `stream::BULK_INTERFACE`'s endpoint `stream::BULK_IN_ENDPOINT`,
-    /// with the wire format established alongside the mode.
+    /// A receive stream over the bulk IN endpoint 0x81 of interface 0
+    /// (`stream::BULK_IN_ENDPOINT`), 8-bit unsigned I/Q, even byte I
+    /// (`stream::WIRE_FORMAT`, findings 10.2b), at the rate set now
+    /// (`set_rate`, fixed until the stream drops), our own taps
+    /// (`taps::design_registers`). `transfer_bytes` is rounded down to
+    /// whole packets (sdr-core's engine; at least one); `queue_depth`
+    /// transfers are kept in flight (at least two). Nothing is written
+    /// until the stream starts (`RtlStream::start`, or `into_stream`).
+    /// One stream at a time.
+    ///
+    /// The interface is claimed with nusb's `detach_and_claim_interface`,
+    /// which on Linux first detaches a kernel driver bound to it and
+    /// elsewhere is a plain claim.
     pub fn rx_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
-        let _ = (transfer_bytes, queue_depth, &self.link);
-        Err(stream::raw_mode_not_derived())
+        if !self.link.claim_stream() {
+            return Err(unsupported("a stream of this receiver already exists; one at a time".into()));
+        }
+        let usb = |context: &'static str, e: nusb::Error| Error::Usb { backend: BACKEND, context, message: e.to_string() };
+        let endpoint = self
+            .link
+            .device()
+            .detach_and_claim_interface(stream::BULK_INTERFACE)
+            .wait()
+            .map_err(|e| usb("claim interface", e))
+            .and_then(|iface| iface.endpoint::<Bulk, In>(stream::BULK_IN_ENDPOINT).map_err(|e| usb("open bulk endpoint", e)));
+        let endpoint = match endpoint {
+            Ok(ep) => ep,
+            Err(e) => {
+                self.link.release_stream();
+                return Err(e);
+            }
+        };
+        let rate = demod::output_rate_of_ratio(self.ratio);
+        let inner = BulkIqStream::new(BACKEND, endpoint, stream::WIRE_FORMAT, transfer_bytes, queue_depth, rate);
+        Ok(RtlStream::new(inner, self.link.clone(), self.ratio, taps::design_registers()))
     }
 }
 
 /// How long the request layer waits on one control transfer.
 pub const CONTROL_TIMEOUT: Duration = usb::CONTROL_TIMEOUT;
 
+/// The RF the receiver opens tuned to: 300 MHz, where findings 4e
+/// received the tone and the step-10 tone tests centred (findings 10.2b,
+/// `TONE_RF_HZ` of `examples/harness/stream_confirm.rs`).
+pub const OPEN_RF_HZ: f64 = 300.0e6;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_rf_range_and_the_gap_are_consistent() {
-        // The documented range's ends program; the gap inside it refuses.
-        assert!(Pll::program(RF_RANGE_HZ.0 + IF_HZ).is_ok());
-        assert!(Pll::program(RF_RANGE_HZ.1 + IF_HZ).is_ok());
-        assert!(matches!(Pll::program(150e6 + IF_HZ), Err(Error::Unsupported { .. })));
+    fn the_whole_rf_range_programs() {
+        // The documented range's ends program, and the former gap does
+        // with /16 (findings 10.5).
+        assert!(Pll::program(RF_RANGE_HZ.0 + ddc_if_hz()).is_ok());
+        assert!(Pll::program(RF_RANGE_HZ.1 + ddc_if_hz()).is_ok());
+        assert_eq!(Pll::program(150e6 + ddc_if_hz()).unwrap().divider, 16);
+    }
+
+    /// The opening tune is the step-10 tone tests': 300 MHz, LO at
+    /// 300 MHz + the stream's IF under /8 (findings 10.2b, `lo_for_rf`).
+    #[test]
+    fn the_opening_tune_is_the_benched_one() {
+        let pll = Pll::program(OPEN_RF_HZ + ddc_if_hz()).unwrap();
+        assert_eq!(pll.divider, 8);
+        assert!((pll.lo_hz() - ddc_if_hz() - OPEN_RF_HZ).abs() <= pll::sdm_step_hz(8) / 2.0);
     }
 
     #[test]
