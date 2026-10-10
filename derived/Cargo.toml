@@ -78,3 +78,7 @@ required-features = ["bench"]
 [[example]]
 name = "eepromread"
 required-features = ["bench"]
+
+[[example]]
+name = "eepromwrite"
+required-features = ["bench"]

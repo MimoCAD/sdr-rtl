@@ -144,6 +144,12 @@ record at 0x3C-0x7F redacted in the record):
 constant) as facts cited by address: they are what every blank- or
 broken-EEPROM dongle shows on the bus.
 
+**Repaired, 2026-10-10** (the owner's go-ahead; `eepromwrite 00 28`): one
+block 3 Set of byte 0 ← 0x28, 20 ms, read back 0x28; after a power cycle
+the dongle enumerates as **0bda:2838, "MimoCAD" / "MimoSDR", serial
+"GFD"** — its EEPROM's own identity. The write path and the signature's
+role confirmed on the bench.
+
 ## Step 16 — the dropped-block counter, and what loses samples — `data/step16-drop-counter.jsonl`, `data/step16-drop-phase.jsonl` — `derived/examples/dropcounter.rs`, `dropphase.rs`
 
 USB_EPA_FIFO_CFG[31:24], "Counts blocks dropped (each is 188 bytes) due
