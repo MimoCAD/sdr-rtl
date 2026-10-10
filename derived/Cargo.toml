@@ -62,3 +62,15 @@ required-features = ["bench"]
 [[example]]
 name = "stallprobe"
 required-features = ["bench"]
+
+[[example]]
+name = "hwcheck"
+required-features = ["bench"]
+
+[[example]]
+name = "fifoprobe"
+required-features = ["bench"]
+
+[[example]]
+name = "glitchscan"
+required-features = ["bench"]

@@ -320,7 +320,9 @@ impl RtlStream {
         let now = self.link.usb_read8(BLK_DROP_COUNTER)?;
         // Below the mark only if something else cleared it: count from 0.
         let blocks = if now >= self.drop_mark { now - self.drop_mark } else { now };
-        let clear = now != 0 && (self.state != State::Running || now >= BLK_DROP_CLEAR_AT);
+        // Stopped or paused nothing flows, and the clear costs nothing.
+        let quiet = self.state != State::Running || self.paused;
+        let clear = now != 0 && (quiet || now >= BLK_DROP_CLEAR_AT);
         if clear {
             self.link.usb_write8(BLK_DROP_COUNTER, 0)?;
         }
@@ -348,6 +350,60 @@ impl RtlStream {
     /// most `depth` chunks queued for the consumer.
     pub fn into_stream(self, depth: usize) -> Result<IqStream> {
         IqStream::spawn(self, depth)
+    }
+
+    /// Pause with one write of the whole register: page 1 0x01 ←
+    /// [`PAGE1_0X01_POWER_ON`] | [`PAUSE_BIT`]. One control transfer where
+    /// [`RtlStream::pause`] makes three, so it costs the stream a third as
+    /// much (findings 16.2: nothing at 1.024 Msps; 6.5 blocks a pause at
+    /// 1.8). The register's other bits are at their power-on values
+    /// whenever no tuner access is in flight (the I²C repeater, bit 3, is
+    /// closed again by every `Link::with_tuner`), and nothing else here
+    /// writes it.
+    pub fn pause_blind(&mut self) -> Result<()> {
+        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT])?;
+        self.paused = true;
+        Ok(())
+    }
+
+    /// Resume with one write: page 1 0x01 ← [`PAGE1_0X01_POWER_ON`].
+    pub fn resume_blind(&mut self) -> Result<()> {
+        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON])?;
+        self.paused = false;
+        Ok(())
+    }
+
+    /// Halt the output with one write of the start register: page 0 0x06
+    /// ← 0 (the sequence writes it whole, [`START_VALUE`]). The stream's
+    /// state stays running; [`RtlStream::restart_blind`] starts it again.
+    pub fn halt_blind(&mut self) -> Result<()> {
+        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE & !START_BIT])?;
+        self.paused = true;
+        Ok(())
+    }
+
+    /// Start the output again with one write: page 0 0x06 ← [`START_VALUE`].
+    pub fn restart_blind(&mut self) -> Result<()> {
+        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE])?;
+        self.paused = false;
+        Ok(())
+    }
+
+    /// The engine's hold ([`BulkIqStream::hold`]): call with the output
+    /// paused and drained; returns the break's sample position.
+    pub fn hold(&mut self) -> Result<u64> {
+        self.inner.hold()
+    }
+
+    /// The engine's release ([`BulkIqStream::release`]): call before the
+    /// output resumes.
+    pub fn release(&mut self) -> Result<()> {
+        self.inner.release()
+    }
+
+    /// Samples handed out since the start.
+    pub fn delivered(&self) -> u64 {
+        self.inner.delivered()
     }
 }
 

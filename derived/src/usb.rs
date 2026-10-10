@@ -197,6 +197,21 @@ impl Link {
         self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), &[v], "USB register write")
     }
 
+    /// `len` USB-block bytes from `off` (a 32-bit register reads
+    /// little-endian, findings step 1A).
+    pub fn usb_read_n(&self, off: u16, len: u16) -> Result<Vec<u8>> {
+        self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), len, "USB register read")
+    }
+
+    /// USB-block bytes written from `off`; refused if they would cover
+    /// offset 0x1C (derivation/HAZARD-usb-0x1C.md).
+    pub fn usb_write_n(&self, off: u16, data: &[u8]) -> Result<()> {
+        if (off..off + data.len() as u16).contains(&USB_HAZARD_OFF) {
+            return Err(device_error("USB register write", format!("0x{off:03X}+{}: covers the test-mode register 0x01C; never written", data.len())));
+        }
+        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), data, "USB register write")
+    }
+
     // ---- Demodulator: wValue = offset << 8 | 0x20 (findings step 1B/1C) ----
 
     /// `len` bytes from `off` on `page`; multi-byte reads auto-increment

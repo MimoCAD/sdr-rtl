@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 16.5 (the stream kinds), 2026-10-10: `LosslessStream` / `AccountedStream` / `RestrictedStream` built and benched — a paused retune loses nothing, but the new configuration begins up to the FIFO's fill (6–10 blocks) after the reported break, and 2.88 Msps carries periodic phase glitches. Section "16.5" below.
+
 Step 16 (the dropped-block counter), 2026-10-10: **writing 0 to its byte clears it, and its blocks are samples lost**: every control transfer during the stream loses ~850–2,100 samples at 2.4 Msps, unseen by the host; the driver clears it at start and reports it through `take_dropped_blocks`. Section "Step 16" below.
 
 Step 15 (image rejection through the stream), 2026-10-10: **55–66 dB at the driver's IMR 32/32** across ±1.1 MHz at 100–500 MHz (≥ 48 at 850, floor-limited), not 4h's 10–20 dB; a small correction (G 34–35) lifts 500 MHz from 55 to 63 dB. Section "Step 15" below.
@@ -260,6 +262,58 @@ write each); `clean stop`: 0x14 written, 5 ms, then `RtlStream::stop`.
   read — 0 failures in 80; then `cleanstart --modes both` at 1.2 Msps,
   6 runs, 0 failures and 0 blocks each. The refusal is intermittent, not
   bound to the order; 7 of its 9 came in one sequence of runs. Open.
+
+### 16.5 The stream kinds, and where a break falls — `data/step16-tiers-check.jsonl`, `data/step16-fifo-probe.jsonl`, `data/step16-glitch-scan.jsonl` — `derived/examples/tiercheck.rs`, `fifoprobe.rs`, `glitchscan.rs`
+
+The driver now hands out `LosslessStream` (≤ 1.2 Msps), `AccountedStream`
+(≤ 1.8) and `RestrictedStream` (any rate) (`derived/src/tier.rs`); each owns
+the receiver, so only what the kind offers reaches the control pipe while
+samples flow. `LosslessStream::reconfigure` runs a change inside a pause:
+one pause write, 5 ms, the engine's hold (sdr-core `BulkIqStream::hold`:
+every queued transfer cancelled, what each held kept in order and handed
+out first, the break's sample count returned), the counter read (paused:
+free), the change, `release` (the queue resubmitted, the ledger
+re-baselined so a quiet device by design is not loss), one resume write.
+Every kind finishes by pausing, holding, handing out the tail, stopping
+with nothing flowing and reading the counter.
+
+`tiercheck` (public API only; a tone at 300.3 MHz, retunes alternating
+300.0 / 300.1 MHz so the tone sits at +300 / +200 kHz):
+
+- **Loss**: `LosslessStream` at 1.2 Msps, 20 retunes: 0 blocks, every
+  break 0; at 1.024, 1.1, 1.152, 1.2 Msps 34 more retunes, 0 blocks, and
+  no phase jump inside any segment at 1.024-1.152. `AccountedStream` at
+  1.8: 22, 23 blocks (the finish's pause write); `RestrictedStream` at
+  2.4: 15-16 (the same); a `LosslessStream` asked for at 2.4 Msps refused,
+  the receiver handed back.
+- **Where the new configuration begins** (a 64-sample window slid across
+  each break, correlated against both tones): not at `at_sample` but
+  N blocks + ~24 samples later — 1.024 Msps 587-589 (N = 6), 1.1 681-683
+  (7), 1.152 851-873 (9), 1.2 962-968 (10), occasionally one block fewer;
+  a run's first break ~5 blocks more (1,047-1,519). The samples between are
+  the old configuration going on: the old tone's phase across `at_sample`
+  within ±4° every time. Not drained by waiting (50 ms: 958-961 at 1.2),
+  not by quiescing with the start bit instead of the pause bit (836-941 at
+  1.152), not by shrinking the FIFO while paused (to 1 or 3 blocks:
+  868-966). With the FIFO set to 10 blocks before the stream it is still
+  9 blocks; set to 5, it is 5 (494) and the pause write then costs 4
+  blocks a break. **It is the FIFO's steady fill**, kept through the pause
+  and handed out after the resume. No USB-block register follows it
+  (`fifoprobe`, all 512 bytes but 0x1C read paused and running, FIFO 20 vs
+  5 vs 1.024 Msps: only 0x020-0x021, a free-running count, 0x14C bit 0,
+  the FIFO size and the counter change). So `Break` carries `at_sample`
+  and `settled_at` = `at_sample` + 21 × 94 + 32: the new configuration
+  certainly from there, the old before `at_sample`, the FIFO's fill
+  between.
+- **Phase glitches** (`glitchscan`, the raw stream, no control traffic,
+  64-sample windows from the first sample): at 1.024-1.2 Msps 12-26
+  steps of ~37° every 192-256 samples in the first 10 ms after the start,
+  none after; at 1.44-2.4 Msps one step at the start only; **at 2.88 Msps
+  ~450-830 steps of ~46° every ~11,000-14,000 samples, all through**
+  (three runs). Nothing lost in either (dropped blocks as the start and
+  stop make them). At 1.2 Msps `tiercheck` also found such steps after
+  breaks (125-228 a run) where 1.024-1.152 found none; whether that is the
+  start transient repeating after each resume at that rate is open.
 
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 

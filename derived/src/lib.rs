@@ -31,6 +31,7 @@ pub mod pll;
 pub mod protocol;
 pub mod stream;
 pub mod taps;
+pub mod tier;
 // The tables are generated copies (`derivation/generated`, "do not
 // edit"); the band grid's enum and array are as large as the record.
 #[allow(clippy::large_enum_variant, clippy::large_const_arrays)]
@@ -48,6 +49,7 @@ use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, Tune
 pub use gain::Codes as GainCodes;
 pub use pll::{Pll, PllState};
 pub use stream::{DroppedBlocks, RtlStream};
+pub use tier::{AccountedStream, Break, Finished, LosslessStream, RestrictedStream, StreamError, StreamReport, Tier, TieredStream};
 
 use demod::ddc_if_hz;
 use image::{Front, R5, R6, R7, R10, R11, R12, R16, R20, R21, R22, R26, R27};
@@ -475,26 +477,72 @@ impl Rtl {
         })
     }
 
-    /// A receive stream over the bulk IN endpoint 0x81 of interface 0
-    /// (`stream::BULK_IN_ENDPOINT`), 8-bit unsigned I/Q, even byte I
-    /// (`stream::WIRE_FORMAT`, findings 10.2b), at the rate set now
-    /// (`set_rate`, fixed until the stream drops), our own taps
-    /// (`taps::design_registers`). `transfer_bytes` is rounded down to
-    /// whole packets (sdr-core's engine; at least one); `queue_depth`
-    /// transfers are kept in flight (at least two). Nothing is written
-    /// until the stream starts (`RtlStream::start`, or `into_stream`).
-    /// One stream at a time.
-    ///
-    /// The interface is claimed with nusb's `detach_and_claim_interface`,
-    /// which on Linux first detaches a kernel driver bound to it and
-    /// elsewhere is a plain claim.
+    /// The stream the rate allows ([`tier::Tier::for_rate`]): a
+    /// [`LosslessStream`] to 1.2 Msps, an [`AccountedStream`] to 1.8, a
+    /// [`RestrictedStream`] above. The stream owns the receiver until
+    /// `finish` hands it back, so nothing can reach the control pipe
+    /// while samples flow except what the stream itself offers.
+    /// `transfer_bytes` is rounded down to whole packets (sdr-core's engine;
+    /// at least one); `queue_depth` transfers are kept in flight (at least
+    /// two). Nothing is written until the first `recv_into` (or `start`).
+    pub fn into_stream(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<TieredStream, StreamError> {
+        Ok(match Tier::for_rate(self.rate_set()) {
+            Tier::Lossless => TieredStream::Lossless(LosslessStream::new(self, transfer_bytes, queue_depth)?),
+            Tier::Accounted => TieredStream::Accounted(AccountedStream::new(self, transfer_bytes, queue_depth)?),
+            Tier::Restricted => TieredStream::Restricted(RestrictedStream::new(self, transfer_bytes, queue_depth)?),
+        })
+    }
+
+    /// A [`LosslessStream`]; refused above [`tier::LOSSLESS_MAX_SPS`].
+    pub fn into_lossless(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<LosslessStream, StreamError> {
+        LosslessStream::new(self, transfer_bytes, queue_depth)
+    }
+
+    /// An [`AccountedStream`]; refused above [`tier::ACCOUNTED_MAX_SPS`].
+    pub fn into_accounted(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<AccountedStream, StreamError> {
+        AccountedStream::new(self, transfer_bytes, queue_depth)
+    }
+
+    /// A [`RestrictedStream`], at any rate.
+    pub fn into_restricted(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<RestrictedStream, StreamError> {
+        RestrictedStream::new(self, transfer_bytes, queue_depth)
+    }
+
+    /// The output rate the resampler ratio written last gives (no request).
+    pub(crate) fn link_ref(&self) -> &Link {
+        &self.link
+    }
+
+    pub(crate) fn rate_set(&self) -> f64 {
+        demod::output_rate_of_ratio(self.ratio)
+    }
+
+    /// The raw stream under every kind, with our taps.
+    pub(crate) fn open_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
+        self.open_stream_with_taps(transfer_bytes, queue_depth, taps::design_registers())
+    }
+
+    /// The raw stream, for bench programs (`--features bench`): every
+    /// method, the lossy ones included. Over the bulk IN endpoint 0x81 of
+    /// interface 0 (`stream::BULK_IN_ENDPOINT`), 8-bit unsigned I/Q, even
+    /// byte I (`stream::WIRE_FORMAT`, findings 10.2b), at the rate set now,
+    /// our own taps (`taps::design_registers`). One stream at a time.
+    #[cfg(feature = "bench")]
     pub fn rx_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
-        self.rx_stream_with_taps(transfer_bytes, queue_depth, taps::design_registers())
+        self.open_stream(transfer_bytes, queue_depth)
     }
 
     /// [`Rtl::rx_stream`] with a given image of the 20 tap registers
     /// (page 1 0x1C-0x2F, `taps::pack`'s layout) in place of our design.
+    #[cfg(feature = "bench")]
     pub fn rx_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; taps::TAP_REGS]) -> Result<RtlStream> {
+        self.open_stream_with_taps(transfer_bytes, queue_depth, tap_regs)
+    }
+
+    /// The interface is claimed with nusb's `detach_and_claim_interface`,
+    /// which on Linux first detaches a kernel driver bound to it and
+    /// elsewhere is a plain claim.
+    fn open_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; taps::TAP_REGS]) -> Result<RtlStream> {
         if !self.link.claim_stream() {
             return Err(unsupported("a stream of this receiver already exists; one at a time".into()));
         }
