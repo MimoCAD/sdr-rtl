@@ -97,6 +97,11 @@ provenance rules; this file is the working method behind them.
   order the steps accordingly.
 - **Run long scans in chunks** (`--limit N`), under a time limit, so an
   interrupted run loses at most one candidate.
+- **A free activity light.** In analyzer mode the Cynthion's USER LED 4
+  (orange) beats with traffic on the watched port: it pulses through
+  every scan chunk and goes dark between chunks (observed by the
+  operator, 2026-10-09). An LED that stops mid-chunk means the bus went
+  quiet: check for a wedge before reading the record.
 - **Bound every declared space from the documented map, in the header.**
   Say which documented registers the bound covers, what lies outside it
   and why that is deferred (ours: the IrDA registers sit at 0xFC00 in the

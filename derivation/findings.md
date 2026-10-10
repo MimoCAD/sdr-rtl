@@ -8,6 +8,8 @@ Step 5 (the chip's firmware), 2026-10-09: the 8 KiB ROM read through `GetROMCode
 
 Step 7 (the datasheet's DAB example), 2026-10-09: the front half at §9.3/§9.4's DAB example (pset_iffreq 0x2FB814, rsamp_ratio 0xE10000 = 8.192 MHz), every documented DVB-T back-end enable off (ACI, CCI, impulse-noise cancellation, DAGC, auto mode detection; PID filter at its documented pass-all), the output held open: alone it is the same replay; the bit scan (10,240) with the content detector and the DAB rate targets found **no candidate that carries the tone or changes the content** (period 1.000 in all 10,225 scorable windows; 5 rate-flagged candidates confirmed as the replay). Section "Step 7" below.
 
+Step 8 (zero-IF input with the tuner tuned and the path held open), 2026-10-09: the documented zero-IF input (§9.1 AD_EN_reg = AD_EN_reg1 = 1, en_bbin = 1; §9.3 pset_iffreq = 0) on top of the low-IF state's tuner image (LO 304.57 MHz) and I²C repeater, page 0 0x07 = 0xBC last — a combination no earlier scan held. Alone it is the same 3,760-byte replay (44.4–44.6 MB/s tone off, ~37 MB/s with the transmitter keyed); the tone moves `if_agc_val` 8191 → −449. The bit scan (10,240, the tone keyed throughout, content detector): **1 interesting** (p0 0x06 b4, by rate alone), confirmed as the replay — no rsamp tracking (42.40 / 42.57 / 42.46 MB/s at 2.4 / 1.2 / 2.048 Msps), period 3,760 in every state, no spectral line that rises with the tone or moves with it. Period score ≥ 0.9999 in all 10,224 scorable windows. **No candidate carries the tone.** Section "Step 8" below.
+
 Step 6 (the spaces step 5 opened), 2026-10-09: a read-only survey of demodulator pages 5–15 and the 8051's external data outside the scanned blocks, and the single-bit scan of pages 5–15 (22,440, register 0x00 excluded) from the held-open data path with the content detector: **0 interesting**, period score 1.000 in all 22,423 scorable windows. Pages 8–15 alias pages 0–7 on read (8 = 0, 9 ≈ 1, 10 ≈ 2, 12 = 4), writes alias by page mod 4 (on the bench evidence); 5–7, 11, 13–15 read like the live page 3. External data outside the blocks is zero except X:2F00–X:2FFF (a few bytes, X:2F80 live), the data RAM X:4000–X:41FF and the IR range X:FC00–X:FD3F. Section "Step 6" below.
 
 Step 4 (the tuner against a cabled tone), 2026-10-07/08: all steps run.
@@ -20,6 +22,118 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 8 — zero-IF input, tuner tuned, path held open — `data/step8-scan-zero-if-open.jsonl` — `harness scan --baseline zero-if-open` — COMPLETE, 0 candidates carry the tone
+
+Hypothesis (in the record's header, 2026-10-09): every zero-IF scan so
+far (step 3) ran with en_bbin = 1 but without the tuner configured and
+without the output path open; the 45 MB/s first-in-first-out (FIFO)
+memory replay (page 0 0x07 bit 7) only appears with the tuner image
+written and the I²C repeater open. The combination — zero-IF baseband
+input (§9.1, §9.3) + tuner configured and tuned + output path held open —
+had never been scanned. A single control may route the baseband into the
+FIFO in that state: the 3,760-byte period would break, or the rate would
+move toward 2 × 2.4 MB/s.
+
+### The baseline `zero-if-open` (`examples/harness/baselines.rs`), itemised
+
+A power cycle, then in order; every demodulator write a read-modify-write
+read back, every USB/system write read back (all verified in the header's
+`baseline_setup`):
+
+| item | write | document | read back |
+|---|---|---|---|
+| DemodCtl | DEMOD_CTL \|= PLL \| ADC_I \| ADC_Q \| reset release | Table 15 | 0x20 → 0xE8 |
+| TunerPower | GPIO3 output, enabled, low; 50 ms | Tables 16–19 | GPO 0x18 → 0x10 |
+| IicRepeat | page 1 0x01[3] = 1 | Table 3; findings 2 | 0x10 → 0x18 |
+| AdEn | page 0 0x08[7:6] = 11 (AD_EN_reg, AD_EN_reg1) | Table 4, §9.1 zero-IF input | 0x0D → 0xCD |
+| EnBbin | page 1 0xB1[0] = 1 en_bbin | Table 4, §9.1 (§9.2: DC cancellation and IQ compensation on with it) | 0x1F (already set) |
+| IfFreqZero | pset_iffreq = 0 (page 1 0x19–0x1B) | Table 6, §9.3 zero-IF example | `35 D7 5D` → `00 00 00` |
+| AgcLoops, Dagc, AgcPolarity | as low-if | Tables 2, 10; findings 4b | unchanged (0xC0, 0x07, 0xFC) |
+| Rsamp | rsamp_ratio = 0x3000000 (2.4 Msps) | §9.4, Table 7 | `F3 26 66 64` → `FC 00 00 00` |
+| TunerImage | low-if's image: vagc configuration, LO 304.57 MHz (300 MHz RF at the tuner's 4.57 MHz IF, high side) | findings 4a–4e | R5–R15 read back, R2 in 70–127 |
+| EpaMaxPkt, EpaCfg, EpaFifoReset, Dma | the bulk endpoint as the zero-IF baseline sets it | Tables 30–33 | as written |
+| OpenPath | page 0 0x07 \|= 0x80 | step 3 | 0x3C → 0xBC |
+
+Not written: Spec_inv / En_aci (page 1 0x15, the zero-IF baseline does
+not write them), the Table 5 DC/IQ enables (default on with en_bbin),
+opt_adc_iq. The tuner stays a low-IF part, so with the down-converter
+(DDC) at 0 Hz the tone reaches the analogue-to-digital converter at the
+tuner's IF, off the DDC's centre; the tone test therefore steps it across
+RF = LO − 4.57 MHz + {0, ±0.2, ±0.5, ±1.0} MHz and RF = LO, and looks for
+**any** spectral line that rises over the tone-off reference and moves
+between tone frequencies (`tone_lines`), not one expected bin.
+
+### Solo (header): the replay, unchanged
+
+| state | bytes/s (10 × 100 ms) | period score |
+|---|---|---|
+| zero-if-open, tone off | 44.44–44.61 MB/s | 1.000 every window |
+| tone at each of the 8 keyed states | ~37.0 MB/s (the transmitter shares the host's USB); one run of 34.6–36.1 MB/s at the LO | 1.000; 0.9991–0.9999 in 7 windows |
+| tone off again | 44.44–44.64 MB/s | 1.000 |
+
+Positive control: `if_agc_val` (MSB-first) 8191 → −449 with the tone at
+300 MHz, the analogue AGC locking (aagc_lock 0 → 1). Tone lines in the
+solo sweep: 0 tone states beat the null (complex and real), no line moves
+with the tone. No solo window was non-replay, so the scan ran.
+
+**Why the scan keeps the tone keyed** (header `scan_tone`, from
+`data/step8-fifo-watch.json` and `data/step8-fifo-watch-lowif-open.json`,
+`harness fifo-watch`): in the held-open states the only new bytes that
+ever enter the FIFO memory are 4 bytes at one fixed position of each
+188-byte block, rewritten in bursts ~2.5–3 s apart, and only while the
+tone is on. A bit that changed what this signal-driven writer writes
+would show only with a signal present; so the tone stays keyed at 300 MHz
+(txvga 10, backoff 0) for every candidate, and the thresholds come from
+the tone-on solo windows (rate band 29.6–44.5 MB/s, entropy 7.892–7.992
+bits, period minimum 0.99, stream band 2.4–9.6 MB/s).
+
+### The scan: 10,240 candidates, 0 carry the tone
+
+Detector and flow check as in steps 3, 6 and 7 (with the recheck rule of
+step 7 from the start: a rate-only flag is measured once more with the
+flip in place). Eleven chunks; each keyed the tone after its setup
+(`scan_tone` line) and unkeyed it at the end.
+
+| | count |
+|---|---|
+| interesting (confirmed) | **1**: p0 0x06 b4 (0x00 → 0x10), 5.59 MB/s, recheck 6.80 MB/s — in the 2.4–9.6 MB/s stream band, period intact |
+| period score < 0.99 | **0 of 10,224** scorable windows (16 windows too short to score: the replay stopped) |
+| period score 0.9999 (rounded) | 269 windows, the rest 1.000; consistent with the tone-driven 4-byte rewrite landing inside a window (not tested further) |
+| entropy | 7.9368–7.9489 bits |
+| zero-byte windows | 0 |
+| rate changed (throttle/stop), not interesting | 20: p0 0x06 b5 b7, p0 0x07 b6 b7, p0 0x0A b3 b7, p0 0xB5 b3 (0.03–0.44 MB/s); p4 0x06 b5 b7, p4 0x07 b0–b6, p4 0x0A b3 b7 (0.03–0.41 MB/s); p2 0x9F b7 (28.8 MB/s) and p4 0x0E b0 (19.2 MB/s), single windows |
+| signature changed | 0 |
+| held flow lost before a candidate | 0 |
+| wedged, recovered by a power cycle | 6 (p0/p4 0x20 b4, 0xA7 b5 b6 — the step-7 set) |
+| restore not verified, not wedged | 341: 340 on page 3 (the live readbacks), 1 on p4 0x10 b1 |
+| detector check | 0 transfer errors, 0 halts |
+
+The page-4 mirror of the interesting bit, p4 0x06 b4, read 32.96 MB/s
+(period 1.000) in its window — not flagged.
+
+### The confirmation — `data/step8-confirm-zeroifopen-p0-06-10.json` — `harness confirm-write 0 0x06 0x10 --baseline zero-if-open`
+
+| test | result |
+|---|---|
+| rate tracking (rsamp 2.4 / 1.2 / 2.048 Msps) | 42.40 / 42.57 / 42.46 MB/s = 8.83 / 17.74 / 10.37 × 2 × rate — **no tracking**; period 3,760 (20 × 188 B), match 1.000 at every rate |
+| tone states (10 × 100 ms each) | tone off 42.75 MB/s; five of the eight keyed states, and "tone off again" (2.3 → 42.3 MB/s), hold runs of windows at 1.9–13.8 MB/s amid 35.6–42.3 MB/s: an intermittent throttle present with the tone off as well as on (the scan's 5.59 MB/s window caught one) |
+| content in every state | period 3,760 (match 1.000); whole-capture match 0.9955–0.9993; I/Q means 125.28 / 127.31, variances 5484 / 5669 (unsigned) — identical across all ten states to 3 decimals |
+| tone lines | complex: null rise 0.22 dB, top rise in any tone state 1.89 dB, **0 tone states beat the null + 6 dB**, no line moves with the tone; real: null 0.51 dB, 0 beat it |
+| minimisation (16 items) | needed for any bytes: **DemodCtl and OpenPath only** (as in step 7); without Rsamp the replay runs at 21.4 MB/s; every other item removed leaves 42.1–43.0 MB/s, period 3,760 |
+
+**No candidate carries the tone; none tracks rsamp_ratio.** p0 0x06 bit 4
+is the step-7 observation again: it runs the replay without the tuner
+image or the I²C repeater, and its rate varies; the content is the replay.
+
+### Replay
+
+```
+SRC='--source-cmd "cargo run --release --example tone_source -- --cabled"'
+cargo run --release -p sdr-rtl --example harness -- fifo-watch --baseline zero-if-open $SRC                              # data/step8-fifo-watch.json
+cargo run --release -p sdr-rtl --example harness -- scan --baseline zero-if-open --limit 1200 $SRC   # repeat to 10240 (an interesting candidate ends its chunk with the confirmation)
+cargo run --release -p sdr-rtl --example harness -- confirm-write 0 0x06 0x10 --baseline zero-if-open $SRC
+```
 
 ## Step 7 — the datasheet's DAB example with the back end off and the path held open — `data/step7-scan-dab-open.jsonl` — `harness scan --baseline dab-open` — COMPLETE, 0 candidates carry the tone
 
