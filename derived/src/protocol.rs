@@ -32,6 +32,12 @@ pub const fn windex(block: u16, access: u16, page: u16) -> u16 {
     (block << 8) | (access << 4) | page
 }
 
+/// The block a wIndex names: the firmware's dispatcher takes wIndex's
+/// high byte as the block (findings 5c, 0x06F7).
+pub const fn block_of(index: u16) -> u16 {
+    index >> 8
+}
+
 /// The USB and system blocks' wValue bases (Table 27: wValue =
 /// (base << 8) + offset, printed as the bases 0x2000 and 0x3000).
 pub const USB_BASE: u16 = 0x2000;
@@ -316,6 +322,9 @@ mod tests {
         assert_eq!(windex(BLOCK_DEMOD, ACCESS_GET, 3), 0x0003);
         assert_eq!(windex(BLOCK_SYS, ACCESS_GET, 0), 0x0200);
         assert_eq!(windex(BLOCK_USB, ACCESS_SET, 0), 0x0110);
+        for block in [BLOCK_DEMOD, BLOCK_USB, BLOCK_SYS, BLOCK_TUNER] {
+            assert_eq!(block_of(windex(block, ACCESS_SET, 4)), block);
+        }
     }
 
     /// Findings step 1A: the system and USB blocks take base + offset.

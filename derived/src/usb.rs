@@ -17,6 +17,7 @@ use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferErro
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
+use crate::eeprom::{EEPROM_ADDRESS_SPACE, EEPROM_BLOCK, EEPROM_I2C_ADDRESS, EEPROM_REQUEST_MAX, EEPROM_WRITE_CHUNK, block0_addresses_eeprom, wvalue_eeprom};
 use crate::image::{CLK_OUT_ENB, R15};
 use crate::protocol::*;
 
@@ -59,6 +60,23 @@ fn device_error(context: &'static str, message: String) -> Error {
     Error::Device { backend: BACKEND, context, message }
 }
 
+/// Every request passes here first: block 0 addressed to the EEPROM's
+/// slave (0xA0 or 0xA1 in wValue's low byte) is refused, Get or Set —
+/// block 0's page write would put the page number into the EEPROM's
+/// byte 0, the signature (findings 5c, 17; eeprom.md §8;
+/// `eeprom::block0_addresses_eeprom`).
+fn refuse_block0_eeprom(value: u16, index: u16, context: &'static str) -> Result<()> {
+    if block0_addresses_eeprom(value, index) {
+        return Err(device_error(
+            context,
+            format!(
+                "refused wValue 0x{value:04X} wIndex 0x{index:04X}: block 0 at the EEPROM's slave 0x{EEPROM_I2C_ADDRESS:02X} writes its page number into the EEPROM's byte 0, the signature (findings 17); the EEPROM is reached through block 3"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 impl Link {
     pub fn new(dev: nusb::Device) -> Link {
         Link { dev, shared: Arc::new(Shared { rmw: Mutex::new(()), stream_open: AtomicBool::new(false), stall_retries: AtomicU64::new(0) }) }
@@ -90,8 +108,10 @@ impl Link {
     }
 
     /// A vendor Get: bmRequestType 0xC0 (vendor, device, IN), bRequest
-    /// don't care, wLength = bytes to read (Table 27).
+    /// don't care, wLength = bytes to read (Table 27). A block 0 request
+    /// to the EEPROM's slave is refused ([`refuse_block0_eeprom`]).
     pub fn get(&self, value: u16, index: u16, len: u16, context: &'static str) -> Result<Vec<u8>> {
+        refuse_block0_eeprom(value, index, context)?;
         let v = self
             .retry_stall(|| {
                 self.dev
@@ -116,8 +136,10 @@ impl Link {
     }
 
     /// A vendor Set: bmRequestType 0x40 (vendor, device, OUT), the bytes
-    /// in the data stage (Table 27).
+    /// in the data stage (Table 27). A block 0 request to the EEPROM's
+    /// slave is refused ([`refuse_block0_eeprom`]).
     pub fn set(&self, value: u16, index: u16, data: &[u8], context: &'static str) -> Result<()> {
+        refuse_block0_eeprom(value, index, context)?;
         self.retry_stall(|| {
             self.dev
                 .control_out(
@@ -304,6 +326,35 @@ impl Link {
             ));
         }
         Ok(back)
+    }
+
+    // ---- The EEPROM: block 3, wValue = offset << 8 | 0xA0 (findings 17) ----
+
+    /// `len` EEPROM bytes from `offset`: one block 3 Get, at most 16 bytes
+    /// (one I²C transaction, eeprom.md §1, §8), within the 256 offsets.
+    pub fn eeprom_read(&self, offset: u8, len: usize) -> Result<Vec<u8>> {
+        if len == 0 || len > EEPROM_REQUEST_MAX || offset as usize + len > EEPROM_ADDRESS_SPACE {
+            return Err(device_error("EEPROM read", format!("0x{offset:02X}+{len}: 1-{EEPROM_REQUEST_MAX} bytes within the {EEPROM_ADDRESS_SPACE} offsets")));
+        }
+        self.get(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_GET, 0), len as u16, "EEPROM read")
+    }
+
+    /// EEPROM bytes written from `offset`: one block 3 Set, unverified
+    /// here (`eeprom::write` reads the part back). At most
+    /// `EEPROM_WRITE_CHUNK` (8) bytes and never across an 8-byte boundary,
+    /// so the firmware makes it exactly one I²C write (eeprom.md §8: a
+    /// second write in one request meets the part in its write cycle and
+    /// STALLs) and it stays inside one write page (findings 17). The caller waits out the
+    /// write cycle (`eeprom::EEPROM_WRITE_CYCLE`) before the next request.
+    pub fn eeprom_write(&self, offset: u8, data: &[u8]) -> Result<()> {
+        let start = offset as usize;
+        if data.is_empty() || start / EEPROM_WRITE_CHUNK != (start + data.len() - 1) / EEPROM_WRITE_CHUNK {
+            return Err(device_error(
+                "EEPROM write",
+                format!("0x{offset:02X}+{}: 1-{EEPROM_WRITE_CHUNK} bytes inside one {EEPROM_WRITE_CHUNK}-byte-aligned chunk", data.len()),
+            ));
+        }
+        self.set(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_SET, 0), data, "EEPROM write")
     }
 
     // ---- Tuner: wValue (reg << 8) | 0x34 to write, 0x0034 to read (step 2) ----

@@ -236,7 +236,9 @@ is on the bus the host's I²C requests drive.
   after the first in one request → STALL (0x085E). So: **one ≤ 16-byte write
   per control transfer**, not crossing an EEPROM write page, and wait out the
   write cycle before the next transfer (or poll by a read until it ACKs). The
-  M24C02's page size and write-cycle time are **not** in documents.md.
+  M24C02's page size and write-cycle time are **not** in documents.md. On the
+  bench part the page is **8 bytes**, measured (findings 17): a 16-byte write
+  at 0x30 wrapped, its second half landing back on 0x30–0x37.
 - **Block 6** (standard I²C, wIndex 0x0600 / 0x0610): wLength ≤ 16 (0x076B),
   no register byte (X:4000 = 1, 0x077C–0x0787): a Get is a current-address
   read; a Set sends the data as-is, so data[0] is the word address and at most

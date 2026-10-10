@@ -150,6 +150,18 @@ the dongle enumerates as **0bda:2838, "MimoCAD" / "MimoSDR", serial
 "GFD"** — its EEPROM's own identity. The write path and the signature's
 role confirmed on the bench.
 
+**The write page is 8 bytes, 2026-10-10** (`derived/examples/eepromcheck.rs`,
+through `Rtl::read_eeprom` / `Rtl::write_eeprom`): the read parsed as
+above (128 bytes, signature valid, 0bda:2838, "MimoCAD" / "MimoSDR" /
+"GFD"). A round trip of one free byte, 0x33 ← 0x55, written as the
+16-byte chunk 0x30-0x3F in one block 3 Set, **read back 5 bytes wrong**:
+0x34-0x37 held 0x4D 0x43 0x01 0x40, the chunk's last 8 bytes — the second
+half wrapped onto 0x30-0x37, so **the part writes in 8-byte pages**. The
+row was restored with `eepromwrite 30 00 00 00 00 00 00 00 00` (one
+8-byte write, read back as before). With the write chunk 8 bytes aligned
+to 8 (`eeprom::EEPROM_WRITE_CHUNK`), the same round trip writes the one
+page 0x30, reads 0x55, restores it, and reads **the whole part as before**.
+
 ## Step 16 — the dropped-block counter, and what loses samples — `data/step16-drop-counter.jsonl`, `data/step16-drop-phase.jsonl` — `derived/examples/dropcounter.rs`, `dropphase.rs`
 
 USB_EPA_FIFO_CFG[31:24], "Counts blocks dropped (each is 188 bytes) due

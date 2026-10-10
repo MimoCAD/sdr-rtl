@@ -20,10 +20,12 @@
 //! generated tables), `pll` (the synthesizer), `image` (the tuner's
 //! register image), `demod` (the demodulator's bring-up, IF and rate),
 //! `taps` (the demodulator's tap registers and our design), `gain`,
-//! `band`, `filter`, `stream`.
+//! `band`, `filter`, `stream`, `eeprom` (the configuration EEPROM's
+//! layout, image and access, findings 17).
 
 pub mod band;
 pub mod demod;
+pub mod eeprom;
 pub mod filter;
 pub mod gain;
 pub mod image;
@@ -46,6 +48,7 @@ use sdr_core::gain::{Stage, StageReading, nearest_level};
 use sdr_core::usb_stream::BulkIqStream;
 use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, TuneResult, open_with_deadline};
 
+pub use eeprom::{Eeprom, EepromConfig, EepromIdentity, EepromWriteReport, IdentityChanges};
 pub use gain::Codes as GainCodes;
 pub use pll::{Pll, PllState};
 pub use stream::{DroppedBlocks, RtlStream};
@@ -596,6 +599,32 @@ impl Rtl {
         let mut r = [0u8; taps::TAP_REGS];
         r.copy_from_slice(&v[..taps::TAP_REGS]);
         Ok(r)
+    }
+
+    /// The configuration EEPROM, the whole part: all 256 offsets in
+    /// 16-byte block 3 reads (findings 17), cut to 128 bytes when the
+    /// upper half repeats the lower (`eeprom::part_size`). Sixteen control
+    /// transfers: during a stream each costs samples (findings 16).
+    pub fn read_eeprom(&self) -> Result<Eeprom> {
+        Eeprom::from_read(&eeprom::read_raw(&self.link)?)
+    }
+
+    /// Write an image to the configuration EEPROM (findings 17; eeprom.md
+    /// §8). Refused while a stream exists, and for an image
+    /// `Eeprom::check_writable` refuses (a test record; a patch-list
+    /// marker not explicitly allowed). The part is read once first and
+    /// must be the image's size; only the 8-byte pages that
+    /// differ are written, one block 3 Set each to slave 0xA0, each
+    /// followed by `eeprom::EEPROM_WRITE_CYCLE` (20 ms, unmeasured: the
+    /// part's write-cycle time is not in the documents); then the whole
+    /// part is read back, and any byte that differs is an error. The new
+    /// identity is served after the next power cycle: the firmware reads
+    /// the EEPROM only at boot (eeprom.md §5).
+    pub fn write_eeprom(&mut self, new: &Eeprom) -> Result<EepromWriteReport> {
+        if self.link.stream_open() {
+            return Err(unsupported("EEPROM write: a stream exists; drop it first".into()));
+        }
+        eeprom::write(&self.link, new)
     }
 
     /// The request layer, for bench programs (`--features bench`).
