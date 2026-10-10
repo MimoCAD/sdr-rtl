@@ -22,6 +22,8 @@
 //! output, 2.88 Msps (`demod::OUTPUT_RATE_GOOD_SPS`); and the corners carry the
 //! demodulator's own response at the tone.
 
+use alloc::vec::Vec;
+
 use crate::demod::DDC_IF_HZ as IF_HZ;
 use crate::tables::if_filter::{FILT_BW_UPPER_3DB, FILT_CODE_UPPER_3DB};
 

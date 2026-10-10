@@ -4,19 +4,23 @@
 //! Tables 2, 6, 7, 10, 15, with findings steps 4 and 10. The writes that
 //! start, stop and pause the raw-sample stream are in `stream`.
 
-use std::time::Duration;
+use alloc::format;
+use alloc::string::String;
+use core::time::Duration;
 
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
+use crate::math::floor;
 use crate::protocol::*;
 use crate::tables::pll::XTAL_HZ;
+#[cfg(feature = "std")]
 use crate::usb::Link;
 
 /// pset_iffreq = −floor(f_IF / f_xtal · 2^22) ([RTL2832U] 9.3, p. 19;
 /// the document's example: 4.57 MHz → −665554, zero IF → 0).
 pub fn pset_iffreq(if_hz: f64) -> i32 {
-    -((if_hz / XTAL_HZ * TWO_POW_22).floor() as i32)
+    -(floor(if_hz / XTAL_HZ * TWO_POW_22) as i32)
 }
 
 /// The 22-bit two's complement over {0x19, 0x1A, 0x1B}, MSB first
@@ -58,7 +62,7 @@ pub const RSAMP_MAX: u32 = (1 << RSAMP_BITS) - 1;
 /// 8 MHz → 0xE66666, 48/7 MHz → 0x10CCCCC). Findings 10.2a calls the
 /// rate f_s here f_symbol.
 pub fn rsamp_ratio(rate_hz: f64) -> u32 {
-    (XTAL_HZ / rate_hz * TWO_POW_22).floor() as u32
+    floor(XTAL_HZ / rate_hz * TWO_POW_22) as u32
 }
 
 /// The rate a ratio gives back: f_xtal · 2^22 / ratio (f_symbol).
@@ -178,6 +182,7 @@ pub const TUNER_POWER_SETTLE: Duration = Duration::from_millis(50);
 /// power-on values (findings 10), so the driver leaves them there. The
 /// I2C repeater is not left open either: each tuner access opens and
 /// closes it (`usb::Link::with_tuner`).
+#[cfg(feature = "std")]
 pub fn setup(link: &Link) -> Result<()> {
     // Table 15: the PLL (what tuner access needs, findings step 2), both
     // ADCs (without them the stream is all 0x80, findings 10.4), the
@@ -210,6 +215,7 @@ pub fn setup(link: &Link) -> Result<()> {
 }
 
 /// pset_iffreq and Spec_inv (Table 6, 9.3), verified.
+#[cfg(feature = "std")]
 pub fn set_ddc(link: &Link, if_hz: f64, spec_inv: bool) -> Result<()> {
     let b = pset_iffreq_bytes(if_hz);
     link.demod_rmw8(IFFREQ_PAGE, IFFREQ_MSB, IFFREQ_MSB_MASK, b[0])?;
@@ -221,6 +227,7 @@ pub fn set_ddc(link: &Link, if_hz: f64, spec_inv: bool) -> Result<()> {
 
 /// rsamp_ratio in the stream sequence's form ([`rsamp_transfers`]), each
 /// transfer read back.
+#[cfg(feature = "std")]
 pub fn write_rsamp(link: &Link, ratio: u32) -> Result<()> {
     for (reg, pair) in rsamp_transfers(ratio) {
         link.demod_write_verified(RSAMP_PAGE, reg, &pair)?;
@@ -230,6 +237,7 @@ pub fn write_rsamp(link: &Link, ratio: u32) -> Result<()> {
 
 /// The f_symbol the resampler register holds (one auto-incrementing
 /// read of the four bytes, findings step 1D).
+#[cfg(feature = "std")]
 pub fn read_f_symbol(link: &Link) -> Result<f64> {
     let b = link.demod_read(RSAMP_PAGE, RSAMP_MSB, 4)?;
     let ratio = rsamp_from_bytes([b[0], b[1], b[2], b[3]]);

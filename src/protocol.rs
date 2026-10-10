@@ -313,6 +313,7 @@ pub const PAGE1_0X01_POWER_ON: u8 = 0x10;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     /// Table 28's wIndex: the tuner block's Set is 0x0310, the
     /// demodulator's Get of page 3 is 0x0003.

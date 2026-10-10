@@ -18,6 +18,10 @@
 //! read back, because a 32-byte read returns R0-R15 and then R0-R15
 //! again (findings step 4a).
 
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use crate::pll::Pll;
 
 /// The first register of the image: R0-R4 are read-only ([R820T2]

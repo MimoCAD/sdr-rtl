@@ -36,8 +36,11 @@
 //! Nothing here reads the chip while samples flow: what such a request
 //! costs is the host's (findings 16.8).
 
+use std::boxed::Box;
 use std::fmt;
 use std::io;
+use std::string::{String, ToString};
+use std::vec::Vec;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};

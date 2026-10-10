@@ -40,6 +40,8 @@
 //! FIFO overflows while the request is served (findings 16). The host's
 //! ledger does not see it; the dropped-block counter does.
 
+use std::vec::Vec;
+
 use sdr_core::usb_stream::{BulkIqStream, WireSample};
 use sdr_core::{Iq, IqStream, RecvInfo, Result, RxSource, elevate_current_thread};
 

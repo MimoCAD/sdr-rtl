@@ -8,6 +8,8 @@
 //! through.
 
 use std::fmt::Display;
+use std::string::{String, ToString};
+use std::vec::Vec;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};

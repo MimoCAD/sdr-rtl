@@ -29,40 +29,75 @@
 //! [`Stream`]), `eeprom` (the configuration EEPROM's layout, image and
 //! access, findings 17).
 
+//!
+//! `no_std` at its core (with `alloc`): the register encodings, the
+//! tables, the synthesizer, gain, filter, taps and the EEPROM's layout are
+//! computation only. The default `std` feature adds the receiver itself —
+//! the USB request layer over nusb, [`Rtl`], the raw stream and
+//! [`Stream`].
+
+#![no_std]
+
+extern crate alloc;
+#[cfg(feature = "std")]
+#[macro_use]
+extern crate std;
+
 pub mod band;
 pub mod demod;
 pub mod eeprom;
 pub mod filter;
 pub mod gain;
 pub mod image;
+mod math;
 pub mod pll;
 pub mod protocol;
+#[cfg(feature = "std")]
 pub mod session;
+#[cfg(feature = "std")]
 pub mod stream;
 pub mod taps;
 // The tables are generated copies (`derivation/generated`, "do not
 // edit"); the band grid's enum and array are as large as the record.
 #[allow(clippy::large_enum_variant, clippy::large_const_arrays)]
 pub mod tables;
+#[cfg(feature = "std")]
 pub mod usb;
 
-use std::time::Duration;
+use alloc::vec::Vec;
 
-use nusb::transfer::{Bulk, In};
-use nusb::{DeviceInfo, MaybeFuture};
-use sdr_core::gain::{Stage, StageReading, nearest_level};
-use sdr_core::usb_stream::BulkIqStream;
-use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, TuneResult, open_with_deadline};
+use sdr_core::gain::StageReading;
 
 pub use eeprom::{Eeprom, EepromConfig, EepromIdentity, EepromWriteReport, IdentityChanges};
 pub use gain::Codes as GainCodes;
 pub use pll::{Pll, PllState};
-pub use stream::{DroppedBlocks, RtlStream};
+#[cfg(feature = "std")]
 pub use session::{Break, Control, Finished, ReadHalf, Stream, StreamError, StreamReport};
+#[cfg(feature = "std")]
+pub use stream::{DroppedBlocks, RtlStream};
 
+// The receiver itself: std (the USB transport, threads, time).
+#[cfg(feature = "std")]
 use demod::ddc_if_hz;
-use image::{Front, R5, R6, R7, R10, R11, R12, R16, R20, R21, R22, R26, R27};
+#[cfg(feature = "std")]
 use tables::pll::XTAL_HZ;
+#[cfg(feature = "std")]
+use alloc::string::{String, ToString};
+#[cfg(feature = "std")]
+use image::{Front, R5, R6, R7, R10, R11, R12, R16, R20, R21, R22, R26, R27};
+#[cfg(feature = "std")]
+use nusb::transfer::{Bulk, In};
+#[cfg(feature = "std")]
+use nusb::{DeviceInfo, MaybeFuture};
+#[cfg(feature = "std")]
+use sdr_core::gain::{Stage, nearest_level};
+#[cfg(feature = "std")]
+use sdr_core::usb_stream::BulkIqStream;
+#[cfg(feature = "std")]
+use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, TuneResult, open_with_deadline};
+#[cfg(feature = "std")]
+use std::time::Duration;
+#[cfg(feature = "std")]
 use usb::Link;
 
 /// The backend name every error carries.
@@ -128,6 +163,7 @@ pub struct RtlTunerStatus {
 }
 
 /// An open dongle.
+#[cfg(feature = "std")]
 pub struct Rtl {
     link: Link,
     label: String,
@@ -140,10 +176,12 @@ pub struct Rtl {
     ratio: u32,
 }
 
+#[cfg(feature = "std")]
 fn unsupported(what: String) -> Error {
     Error::Unsupported { backend: BACKEND, what }
 }
 
+#[cfg(feature = "std")]
 fn candidates() -> Vec<DeviceInfo> {
     match nusb::list_devices().wait() {
         Ok(list) => list.filter(|d| KNOWN_IDS.contains(&(d.vendor_id(), d.product_id()))).collect(),
@@ -151,6 +189,7 @@ fn candidates() -> Vec<DeviceInfo> {
     }
 }
 
+#[cfg(feature = "std")]
 fn label_of(d: &DeviceInfo) -> String {
     let product = d.product_string().unwrap_or("RTL2832U");
     match d.serial_number() {
@@ -161,6 +200,7 @@ fn label_of(d: &DeviceInfo) -> String {
 
 /// Every attached dongle, as `rtl:serial=<sn>` (or `rtl:<index>` when
 /// the device reports no serial).
+#[cfg(feature = "std")]
 pub fn list() -> Vec<DeviceDesc> {
     candidates()
         .iter()
@@ -178,6 +218,7 @@ pub fn list() -> Vec<DeviceDesc> {
 
 /// The device a spec remainder names: `""` the first found, `"<index>"`
 /// the nth, `"serial=<sn>"` by serial.
+#[cfg(feature = "std")]
 fn select(rest: &str) -> Result<DeviceInfo> {
     let not_found = || Error::NotFound { spec: format!("rtl:{rest}") };
     let mut found = candidates();
@@ -191,6 +232,7 @@ fn select(rest: &str) -> Result<DeviceInfo> {
     if index < found.len() { Ok(found.remove(index)) } else { Err(not_found()) }
 }
 
+#[cfg(feature = "std")]
 impl Rtl {
     /// Open a dongle by spec remainder and bring it to the bench's
     /// measured state: the demodulator's bring-up (`demod::setup`), the
@@ -619,6 +661,7 @@ impl Rtl {
 }
 
 /// How long the request layer waits on one control transfer.
+#[cfg(feature = "std")]
 pub const CONTROL_TIMEOUT: Duration = usb::CONTROL_TIMEOUT;
 
 /// The RF the receiver opens tuned to: 300 MHz, where findings 4e

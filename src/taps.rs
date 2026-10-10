@@ -24,6 +24,10 @@
 //! is computed here from its stated parameters, and the test compares it
 //! with the taps findings 10.3 records for that design.
 
+use alloc::format;
+#[cfg(feature = "std")]
+use alloc::vec::Vec;
+
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
@@ -80,17 +84,23 @@ pub const HAMMING_A: f64 = 0.54;
 pub const HAMMING_B: f64 = 0.46;
 
 /// The design's 16 stored taps, c0 (outermost) to c15 (beside the
-/// centre): h(n) = 2fc · sinc(2fc · (n − (N−1)/2)) · w(n) for n = 0..15,
-/// fc = cutoff / fs, scaled so the full symmetric filter sums to the DC
-/// gain, rounded to integers.
-pub fn design() -> [i32; TAPS] {
+/// centre), as [`compute_design`] computes them (findings 10.3 records
+/// the same values). A constant so the `no_std` core needs no sine; the
+/// computation is the definition, and a test holds the two equal.
+pub const DESIGN: [i32; TAPS] = [-6, -5, -5, -2, 3, 15, 34, 61, 96, 138, 185, 233, 279, 317, 345, 360];
+
+/// The design: h(n) = 2fc · sinc(2fc · (n − (N−1)/2)) · w(n) for
+/// n = 0..15, fc = cutoff / fs, scaled so the full symmetric filter sums
+/// to the DC gain, rounded to integers.
+#[cfg(feature = "std")]
+pub fn compute_design() -> [i32; TAPS] {
     let x = 2.0 * DESIGN_CUTOFF_HZ / DESIGN_FS_HZ;
     let centre = (DESIGN_LENGTH as f64 - 1.0) / 2.0;
     let half: Vec<f64> = (0..TAPS)
         .map(|n| {
-            let t = std::f64::consts::PI * x * (centre - n as f64);
+            let t = core::f64::consts::PI * x * (centre - n as f64);
             let sinc = if t == 0.0 { 1.0 } else { t.sin() / t };
-            let w = HAMMING_A - HAMMING_B * (std::f64::consts::TAU * n as f64 / (DESIGN_LENGTH as f64 - 1.0)).cos();
+            let w = HAMMING_A - HAMMING_B * (core::f64::consts::TAU * n as f64 / (DESIGN_LENGTH as f64 - 1.0)).cos();
             x * sinc * w
         })
         .collect();
@@ -100,6 +110,11 @@ pub fn design() -> [i32; TAPS] {
         c[k] = (h / sum * DESIGN_DC_GAIN).round() as i32;
     }
     c
+}
+
+/// The design's 16 taps ([`DESIGN`]).
+pub fn design() -> [i32; TAPS] {
+    DESIGN
 }
 
 /// The design in the register layout.
@@ -160,6 +175,13 @@ mod tests {
     #[test]
     fn the_design_is_findings_10s() {
         assert_eq!(design(), [-6, -5, -5, -2, 3, 15, 34, 61, 96, 138, 185, 233, 279, 317, 345, 360]);
+    }
+
+    /// The constant is what the design computes.
+    #[cfg(feature = "std")]
+    #[test]
+    fn the_constant_is_the_computation() {
+        assert_eq!(compute_design(), DESIGN);
     }
 
     #[test]

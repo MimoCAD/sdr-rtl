@@ -24,6 +24,8 @@
 //! front end's linearity. The ladder is non-decreasing by construction,
 //! so the mapping is monotonic and a rung's dB round-trips exactly.
 
+use alloc::vec::Vec;
+
 use sdr_core::gain::{Stage, StageReading, nearest_level};
 
 use crate::tables::gain::{LNA_GAIN_DB, MIX_GAIN_DB, VGA_GAIN_DB};

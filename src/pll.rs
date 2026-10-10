@@ -31,9 +31,14 @@
 //! `R2_BY_LOCK_STATE` counts, per value, how often the tone was
 //! received. The lock reading here is that table's.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
+use crate::math::{floor, round};
 use crate::image::{CAPX_NONE, NI2C_MASK, R16_FIXED, REF_DIV2_BIT, SEL_DIV_SHIFT, SI2C_SHIFT};
 use crate::tables::pll::{F_REF_HZ, NINT_RANGE, R2_BY_LOCK_STATE, REF_DIV2, SEL_DIV, VCO_RANGE_HZ};
 use crate::tables::types::DividerStatus;
@@ -181,8 +186,8 @@ impl Pll {
         let divider = divider_of(sel_div)
             .ok_or_else(|| unsupported(format!("SEL_DIV {sel_div:03b} is not a usable divider (tables::pll::SEL_DIV)")))?;
         let n = lo_hz * divider as f64 / (2.0 * F_REF_HZ);
-        let mut nint = n.floor() as i64;
-        let mut sdm = ((n - nint as f64) * SDM_SCALE).round() as i64;
+        let mut nint = floor(n) as i64;
+        let mut sdm = round((n - nint as f64) * SDM_SCALE) as i64;
         if sdm >= SDM_SCALE as i64 {
             nint += 1;
             sdm = 0;

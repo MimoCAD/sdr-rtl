@@ -14,16 +14,19 @@ exclude = ["derivation/", "examples/"]
 [lib]
 doctest = false
 
-# This crate → nusb → the OS.
+# This crate → nusb → the OS (with `std`); without it, no_std + alloc.
 [dependencies]
-sdr-core = { version = "0.1", features = ["usb"] }
+sdr-core = { version = "0.1", default-features = false }
 # Pure-Rust userspace USB (IOKit/usbfs directly, no libusb).
-nusb = "0.2"
+nusb = { version = "0.2", optional = true }
 
 [features]
+default = ["std"]
+# The receiver: the USB request layer, `Rtl`, the raw stream and `Stream`.
+std = ["dep:nusb", "sdr-core/usb"]
 # The request layer exposed (`Rtl::link`, `Rtl::rx_stream`) for the bench
 # programs in examples/.
-bench = []
+bench = ["std"]
 
 # The bench programs (steps 11-17).
 [[example]]

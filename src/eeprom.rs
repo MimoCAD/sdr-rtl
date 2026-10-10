@@ -22,8 +22,11 @@
 //! (findings 17), and the request layer refuses such a request
 //! ([`block0_addresses_eeprom`], `usb::Link::get` / `set`).
 
-use std::ops::Range;
-use std::time::Duration;
+use alloc::string::String;
+use alloc::vec::Vec;
+use alloc::{format, vec};
+use core::ops::Range;
+use core::time::Duration;
 
 use sdr_core::{Error, Result};
 
@@ -603,6 +606,7 @@ pub struct EepromWriteReport {
 }
 
 /// All 256 offsets read, [`EEPROM_REQUEST_MAX`] bytes a request.
+#[cfg(feature = "std")]
 pub(crate) fn read_raw(link: &crate::usb::Link) -> Result<Vec<u8>> {
     let mut raw = Vec::with_capacity(EEPROM_ADDRESS_SPACE);
     for off in (0..EEPROM_ADDRESS_SPACE).step_by(EEPROM_REQUEST_MAX) {
@@ -615,6 +619,7 @@ pub(crate) fn read_raw(link: &crate::usb::Link) -> Result<Vec<u8>> {
 /// that differ written one control transfer each with
 /// [`EEPROM_WRITE_CYCLE`] after each, the whole part read back and
 /// compared.
+#[cfg(feature = "std")]
 pub(crate) fn write(link: &crate::usb::Link, new: &Eeprom) -> Result<EepromWriteReport> {
     new.check_writable()?;
     let before = Eeprom::from_read(&read_raw(link)?)?;
@@ -646,8 +651,9 @@ pub(crate) fn write(link: &crate::usb::Link, new: &Eeprom) -> Result<EepromWrite
     Ok(EepromWriteReport { before, chunks, bytes_changed })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
+    use alloc::string::ToString;
     use super::*;
     use crate::protocol::{ACCESS_GET, ACCESS_SET, windex};
 

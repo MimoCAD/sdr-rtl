@@ -33,6 +33,10 @@ is refused with the reason, never guessed.
     delivered and the chip's own count of every block it dropped.
 - The configuration EEPROM: read, parse, compose a new identity, write
   page by page with a verified read-back.
+- `no_std` at its core (with `alloc`): the register encodings, the
+  synthesizer, gain, filter, taps and the EEPROM layout build for bare
+  metal with `default-features = false`; the default `std` feature adds
+  the receiver itself (the USB transport, `Rtl`, `Stream`).
 
 ```rust
 use std::io::Read;
