@@ -3,6 +3,8 @@
 //!   tiercheck [--retunes N] [--rate SPS] [--lossless-only] [--depth N]
 //!             [--drain-ms MS] [--fifo-reset] [--any-rate]   (the last three with --features bench)
 //!             [--no-source]   (no tone: the loss counts only)
+//!             [--source-cmd "<command line>"]   (default `bench::SOURCE_CMD`)
+//!             [--first-ms N]   (the first retune N ms after the start)
 //!
 //! A tone at 300.3 MHz (the source at 8 Msps, backoff −15 dB). Three runs,
 //! each from a power cycle (gains 8/8/2):
@@ -107,7 +109,10 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     let mut all: Vec<Iq> = Vec::new();
     let t = Instant::now();
-    let mut next = EVERY;
+    // `--first-ms N`: the first retune N ms after the start (default
+    // EVERY), the rest EVERY apart.
+    let first = std::env::args().skip_while(|a| a != "--first-ms").nth(1).and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(EVERY);
+    let mut next = first;
     let mut done = 0u32;
     let mut quiet_ms = Vec::new();
     while done < retunes || t.elapsed() < next {
@@ -270,7 +275,10 @@ fn run() -> Result<(), String> {
     let mut src = if args.iter().any(|a| a == "--no-source") {
         None
     } else {
-        let mut s = Source::spawn(SOURCE_CMD, 0, -15)?;
+        // `--source-cmd "<command line>"`: the source by another command
+        // (a host whose default build lacks a dependency of the source's).
+        let cmd = args.iter().position(|a| a == "--source-cmd").and_then(|i| args.get(i + 1)).map(String::as_str).unwrap_or(SOURCE_CMD);
+        let mut s = Source::spawn(cmd, 0, -15)?;
         s.tone(OPEN_RF_HZ + TONE_OFFSET_HZ)?;
         Some(s)
     };

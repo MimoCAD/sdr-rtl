@@ -10,6 +10,8 @@ Status (2026-10-09): **the single-write hypothesis is exhausted.** From the docu
 
 Step 16.7 (the transfer queue), 2026-10-10: **the refused request is the finish's pause write, and it, like most of step 16's losses, comes from the host running out of transfers in flight** — after a pause each waiting transfer ends with one block. 128 transfers in flight: 0 refusals in 38 finishes, 600 mid-stream counter reads at 2.4 Msps lose 1 block, and paused retunes lose nothing at 1.2-2.88 Msps (16 deep at 2.4: 369 blocks).
 
+Step 16.8 (a second host), 2026-10-10: **the same at 128 deep** — 0 refusals in 16 finishes, paused retunes lossless at 1.2-2.88 Msps except a change in the stream's first ~150 ms at ≥ 2.4 Msps (2-20 blocks in 5 of 8 runs, counted; none with the first change at 1 s). Mid-stream counter reads at 2.4 Msps are not free there.
+
 Step 17 (the configuration EEPROM), 2026-10-10: the layout derived from the firmware and confirmed on the bench dongle — whose signature byte reads 0x00, most likely zeroed by step 2's block-0 sweep, so the dongle has ignored its EEPROM throughout. Section "Step 17" below.
 
 Step 16.5 (the stream kinds), 2026-10-10: `LosslessStream` / `AccountedStream` / `RestrictedStream` built and benched — a paused retune loses nothing, but the new configuration begins up to the FIFO's fill (6–10 blocks) after the reported break, and 2.88 Msps carries periodic phase glitches. Section "16.5" below.
@@ -471,6 +473,35 @@ held for tens of milliseconds and refused. The early ends are inferred
 from the tail; they have not been watched on the wire. The tier limits
 of 16.3 (1.2 and 1.8 Msps) are this 16-deep queue's on this host. An
 unpaused retune still loses its duration at 128.
+
+### 16.8 A second host — `data/step16-queue-hostb-*.jsonl`
+
+16.7's matrix on a second host (a different machine and USB host
+controller; the analyzer, the dongle and the source behind a USB-C dock;
+no tone for the lossless runs, `tiercheck --no-source`: the loss counts
+hold, the break analysis is of noise):
+
+- **Finish** (2.4 Msps, 8 each): refused 7 at 16 deep, 6 at 32, **0 at
+  64 and 128** (0 blocks each). The same shape as the first host's 6 / 5
+  / 0 / 0.
+- **`LosslessStream`, 128 deep, 20 paused retunes 150 ms apart:** 0 blocks
+  at every break at 1.2 and 1.8 Msps; at 2.4 and 2.88 Msps **every break
+  but the first** lost nothing (152 of 152 in 8 runs), and the first lost
+  2-20 blocks in 5 of the 8. With the first retune 1 s after the start
+  (`--first-ms 1000`): 0 at every break, 50 of 50 in 5 runs at 2.4 Msps.
+  So on this host a change in the stream's first ~150 ms at ≥ 2.4 Msps
+  costs a few blocks, counted (`Break::dropped_before`). 16 deep at
+  2.4 Msps: 385 blocks.
+- **Mid-stream requests, 128 deep, 2.4 Msps:** 600 USB-block reads
+  saturate the counter (3 runs of 3; the first host: 0-1 blocks); 30
+  demodulator reads 26 blocks; unpaused retunes saturate, as on the first
+  host.
+
+So the queue's depth decides the finish and the paused change on both
+hosts; what a request made while samples flow costs is the host's (one
+host reads the counter for free at 2.4 Msps 128 deep, the other cannot),
+which no stream kind relies on — none reads the counter while samples
+flow.
 
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 
