@@ -19,15 +19,26 @@ Chromium-family browser. The first click opens the browser's device chooser.</p>
 <script type="module">
   import init, { stream_check, eeprom_round_trip } from "./pkg/sdr_rtl_web.js";
   const out = document.getElementById("out");
-  const log = (text) => { out.textContent += text + "\n"; };
+  const q = new URLSearchParams(location.search);
+  const auto = q.get("auto");
+  // Opened as ?auto=…, every line also goes to the server (POST /log).
+  const log = (text) => {
+    out.textContent += text + "\n";
+    if (auto) fetch("/log", { method: "POST", body: text }).catch(() => {});
+  };
   await init();
   if (!navigator.usb) log("This browser has no WebUSB (Chrome, Edge or another Chromium browser has).");
+  const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+  const stream = () => stream_check(log, num("transfer", 0), num("depth", 0), num("seconds", 0), num("retunes", 3));
   const run = (f) => async () => {
     try { log("result: " + await f(log)); }
     catch (e) { log("error: " + e); }
+    if (auto) log("done");
   };
-  document.getElementById("stream").onclick = run(stream_check);
+  document.getElementById("stream").onclick = run(stream);
   document.getElementById("eeprom").onclick = run(eeprom_round_trip);
+  if (auto === "stream") run(stream)();
+  if (auto === "eeprom") run(eeprom_round_trip)();
 </script>
 </body>
 </html>

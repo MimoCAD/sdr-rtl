@@ -56,10 +56,10 @@ use sdr_core::{Error, Iq, RecvInfo, Result, TuneRequest, TuneResult};
 use crate::Rtl;
 use crate::stream::{DroppedBlocks, RtlStream, WIRE_FORMAT};
 
-/// The fewest transfers a stream keeps in flight: at 16 a finish's pause
-/// was refused in 6-7 of 8 runs at 2.4 Msps and a paused change lost ~16
-/// blocks; at 64 and 128 none were refused on either host, and at 128 a
-/// paused change lost nothing at 1.2-2.88 Msps (findings 16.7, 16.8).
+/// The fewest transfers a stream keeps in flight: with full-packet mode
+/// ~440 ms at 2.4 Msps (findings 18). Measured before it, when a transfer
+/// held one block: at 16 a finish's pause was refused in 6-7 of 8 runs and
+/// a paused change lost ~16 blocks, at 128 neither (findings 16.7, 16.8).
 pub const MIN_QUEUE_DEPTH: usize = 128;
 /// After the pause write, before the hold: the FIFO's last blocks onto
 /// the wire (findings 16.4's clean stop waited this long).
@@ -254,8 +254,13 @@ impl Core {
     }
 
     /// Pause, drain, hold, reset the FIFO, read the counter (paused: free).
+    /// Full-packet mode is turned off once paused, so a transfer the last
+    /// packets only partly filled ends now, not after the resume with the
+    /// new configuration's samples (a browser cannot cancel it).
     async fn quiesce(&mut self) -> Result<(u64, DroppedBlocks)> {
         self.stream.pause_blind().await.map_err(at("pause: the pause write"))?;
+        sdr_core::time::sleep(self.drain).await;
+        self.stream.set_packing(false).await.map_err(at("pause: packing off"))?;
         sdr_core::time::sleep(self.drain).await;
         let pos = self.stream.hold().await.map_err(at("pause: hold"))?;
         if self.fifo_reset {
@@ -290,6 +295,7 @@ impl Core {
             }
         }
         self.stream.release().map_err(at("resume: release"))?;
+        self.stream.set_packing(true).await.map_err(at("resume: packing on"))?;
         self.stream.resume_blind().await.map_err(at("resume: the resume write"))?;
         let rf_hz = if self.unknown { f64::NAN } else { self.rtl.freq().unwrap_or(f64::NAN) };
         let b = Break { at_sample, settled_at: at_sample + BREAK_SETTLE_SAMPLES, dropped_before, quiet: t0.elapsed(), rf_hz };

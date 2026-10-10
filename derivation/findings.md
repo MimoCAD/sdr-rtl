@@ -10,6 +10,8 @@ Status (2026-10-09): **the single-write hypothesis is exhausted.** From the docu
 
 Step 16.7 (the transfer queue), 2026-10-10: **the refused request is the finish's pause write, and it, like most of step 16's losses, comes from the host running out of transfers in flight** — after a pause each waiting transfer ends with one block. 128 transfers in flight: 0 refusals in 38 finishes, 600 mid-stream counter reads at 2.4 Msps lose 1 block, and paused retunes lose nothing at 1.2-2.88 Msps (16 deep at 2.4: 369 blocks).
 
+Step 18 (full-packet mode), 2026-10-10: **without USB_SYSCTL bit 3 every USB transfer carried one 188-byte block** (the chip sends each block as a short packet), so the queue held ~13 ms at 2.4 Msps — the root of 16.7's depth effect, 16.10's split-finish loss and the browser's early loss. With it every transfer comes back full: 0 blocks lost natively (40 breaks, 8 finishes, 8 split finishes) and in a browser (4 runs).
+
 Step 16.9 (one `Stream`), 2026-10-10: the three kinds became one `Stream` — any rate, ≥ 128 transfers in flight, changes held until 1 s after the start — readable as `std::io::Read` and split into a reading half and a control for two threads: 24 retunes across 2.4 and 1.2 Msps from another thread while reading, 0 blocks lost.
 
 Step 16.8 (a second host), 2026-10-10: **the same at 128 deep** — 0 refusals in 16 finishes, paused retunes lossless at 1.2-2.88 Msps except a change in the stream's first ~150 ms at ≥ 2.4 Msps (2-20 blocks in 5 of 8 runs, counted; none with the first change at 1 s). Mid-stream counter reads at 2.4 Msps are not free there.
@@ -114,6 +116,50 @@ the 20 MHz grid between 500 and 840 MHz) and each recovers 7–17 dB with
 G = 35. Above 840 MHz the other direction (G = 2) gives 5–14 dB. In the
 800 MHz public-safety band (851–869 MHz) that is 58–60 → 65–67 dB; the
 image of a channel there is 7.14 MHz above it.
+
+## Step 18 — full-packet mode: every transfer was one 188-byte block — `data/step18-full-packet.jsonl`, `data/step18-browser.jsonl` — `examples/fullpacket.rs`, `web/`
+
+In a browser the stream dropped 73-170 blocks in its first two seconds
+(16.10), and the reads were 188 bytes or less: 97,572 of 97,642 in one
+4 s run. [RTL2832U] Table 29-30 (documents.md) defines USB_SYSCTL bit 3,
+full-packet mode: "send only max-size packets; NAK while the FIFO holds
+less". The vendor driver writes USB_SYSCTL ← 0x09 at its set-up and its
+packets were all 512 bytes (findings 9b, 9h); findings 10.4's minimised
+sequence left it at the power-on 0x01, since the stream ran without it.
+
+`fullpacket` (second host, 2.4 Msps, the raw stream, 16 KiB transfers, 4
+runs each way, alternating, from power cycles):
+
+| USB_SYSCTL | Samples a completion | Dropped, 16 in flight | Dropped, 128 in flight |
+|---|---|---|---|
+| 0x01 (bit 3 clear) | 94 — one block (76,407-76,620 of ~76,600 receives) | 103, 101 | 0, 0 |
+| 0x09 (bit 3 set) | 8,192 — the whole transfer (880 of 880) | 0, 0 | 0, 0 |
+
+So **without full-packet mode the chip sends each 188-byte block as a
+short packet, and every one ends a transfer**: a transfer never carried
+more than one block, and N transfers in flight held N × 94 samples —
+128 of them ~13 ms at 2.4 Msps. That, not a pause, is why 16.7's tail was
+one block per transfer, and why the depth decided 16.7's losses and
+refusals. With bit 3 set, 16 transfers hold ~55 ms and 128 ~440 ms.
+
+The driver now starts every stream with USB_SYSCTL ← 0x09
+(`RtlStream::set_packing`) and puts 0x01 back at the stop; at a break,
+once paused, it clears bit 3 (a transfer the last packets only partly
+filled then ends, which a browser — no cancel — needs) and sets it again
+before the resume. Measured with it:
+
+- `tiercheck` (the tone, 20 retunes every 150 ms): 2.4 and 1.2 Msps, **0
+  blocks at all 40 breaks**, no refusal; the new configuration from 19-31
+  samples after `at_sample` at the breaks that are not back to back (as
+  16.6: the filter pipeline). (The back-to-back breaks after the 1 s hold
+  leave segments too short for the tone analysis to place.)
+- `finishloop`: 8 of 8 finishes 0 blocks.
+- `readsplit` (the split stream's finish, 16.10's open item): **0 blocks
+  in 8 of 8**; the chip still refused 0-3 requests a run, each retried
+  with the queue holding enough not to drop.
+- In a browser (Chrome, WebUSB): 4 runs, **0 blocks** — 3 retunes each in
+  two, none in two; every read 16,384 bytes; 4,800,512 B/s in every full
+  second without a pause.
 
 ## Step 17 — the configuration EEPROM — `eeprom.md`, `data/step17-eeprom-read.txt` — `derived/examples/eepromread.rs`
 

@@ -141,6 +141,15 @@ pub const GPIO_ANTENNA_POWER: u8 = 1 << 4;
 
 // ---- USB block ([RTL2832U] Tables 29-34, pp. 38-40) ----
 
+/// USB_SYSCTL (Table 29-30, p. 38; documents.md): bit 10 SIE reset, bit 3
+/// full-packet mode ("send only max-size packets; NAK while the FIFO holds
+/// less"), bit 0 DMA enable (reset 1). The vendor driver writes 0x09 at
+/// its USB set-up (findings 9b), and its stream's packets were all 512
+/// bytes (findings 9h); the bench's minimised sequence leaves it at 0x01.
+pub const USB_SYSCTL: u16 = 0x0000;
+pub const SYSCTL_DMA_ENABLE: u8 = 1 << 0;
+pub const SYSCTL_FULL_PACKET: u8 = 1 << 3;
+
 /// USB_EPA_FIFO_CFG (Table 34, p. 40), offset in the USB block; its
 /// bits 31:24, BLK_DROP_COUNTER, "Counts blocks dropped (each is 188
 /// bytes) due to full FIFO" — its fourth byte (32-bit registers read

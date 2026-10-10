@@ -64,12 +64,12 @@ pub const WIRE_FORMAT: WireSample = WireSample::OffsetU8;
 /// The bulk transfer size a stream uses when asked for 0: the size every
 /// bench step from 11 on streamed with (`examples/bench/mod.rs`).
 pub const DEFAULT_TRANSFER_BYTES: usize = 16 * 1024;
-/// The transfers kept in flight when asked for 0. The count, not the
-/// size, is what a control request or a pause uses up: the chip ends each
-/// waiting transfer early, and with none left its FIFO drops and the
-/// pause write can be refused. At 16 the finish's pause was refused in 6
-/// of 8 runs at 2.4 Msps; at 128 in none of 38, and paused retunes lost
-/// nothing at 1.2-2.88 Msps (findings 16.7). 2 MiB at the default size.
+/// The transfers kept in flight when asked for 0. In full-packet mode
+/// (`RtlStream::set_packing`) each comes back full, so 128 hold ~440 ms
+/// at 2.4 Msps — more than the longest wait a browser's reading task
+/// showed (275 ms, findings 18). Without it each transfer carried one
+/// 188-byte block and the depth alone decided the losses (findings 16.7).
+/// 2 MiB at the default size.
 pub const DEFAULT_QUEUE_DEPTH: usize = 128;
 
 /// Where one byte of a write lands.
@@ -259,6 +259,9 @@ pub struct RtlStream {
     paused: bool,
     /// The dropped-block counter as the last take left it.
     drop_mark: u8,
+    /// Start in full-packet mode ([`SYSCTL_FULL_PACKET`]); bench programs
+    /// may turn it off.
+    full_packet: bool,
 }
 
 impl RtlStream {
@@ -266,7 +269,25 @@ impl RtlStream {
     /// link must have been claimed for the stream (`Link::claim_stream`);
     /// dropping the stream releases it.
     pub fn new(inner: BulkIqStream, link: Link, ratio: u32, taps: [u8; TAP_REGS]) -> RtlStream {
-        RtlStream { inner, link, ratio, taps, state: State::Idle, paused: false, drop_mark: 0 }
+        RtlStream { inner, link, ratio, taps, state: State::Idle, paused: false, drop_mark: 0, full_packet: true }
+    }
+
+    /// Whether the next start sets full-packet mode (the default), for
+    /// bench programs.
+    pub fn set_full_packet(&mut self, on: bool) {
+        self.full_packet = on;
+    }
+
+    /// USB_SYSCTL: DMA enabled, and full-packet mode on or off. On, the chip
+    /// sends only 512-byte packets and a 16 KiB transfer comes back full
+    /// (8,192 samples); off — the power-on state, and findings 10.4's
+    /// minimised sequence — it sends each 188-byte block as a short packet,
+    /// and every one ends a transfer: 128 transfers in flight then hold
+    /// ~13 ms at 2.4 Msps instead of ~440 (findings 18). Written while the
+    /// output is paused or stopped (nothing flows: free).
+    pub async fn set_packing(&mut self, full: bool) -> Result<()> {
+        let value = SYSCTL_DMA_ENABLE | if full { SYSCTL_FULL_PACKET } else { 0 };
+        self.link.usb_write8(USB_SYSCTL, value).await
     }
 
     /// The output rate, f_symbol / 4 of the ratio (findings 10.2a).
@@ -300,6 +321,7 @@ impl RtlStream {
         self.reset_fifo().await?;
         self.link.usb_write8(BLK_DROP_COUNTER, 0).await?;
         self.drop_mark = 0;
+        self.set_packing(self.full_packet).await?;
         self.inner.start()?;
         for w in &writes {
             if let Err(e) = w.apply(&self.link).await {
@@ -320,7 +342,11 @@ impl RtlStream {
         let wrote = STOP.apply(&self.link).await;
         let cancelled = self.inner.stop();
         self.state = State::Stopped;
+        // USB_SYSCTL back to its power-on state for whatever opens the
+        // dongle next.
+        let unpacked = self.set_packing(false).await;
         wrote?;
+        unpacked?;
         cancelled
     }
 

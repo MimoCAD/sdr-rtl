@@ -563,6 +563,16 @@ impl RtlStream {
         block_on(self.0.reset_fifo())
     }
 
+    /// [`crate::RtlStream::set_full_packet`].
+    pub fn set_full_packet(&mut self, on: bool) {
+        self.0.set_full_packet(on)
+    }
+
+    /// [`crate::RtlStream::set_packing`].
+    pub fn set_packing(&mut self, full: bool) -> Result<()> {
+        block_on(self.0.set_packing(full))
+    }
+
     pub fn hold(&mut self) -> Result<u64> {
         block_on(self.0.hold())
     }
