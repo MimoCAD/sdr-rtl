@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 15 (image rejection through the stream), 2026-10-10: **55–66 dB at the driver's IMR 32/32** across ±1.1 MHz at 100–500 MHz (≥ 48 at 850, floor-limited), not 4h's 10–20 dB; a small correction (G 34–35) lifts 500 MHz from 55 to 63 dB. Section "Step 15" below.
+
 Step 14 (R2 across the VCO's ends), 2026-10-10: **R2 64–69 are locked** (1.709–1.797 GHz, the tone at full strength); the driver's 70–127 span is too narrow at the bottom, the divider rule is right. Section "Step 14" below.
 
 Step 13 (side by side with the earlier driver), 2026-10-10: **equal on every measure.** Tone SNR within ~1 dB at matched level; frequency within ~20 Hz at 300 MHz; a replayed P25 control channel decodes 403–413 TSBKs (earlier) against 410–417 (new) over three 20 s runs; 600 s at 2.4 Msps with 0 samples lost by either. Section "Step 13" below.
@@ -41,6 +43,30 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 15 — image rejection through the stream — `data/step15-image-profile.jsonl`, `data/step15-imr-grids.jsonl` — `derived/examples/imrsearch.rs`
+
+With the high-side LO the image of RF + x is RF + 2·IF − x (IF 3.570 MHz):
+a tone there converts like a wanted tone at +x. Rejection = the wanted
+tone's level at +x less the image tone's (both read at +x; 8/8/2; wanted
+at backoff −10 dB, the image 10 dB stronger and corrected for it).
+
+- **Profile at the driver's IMR_G = IMR_P = 32**, x from −1.1 to +1.1 MHz
+  (100 kHz): 100 MHz 61.3–66.1 dB; 300 MHz 58.7–64.9; 500 MHz 55.0–57.9;
+  850 MHz ≥ 47.9–61.4 (the image under the floor throughout: the wanted
+  tone is 13 dB lower there, the band path's loss). Step 4h's "10–20 dB"
+  was the pre-DDC meter's view of tones 0.5–2 MHz above the LO, not the
+  image of the stream's band.
+- **Grids** (G then P ascending, image tone at +300 kHz): at 300 MHz,
+  step 16, 0/0, 0/32, 32/0, 32/32 all at the floor (≥ 60 dB), every
+  combination with 16 or 48 in either field 30.4–34.4 dB. At 500 MHz,
+  step 4: 0/0 56.3, 32/32 55.8, 32/0 55.2, 0/32 55.0, everything else
+  ≤ 52.2. Then G, P ∈ {0–3, 32–35}: **35/32 63.4, 34/0 63.1**, 34/32 61.1,
+  35/0 60.7, 32/32 56.7. At 850 MHz the same set reads 49.8–51.0 for the
+  best six (floor-limited). Bit 5 behaves as a direction (0 ≡ 32 at zero
+  magnitude); the tuner needs little or no correction, and a small one
+  buys ~8 dB at 500 MHz. The 4,096-point grid was not run: 32/32 is at
+  the floor where it was measured.
 
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 

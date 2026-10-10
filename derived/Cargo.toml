@@ -30,3 +30,7 @@ required-features = ["bench"]
 [[example]]
 name = "vcoedge"
 required-features = ["bench"]
+
+[[example]]
+name = "imrsearch"
+required-features = ["bench"]
