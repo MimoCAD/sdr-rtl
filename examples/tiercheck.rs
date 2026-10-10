@@ -1,14 +1,18 @@
-//! The stream kinds on the bench, through the public API only.
+//! The stream on the bench, through the public API only. (Written for
+//! the three stream kinds of findings 16.5-16.8 — `LosslessStream`,
+//! `AccountedStream`, `RestrictedStream`; since one `Stream`.)
 //!
 //!   tiercheck [--retunes N] [--rate SPS] [--lossless-only] [--depth N]
-//!             [--drain-ms MS] [--fifo-reset] [--any-rate]   (the last three with --features bench)
+//!             [--drain-ms MS] [--no-fifo-reset]   (these two with --features bench)
 //!             [--no-source]   (no tone: the loss counts only)
 //!             [--source-cmd "<command line>"]   (default `bench::SOURCE_CMD`)
-//!             [--first-ms N]   (the first retune N ms after the start)
+//!             [--first-ms N]   (the first retune asked for N ms after the
+//!                               start; the stream holds any change until
+//!                               `session::CHANGE_AFTER_START`)
 //!
 //! A tone at 300.3 MHz (the source at 8 Msps, backoff −15 dB). Three runs,
 //! each from a power cycle (gains 8/8/2):
-//! 1. `LosslessStream` at 1.2 Msps, centred on 300.0 MHz: N retunes
+//! 1. A `Stream` at 1.2 Msps (`--rate`), centred on 300.0 MHz: N retunes
 //!    (default 20) every 150 ms, alternating 300.1 and 300.0 MHz, so the
 //!    tone sits at +300 kHz in one configuration and +200 kHz in the other.
 //!    The samples are kept. Each configuration's tone is read off an FFT
@@ -20,9 +24,8 @@
 //!    (a 94-sample block here: ~210°) is a jump — 0 expected, and the
 //!    report's dropped blocks 0. (Per-sample frequency is too noisy at
 //!    this SNR: it spreads 200-400 kHz around a tone at 301 kHz.)
-//! 2. `AccountedStream` at 1.8 Msps, 3 s, then the report.
-//! 3. `RestrictedStream` at 2.4 Msps, 3 s, then the report. Before it, a
-//!    `LosslessStream` asked for at 2.4 Msps: refused, the receiver back.
+//! 2. A `Stream` at 1.8 Msps with no change, 3 s, then the report.
+//! 3. The same at 2.4 Msps.
 //!
 //! One JSON line per run.
 
@@ -33,7 +36,7 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::gain::Stage;
-use sdr_core::{Iq, RxSource, TuneRequest};
+use sdr_core::{Iq, TuneRequest};
 use sdr_rtl::{OPEN_RF_HZ, Rtl, StreamReport};
 
 const TONE_OFFSET_HZ: f64 = 300e3;
@@ -62,8 +65,7 @@ fn open(rate: f64) -> Result<Rtl, String> {
 
 fn report_json(r: &StreamReport, tail: usize) -> String {
     format!(
-        "\"tier\":\"{:?}\",\"samples\":{},\"tail\":{tail},\"dropped_blocks\":{},\"saturated\":{},\"breaks\":{},\"stall_retries\":{},\"configuration_unknown\":{}",
-        r.tier,
+        "\"samples\":{},\"tail\":{tail},\"dropped_blocks\":{},\"saturated\":{},\"breaks\":{},\"stall_retries\":{},\"configuration_unknown\":{}",
         r.samples,
         r.dropped_blocks,
         r.saturated,
@@ -85,25 +87,16 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
         rtl.link().set(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_SET, 0), &[n, v[1], v[2], 0], "FIFO_CFG write").map_err(|e| e.to_string())?;
         eprintln!("FIFO size {n} (was {})", v[0]);
     }
-    // `--depth N`: transfers in flight; `--any-rate` (bench): a lossless
-    // stream above its limit, to measure where the limit lies.
+    // `--depth N`: transfers in flight (the stream keeps at least
+    // `session::MIN_QUEUE_DEPTH`).
     let depth: usize = std::env::args().skip_while(|a| a != "--depth").nth(1).and_then(|v| v.parse().ok()).unwrap_or(QUEUE_DEPTH);
-    #[cfg(feature = "bench")]
-    let made = if std::env::args().any(|a| a == "--any-rate") { sdr_rtl::LosslessStream::new_at_any_rate(rtl, TRANSFER_BYTES, depth) } else { rtl.into_lossless(TRANSFER_BYTES, depth) };
-    #[cfg(not(feature = "bench"))]
-    let made = rtl.into_lossless(TRANSFER_BYTES, depth);
-    #[allow(unused_mut)]
-    let mut s = made.map_err(|e| e.error.to_string())?;
+    let mut s = rtl.into_stream(TRANSFER_BYTES, depth).map_err(|e| e.error.to_string())?;
     #[cfg(feature = "bench")]
     if let Some(ms) = drain_ms {
         s.set_drain(Duration::from_millis(ms));
     }
     #[cfg(feature = "bench")]
-    s.set_quiet_by_stop(std::env::args().any(|a| a == "--quiet-by-stop"));
-    #[cfg(feature = "bench")]
-    s.set_squeeze(std::env::args().skip_while(|a| a != "--squeeze").nth(1).and_then(|v| v.parse().ok()));
-    #[cfg(feature = "bench")]
-    s.set_fifo_reset(std::env::args().any(|a| a == "--fifo-reset"));
+    s.set_fifo_reset(!std::env::args().any(|a| a == "--no-fifo-reset"));
     #[cfg(not(feature = "bench"))]
     let _ = drain_ms;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
@@ -126,9 +119,9 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
             next += EVERY;
         }
     }
-    let breaks = s.breaks().to_vec();
+    let breaks = s.breaks().map_err(|e| e.to_string())?;
     let fin = s.finish().map_err(|e| e.to_string())?;
-    all.extend_from_slice(&fin.tail);
+    all.extend_from_slice(&fin.tail_samples());
     // Segment boundaries: 0, each break, the end. Segment k is centred on
     // 300.0 MHz when k is even, 300.1 when odd.
     let mut edges: Vec<usize> = vec![0];
@@ -236,35 +229,18 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
     ))
 }
 
-fn plain(kind: &str, rate: f64) -> Result<String, String> {
+/// A stream with no changes: 3 s, then the report.
+fn plain(rate: f64) -> Result<String, String> {
     let rtl = open(rate)?;
     let t = Instant::now();
-    let (fin, n) = if kind == "accounted" {
-        let mut s = rtl.into_accounted(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.error.to_string())?;
-        let mut buf = vec![Iq::default(); s.max_num_samps()];
-        let mut n = 0usize;
-        while t.elapsed() < Duration::from_secs(3) {
-            n += s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?.n_samples;
-        }
-        (s.finish().map_err(|e| e.to_string())?, n)
-    } else {
-        // First the refusal: a lossless stream at this rate.
-        let rtl = match rtl.into_lossless(TRANSFER_BYTES, QUEUE_DEPTH) {
-            Ok(_) => return Err("a LosslessStream was made at 2.4 Msps".into()),
-            Err(e) => {
-                eprintln!("refused as expected: {}", e.error);
-                *e.rtl
-            }
-        };
-        let mut s = rtl.into_restricted(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.error.to_string())?;
-        let mut buf = vec![Iq::default(); s.max_num_samps()];
-        let mut n = 0usize;
-        while t.elapsed() < Duration::from_secs(3) {
-            n += s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?.n_samples;
-        }
-        (s.finish().map_err(|e| e.to_string())?, n)
-    };
-    Ok(format!("\"run\":\"{kind}\",\"rate\":{rate},{},\"received_before_finish\":{n}", report_json(&fin.report, fin.tail.len())))
+    let mut s = rtl.into_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.error.to_string())?;
+    let mut buf = vec![Iq::default(); s.max_num_samps()];
+    let mut n = 0usize;
+    while t.elapsed() < Duration::from_secs(3) {
+        n += s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?.n_samples;
+    }
+    let fin = s.finish().map_err(|e| e.to_string())?;
+    Ok(format!("\"run\":\"plain\",\"rate\":{rate},{},\"received_before_finish\":{n}", report_json(&fin.report, fin.tail.len() / 2)))
 }
 
 fn run() -> Result<(), String> {
@@ -285,7 +261,7 @@ fn run() -> Result<(), String> {
     let only_lossless = args.iter().any(|a| a == "--lossless-only");
     let rate: f64 = args.iter().position(|a| a == "--rate").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(1.2e6);
     let drain_ms: Option<u64> = args.iter().position(|a| a == "--drain-ms").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok());
-    let runs = if only_lossless { vec![lossless(retunes, rate, drain_ms)] } else { vec![lossless(retunes, rate, drain_ms), plain("accounted", 1.8e6), plain("restricted", 2.4e6)] };
+    let runs = if only_lossless { vec![lossless(retunes, rate, drain_ms)] } else { vec![lossless(retunes, rate, drain_ms), plain(1.8e6), plain(2.4e6)] };
     for r in runs {
         match r {
             Ok(body) => println!("{{{body}}}"),

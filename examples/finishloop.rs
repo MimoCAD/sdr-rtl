@@ -6,6 +6,10 @@
 //!   finishloop [--runs N] [--rate SPS] [--seconds S] [--gain DB | --codes L M V]
 //!              [--status] [--cycle] [--timeout S] [--no-start] [--depth N]
 //!
+//! (16.7's depth sweep ran before the stream kept at least
+//! `session::MIN_QUEUE_DEPTH` in flight; a smaller `--depth` is raised to
+//! it now.)
+//!
 //! Each run: open, gain (one number, or stage codes as `tiercheck`), rate,
 //! tune 300 MHz, the tuner's status read (with `--status`), the stream
 //! the rate allows, `start()` (unless `--no-start`: the
@@ -83,11 +87,10 @@ fn run_once(o: &Opts) -> Result<String, String> {
         .map(|x| format!("\"{} 0x{:04X} 0x{:04X} at {:+.2} ms, refused after {:.2} ms\"", if x.set { "set" } else { "get" }, x.value, x.index, ms(x.at), x.took.as_secs_f64() * 1e3))
         .collect();
     Ok(format!(
-        "{{\"rate\":{rate},\"depth\":{},\"tier\":\"{:?}\",\"finish_ms\":{:.1},\"tail\":{},\"received\":{n},\"samples\":{},\"dropped_blocks\":{},\"saturated\":{},\"stall_retries\":{},\"refused\":[{}]}}",
-        o.depth,
-        r.tier,
+        "{{\"rate\":{rate},\"depth\":{},\"finish_ms\":{:.1},\"tail\":{},\"received\":{n},\"samples\":{},\"dropped_blocks\":{},\"saturated\":{},\"stall_retries\":{},\"refused\":[{}]}}",
+        o.depth.max(sdr_rtl::session::MIN_QUEUE_DEPTH),
         finish_took.as_secs_f64() * 1e3,
-        f.tail.len(),
+        f.tail.len() / 2,
         r.samples,
         r.dropped_blocks,
         r.saturated,

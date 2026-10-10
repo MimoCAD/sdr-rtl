@@ -430,6 +430,19 @@ impl RtlStream {
     pub fn delivered(&self) -> u64 {
         self.inner.delivered()
     }
+
+    /// The wire bytes as the chip sends them ([`WIRE_FORMAT`]: unsigned
+    /// 8-bit I then Q): the engine's [`BulkIqStream::recv_bytes`].
+    pub fn recv_bytes(&mut self, buf: &mut [u8], timeout_secs: f64) -> Result<(usize, RecvInfo)> {
+        self.inner.recv_bytes(buf, timeout_secs)
+    }
+
+    /// Keep receiving for `span` into the engine's backlog
+    /// ([`BulkIqStream::absorb`]): the samples are kept for the next
+    /// receives and the transfer queue stays full.
+    pub fn absorb(&mut self, span: std::time::Duration) -> Result<()> {
+        self.inner.absorb(span)
+    }
 }
 
 impl RxSource for RtlStream {

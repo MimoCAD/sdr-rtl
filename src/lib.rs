@@ -13,18 +13,21 @@
 //! The raw-sample stream (`stream`) is the sequence findings step 10
 //! confirmed and minimised on the bench; this code ran against the bench
 //! dongle in findings step 11 (`examples/hwcheck.rs`). A receiver streams
-//! by becoming the stream its rate allows ([`Rtl::into_stream`], `tier`):
-//! each kind offers only what cannot lose samples unseen at that rate, and
-//! its `finish` hands the receiver back with the count of every sample
-//! lost (findings 16).
+//! by becoming a [`Stream`] ([`Rtl::into_stream`], `session`): it reads as
+//! [`std::io::Read`] (the wire bytes) or as [`sdr_core::Iq`] samples,
+//! changes only inside a pause that loses nothing, splits into a
+//! [`ReadHalf`] and a [`Control`] for two threads, and its `finish` hands
+//! the receiver back with the chip's count of every sample lost
+//! (findings 16).
 //!
 //! Modules: `protocol` (the vendor requests' encodings and the register
 //! addresses), `usb` (the request layer over nusb), `tables` (the
 //! generated tables), `pll` (the synthesizer), `image` (the tuner's
 //! register image), `demod` (the demodulator's bring-up, IF and rate),
 //! `taps` (the demodulator's tap registers and our design), `gain`,
-//! `band`, `filter`, `stream`, `eeprom` (the configuration EEPROM's
-//! layout, image and access, findings 17).
+//! `band`, `filter`, `stream` (the raw stream), `session` (the
+//! [`Stream`]), `eeprom` (the configuration EEPROM's layout, image and
+//! access, findings 17).
 
 pub mod band;
 pub mod demod;
@@ -34,9 +37,9 @@ pub mod gain;
 pub mod image;
 pub mod pll;
 pub mod protocol;
+pub mod session;
 pub mod stream;
 pub mod taps;
-pub mod tier;
 // The tables are generated copies (`derivation/generated`, "do not
 // edit"); the band grid's enum and array are as large as the record.
 #[allow(clippy::large_enum_variant, clippy::large_const_arrays)]
@@ -55,7 +58,7 @@ pub use eeprom::{Eeprom, EepromConfig, EepromIdentity, EepromWriteReport, Identi
 pub use gain::Codes as GainCodes;
 pub use pll::{Pll, PllState};
 pub use stream::{DroppedBlocks, RtlStream};
-pub use tier::{AccountedStream, Break, Finished, LosslessStream, RestrictedStream, StreamError, StreamReport, Tier, TieredStream};
+pub use session::{Break, Control, Finished, ReadHalf, Stream, StreamError, StreamReport};
 
 use demod::ddc_if_hz;
 use image::{Front, R5, R6, R7, R10, R11, R12, R16, R20, R21, R22, R26, R27};
@@ -506,47 +509,20 @@ impl Rtl {
         })
     }
 
-    /// The stream the rate allows ([`tier::Tier::for_rate`]): a
-    /// [`LosslessStream`] to 1.2 Msps, an [`AccountedStream`] to 1.8, a
-    /// [`RestrictedStream`] above. The stream owns the receiver until
-    /// `finish` hands it back, so nothing can reach the control pipe
-    /// while samples flow except what the stream itself offers.
-    /// `transfer_bytes` is rounded down to whole packets (sdr-core's engine;
-    /// at least one); `queue_depth` transfers are kept in flight (at least
-    /// two); 0 for either is the default (`stream::DEFAULT_TRANSFER_BYTES`,
-    /// `stream::DEFAULT_QUEUE_DEPTH`: 16 KiB, 128 — fewer in flight let a
-    /// pause or a request use the queue up, findings 16.7). Nothing is
-    /// written until the first `recv_into` (or `start`).
-    pub fn into_stream(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<TieredStream, StreamError> {
-        Ok(match Tier::for_rate(self.rate_set()) {
-            Tier::Lossless => TieredStream::Lossless(LosslessStream::new(self, transfer_bytes, queue_depth)?),
-            Tier::Accounted => TieredStream::Accounted(AccountedStream::new(self, transfer_bytes, queue_depth)?),
-            Tier::Restricted => TieredStream::Restricted(RestrictedStream::new(self, transfer_bytes, queue_depth)?),
-        })
+    /// The receiver as a [`Stream`] at the rate it holds ([`session`]). The
+    /// stream owns the receiver until `finish` hands it back, so nothing
+    /// reaches the control pipe while samples flow except what the stream
+    /// offers. `transfer_bytes` is rounded down to whole packets (sdr-core's
+    /// engine; at least one; 0 is `stream::DEFAULT_TRANSFER_BYTES`, 16 KiB);
+    /// at least [`session::MIN_QUEUE_DEPTH`] transfers are kept in flight
+    /// (fewer let a pause or a request use the queue up, findings 16.7).
+    /// Nothing is written until the first read (or `start`).
+    pub fn into_stream(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<Stream, StreamError> {
+        Stream::new(self, transfer_bytes, queue_depth)
     }
 
-    /// A [`LosslessStream`]; refused above [`tier::LOSSLESS_MAX_SPS`].
-    pub fn into_lossless(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<LosslessStream, StreamError> {
-        LosslessStream::new(self, transfer_bytes, queue_depth)
-    }
-
-    /// An [`AccountedStream`]; refused above [`tier::ACCOUNTED_MAX_SPS`].
-    pub fn into_accounted(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<AccountedStream, StreamError> {
-        AccountedStream::new(self, transfer_bytes, queue_depth)
-    }
-
-    /// A [`RestrictedStream`], at any rate.
-    pub fn into_restricted(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<RestrictedStream, StreamError> {
-        RestrictedStream::new(self, transfer_bytes, queue_depth)
-    }
-
-    /// The output rate the resampler ratio written last gives (no request).
     pub(crate) fn link_ref(&self) -> &Link {
         &self.link
-    }
-
-    pub(crate) fn rate_set(&self) -> f64 {
-        demod::output_rate_of_ratio(self.ratio)
     }
 
     /// The raw stream under every kind, with our taps.
