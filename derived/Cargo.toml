@@ -74,3 +74,7 @@ required-features = ["bench"]
 [[example]]
 name = "glitchscan"
 required-features = ["bench"]
+
+[[example]]
+name = "eepromread"
+required-features = ["bench"]

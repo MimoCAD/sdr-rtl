@@ -4,6 +4,8 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 17 (the configuration EEPROM), 2026-10-10: the layout derived from the firmware and confirmed on the bench dongle — whose signature byte reads 0x00, most likely zeroed by step 2's block-0 sweep, so the dongle has ignored its EEPROM throughout. Section "Step 17" below.
+
 Step 16.5 (the stream kinds), 2026-10-10: `LosslessStream` / `AccountedStream` / `RestrictedStream` built and benched — a paused retune loses nothing, but the new configuration begins up to the FIFO's fill (6–10 blocks) after the reported break, and 2.88 Msps carries periodic phase glitches. Section "16.5" below.
 
 Step 16 (the dropped-block counter), 2026-10-10: **writing 0 to its byte clears it, and its blocks are samples lost**: every control transfer during the stream loses ~850–2,100 samples at 2.4 Msps, unseen by the host; the driver clears it at start and reports it through `take_dropped_blocks`. Section "Step 16" below.
@@ -102,6 +104,45 @@ the 20 MHz grid between 500 and 840 MHz) and each recovers 7–17 dB with
 G = 35. Above 840 MHz the other direction (G = 2) gives 5–14 dB. In the
 800 MHz public-safety band (851–869 MHz) that is 58–60 → 65–67 dB; the
 image of a channel there is 7.14 MHz above it.
+
+## Step 17 — the configuration EEPROM — `eeprom.md`, `data/step17-eeprom-read.txt` — `derived/examples/eepromread.rs`
+
+The layout derived clean-room from the firmware alone (every fact cited
+by ROM address in [`eeprom.md`](eeprom.md); the deriver read nothing
+outside this directory and the ROM listing, and says where the result
+matches a layout it recognised): at boot the firmware reads bytes
+0x00-0x0D and uses the EEPROM only if bytes 0-1 are **0x28 0x32**;
+idVendor / idProduct at 0x02-0x05 little-endian; 0x06 = 0xA5 for a serial
+string; 0x07 the configuration bits (remote wake-up, a second interface,
+GPIO3, DEMOD_CTL_1); from 0x09 the manufacturer, product and serial
+string descriptors, each placed by the one before's bLength; a patch list
+at 0x4E (marker 0x5C, length, then (address, value) records written into
+the 8051's external data before enumeration). The host reads it through
+block 3 (wIndex 0x0300, wValue = offset << 8 | 0xA0, ≤ 16 bytes a
+request) and writes it through block 3 Set; **block 0 must never address
+0xA0**: its page write puts the page number into the slave's register 0,
+which on the EEPROM is the signature's first byte.
+
+The bench dongle, read (read only, 256 bytes; the owner's provenance
+record at 0x3C-0x7F redacted in the record):
+
+- bytes 1-0x3B as the layout says: 0x32, 0bda:2838, 0xA5, configuration
+  0x16, strings "MimoCAD", "MimoSDR", "GFD" chained by bLength exactly;
+- **byte 0 is 0x00, not 0x28: the signature is broken, so the firmware
+  ignores the EEPROM** — the dongle has enumerated with the ROM's
+  defaults (0bda:2832, "Generic", serial "77771111153705700") throughout
+  this derivation. The likely writer is this derivation's own step 2,
+  whose block-0 sweep of every I²C address reached 0xA0 (the hazard
+  above);
+- bytes 0x80-0xFF repeat 0x00-0x7F: **this dongle's EEPROM is 128 bytes**
+  (addresses wrap), not the M24C02's 256;
+- the provenance record overlaps the patch list's place: 0x4E reads 0x47,
+  so no patch list runs — but **a record with 0x5C at 0x4E would be run
+  as register patches at boot**.
+
+`eeprom.md` states the ROM's defaults (the IDs, the three strings, a CRC
+constant) as facts cited by address: they are what every blank- or
+broken-EEPROM dongle shows on the bus.
 
 ## Step 16 — the dropped-block counter, and what loses samples — `data/step16-drop-counter.jsonl`, `data/step16-drop-phase.jsonl` — `derived/examples/dropcounter.rs`, `dropphase.rs`
 
