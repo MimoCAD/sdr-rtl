@@ -13,8 +13,11 @@
 //! - **Role**: needed for content, not for the stream (all zero gives a
 //!   constant 0x80 output); our design, the observed set and the
 //!   power-on set carry a tone alike (`data/step10-3c-coeffs.json`).
-//!   What they filter — rate, length, place in the chain — is open
-//!   (findings 10.6).
+//! - **What they filter** (findings 12.4): a 32-tap symmetric FIR at
+//!   f_xtal, field k setting taps k and 31 − k, ahead of a fixed chain —
+//!   the assumption this design was made under, confirmed. Seven
+//!   clean-room alternatives were benched against it; none beat it on both
+//!   aliases and flatness (findings 12.7), so it stays.
 //!
 //! The values the vendor driver was seen to write (findings 9b item 13)
 //! are not in this driver, not even as a test vector: the design below

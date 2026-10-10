@@ -489,6 +489,12 @@ impl Rtl {
     /// which on Linux first detaches a kernel driver bound to it and
     /// elsewhere is a plain claim.
     pub fn rx_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
+        self.rx_stream_with_taps(transfer_bytes, queue_depth, taps::design_registers())
+    }
+
+    /// [`Rtl::rx_stream`] with a given image of the 20 tap registers
+    /// (page 1 0x1C-0x2F, `taps::pack`'s layout) in place of our design.
+    pub fn rx_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; taps::TAP_REGS]) -> Result<RtlStream> {
         if !self.link.claim_stream() {
             return Err(unsupported("a stream of this receiver already exists; one at a time".into()));
         }
@@ -509,7 +515,22 @@ impl Rtl {
         };
         let rate = demod::output_rate_of_ratio(self.ratio);
         let inner = BulkIqStream::new(BACKEND, endpoint, stream::WIRE_FORMAT, transfer_bytes, queue_depth, rate);
-        Ok(RtlStream::new(inner, self.link.clone(), self.ratio, taps::design_registers()))
+        Ok(RtlStream::new(inner, self.link.clone(), self.ratio, tap_regs))
+    }
+
+    /// The 20 tap registers as they read now (page 1 0x1C-0x2F; after a
+    /// power cycle, before any stream, the chip's power-on values).
+    pub fn taps(&self) -> Result<[u8; taps::TAP_REGS]> {
+        let v = self.link.demod_read(protocol::TAP_PAGE, protocol::TAP_FIRST, taps::TAP_REGS as u16)?;
+        let mut r = [0u8; taps::TAP_REGS];
+        r.copy_from_slice(&v[..taps::TAP_REGS]);
+        Ok(r)
+    }
+
+    /// The request layer, for bench programs (`--features bench`).
+    #[cfg(feature = "bench")]
+    pub fn link(&self) -> &Link {
+        &self.link
     }
 }
 

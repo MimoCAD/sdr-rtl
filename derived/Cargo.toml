@@ -14,3 +14,15 @@ doctest = false
 [dependencies]
 sdr-core = { path = "../../core", features = ["usb"] }
 nusb = "0.2"
+
+[features]
+# The request layer exposed (`Rtl::link`) for the bench programs in examples/.
+bench = []
+
+[[example]]
+name = "filterstudy"
+required-features = ["bench"]
+
+[[example]]
+name = "record"
+required-features = ["bench"]

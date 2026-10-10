@@ -4,6 +4,10 @@ Replay: `cargo run --release -p sdr-rtl --example harness -- <step>`
 
 Status (2026-10-09): **the single-write hypothesis is exhausted.** From the documented baseline, no single write anywhere the register map has room for makes the chip stream raw samples: the bit scan (10,240), the plain byte scan of demodulator pages 0–2 (196,608), the restart byte scan of pages 0–2 (196,608, complete), pages 3 and 4 (65,536 each), the system block (65,536) and the USB block (130,407, with 155 test-mode values deferred) — about 790,000 candidates, **0 streams**. The only bytes ever seen are 188-byte transport-stream blocks (page 0 0x07, both scans; page 1 0x92 in the plain one). The raw-sample mode therefore needs more than one write (or a state the documented baseline excludes); how to search that larger space is a decision for the project owner. **Update, same day:** the bit scan was re-run from two other starting states — the documented low-IF state with the tuner tuned (step 4's, proven live by the tone) and the bare power-on state — 2 × 10,240 candidates, **0 streams** (section "the bit scan from two other starting states" below). The only new bytes: page 0 0x07 bit 7 with the tuner programmed replays the endpoint FIFO's 20 × 188 bytes at 45 MB/s, not samples. With that path held open, a third bit scan (10,240, content judged per window) found **no bit that changes the content**: every window that could be scored was the same 3,760-byte replay; 28 bits only throttle or stop it. Records compressed where large (`data/step3-bytescan.jsonl.gz`, `data/step3-bytescan-restart.jsonl.gz`); `gunzip -k` before re-running either scan. The bulk detector is proven on the wire (below).
 
+Step 13 (side by side with the earlier driver), 2026-10-10: **equal on every measure.** Tone SNR within ~1 dB at matched level; frequency within ~20 Hz at 300 MHz; a replayed P25 control channel decodes 403–413 TSBKs (earlier) against 410–417 (new) over three 20 s runs; 600 s at 2.4 Msps with 0 samples lost by either. Section "Step 13" below.
+
+Step 12 (the filter study), 2026-10-10: **the 20 tap registers are a 32-tap symmetric FIR at f_xtal = 28.8 MHz** (field k sets taps k and 31 − k; one LSB weight), ahead of a fixed chain measured per rate. **The "2.4 MHz alias, 8–17 dB" of step 10 was the tone source's own DAC images** (it ran at 2.4 Msps) plus compression at 61 dB of gain: with the source at 8 Msps there is no 2.4 MHz alias and no image at 2.88 Msps. Our taps put aliases landing inside ±0.7 MHz 38 dB down at 2.048 Msps and inside ±0.8 MHz 42 dB down at 2.4; seven clean-room candidates did not beat them on both aliases and flatness, so they stay. Section "Step 12" below.
+
 Step 11 (the driver `derived/` on the bench), 2026-10-10: **it streams, tunes and controls the stream as specified.** The tuner programmed at open, before the start: six tones land on their predicted bins, 53.6–58.3 dB. stop → rate change → start runs at the new rate (1.024, 2.4, 2.88, 2.048 Msps, delivered within 0.2 %, no overflow). The restart bit alone restarts in 4.7 ms; the pause gives 0 samples in 500 ms. RF 100–220 MHz in 10 MHz steps: the tone at every step, 57.4–58.9 dB. Section "Step 11" below.
 
 Step 10 (step 9's sequence on our bench), 2026-10-09: **CONFIRMED — the chip streams raw samples on our bench.**
@@ -35,6 +39,188 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 13 — side by side with the earlier driver (`crates/rtl/src`, through `mimosdr`'s `rtl:` backend) — `data/step13-side-by-side.jsonl`
+
+Same dongle, same bench, one process on the dongle at a time; the earlier
+driver run only as a program (`examples/record.rs`, `rtl:0`), never read.
+The new one through `derived/examples/record.rs` (the same SigMF format).
+2.4 Msps throughout. The drivers' gain settings do not correspond, so
+each ran at three and they are compared at matched output level.
+
+- **Tone** (300.3 MHz, the source at 8 Msps, backoff −15 dB; tuned
+  300 MHz; 10 s each). Peak bin over the median, by RMS output level:
+  earlier driver 53.1 dB at −24.8 dBFS (gain 20), 60.6 at −15.2 (30), 64.8
+  at −6.7 (40); new 45.4 at −30.2 (codes 5/5/2), 57.7 at −20.0 (8/8/2),
+  62.3 at −9.7 (8/8/5). Interpolated to the same level the two agree
+  within ~1 dB (−20 dBFS: 56.9 / 57.7; −9.7: 63.3 / 62.3). **Frequency:** the
+  tone reads +1,266 to +1,282 Hz high through the earlier driver, +1,290 to
+  +1,300 through the new — the same ~4.3 ppm source-to-dongle offset; the
+  ~20 Hz between them is each PLL's rounding (the new one tunes 299,999,995.4 Hz).
+- **P25 decode.** `~/mimosdr-captures/cc_852675` (4 s of the 852.675 MHz
+  control channel, recorded on an RTL; 82 TSBKs ok / 12 CRC fail decoded
+  directly) looped by `examples/keyer.rs replay:` at its centre
+  852.97494 MHz, txvga 20, through the 20 dB pad; each driver records
+  20 s tuned there (earlier: gain 30 dB; new: codes 8/8/4); both decoded
+  by `mimosdr follow --cc 852.67904M` — the channel lands 4.0 kHz high on
+  this bench (the source's and the dongle's crystals, ~4.7 ppm; at
+  852.675 the decoder found 17 ok of the earlier driver's capture). Three
+  runs each, TSBKs ok / CRC fail: **earlier 403/74, 413/71, 404/73;
+  new 410/72, 410/70, 417/68.** Channel 15.4–16.0 dB over the noise in a
+  10 kHz band in every capture (the recording's own: 15.7).
+- **Sample loss**, 600 s each with no signal: earlier driver
+  1,440,014,336 samples, 0 overflows, 0 gaps; new 1,440,006,144 against
+  1,440,003,021 expected (1.000002), 0 overflows, 0 timeouts.
+  USB_EPA_FIFO_CFG[31:24] reads 255 before and after every new-driver run:
+  saturated, so it counts nothing until cleared (not attempted: a USB-block
+  write).
+
+**The new driver is the earlier one's equal on every measure taken** —
+SNR, frequency, decode, loss — on this bench.
+
+## Step 12 — the filter study: the 20 tap registers are a 32-tap FIR at 28.8 MHz; the "2.4 MHz alias" was the tone source's — `data/step12-*.jsonl` — `derived/examples/filterstudy.rs`, `filterfit.rs`, `tapfit.rs`
+
+Bench as step 11, through the driver (`Rtl::rx_stream_with_taps`; register
+reads with `--features bench`). Every sweep: RF 300 MHz, gains LNA 8,
+mixer 8, VGA **2** (41 dB), the tone at txvga 0, backoff −15 dB; per
+point the tone's level where two fold models put it (`plain`: folded at
+the output rate; `staged`: folded at 2.4 MHz first), the four strongest
+lines, the median bin. Levels in dBFS per bin (a full-scale tone on a bin
+= 0 dB; Hann, 4,096 points, 16 segments).
+
+### 12.1 Linearity: compression at 61 dB, none at 41 dB
+
+A +300 kHz tone stepped in level (`filterstudy linearity`). At 8/8/8
+(61 dB) the output compresses: backoff −10 → −30 dB moves the tone only
+−9.8 → −13.8 dBFS while the median bin rises −75.1 → −62.7 dBFS. Page 1
+0x11 en_dagc on or off changes nothing (to 0.2 dB). At 8/8/2 the tone
+follows the source dB for dB from −10 to −35 (−14.2 → −39.6 dBFS); the
+median bin, −77 dBFS, is the ADC's floor (the same at 2/2/2). So it is
+analogue compression, not a gain loop; step 10's tone tests (8/8/8,
+−20 dB) ran ~7 dB into it. Every sweep below runs at 8/8/2.
+
+### 12.2 The power-on tap image
+
+`filterstudy poweron` (`data/step12-poweron.jsonl`): after a power cycle
+the 20 registers read `09F6D2A79AC9277706BFECF44F0BFC01633554A7`, fields
+9 −10 −46 −89 −102 −55 39 119 107 −20 −188 −245 −64 355 853 1191 (DC gain
+2·Σ = 3,708; ours 4,096).
+
+### 12.3 The 2.4 MHz alias is the tone source's
+
+Swept −4…+4 MHz (50 kHz) at 2.048, 2.4 and 2.88 Msps with our taps, the
+power-on set and the step-9 fixture (`data/step12-fold-source2p4.jsonl`):
+tones beyond the output's Nyquist land where "fold at 2.4 MHz, then at the
+output rate" puts them (2.048 Msps: 110 of 120), 15–18 dB under the
+in-band level at the landing, **the same for all three tap sets**
+(spread 2.3 dB) — and at 2.88 Msps every in-band tone at ±1.0–1.15 MHz
+showed again at ∓1.25–1.40 MHz, 15–28 dB down. A fixed 2.4 MHz stage
+would explain both; so would the source. `tone_source` ran at 2.4 Msps:
+its DAC puts images of the tone at ± 2.4 MHz. Run again with the source
+at 8 Msps (`tone_source --rate 8000000`, `data/step12-source8-check.jsonl`):
+**every 2.4 MHz landing falls to the floor** (50–57 dB down), and at
+2.88 Msps **0 of 8** edge tones has an image. Findings 10.3's "a stage
+samples at 2.4 MHz … alias rejection 8–17 dB" was the source's images
+(and the compression of 12.1), not the chip. The bench programs now run
+the source at 8 Msps (`bench::SOURCE_CMD`).
+
+### 12.4 The registers: a 32-tap symmetric FIR at f_xtal
+
+Single fields swept ±1.2 MHz (25 kHz) at 2.4 Msps (`filterstudy matrix`,
+`data/step12-singles.jsonl`; 8-bit fields at 127, 12-bit at 1024). Each
+field alone answers with nulls that move with its index (c1 ~0.5 MHz, c3
+~0.6, c5 ~0.7, c7 ~0.9, c9 ~1.1). Fitted (`tapfit`) against "field k sets
+taps k and L − 1 − k of an L-tap symmetric FIR at Fs", one scale per
+field, the shared response divided out through field 15: **L = 32,
+Fs = 28.75 MHz, 1.0 dB rms** (L = 31: 1.04 at 27.35 MHz; L = 33: 1.12 at
+30.15 MHz, both off f_xtal). So |H(f)| = |Σ 2·c_k·cos(π f (31 − 2k) / 28.8 MHz)|.
+**One LSB weight for both widths** (`data/step12-narrow-weight.jsonl`): c7 =
+127 against c15 = −X at +100 kHz nulls at X = 127 (−67.5 dBFS against
+−52.0 at 112 and −52.1 at 137). Our design's assumption (findings 10.3) —
+28.8 MHz, 32 taps, even — is confirmed.
+
+### 12.5 The rest of the chain, after the FIR
+
+The clean fold sweeps (`data/step12-fold-clean.jsonl`) less each set's
+FIR model leave the same response for all three sets within ~1 dB over
+±1.6 MHz (`tapfit --residual`): what follows the FIR is fixed. Measured
+directly through a near-flat set (c15 = 2047 alone, ±6 MHz,
+`data/step12-chain.jsonl`), in dB re 0 Hz:
+
+| Output | flat (±1 dB) to | at ±R/2 | ~0.4 MHz past | beyond |
+|---|---|---|---|---|
+| 2.048 Msps | ±0.8 MHz | −5 at ±1.0, −20 at ±1.2 | −30 at ±1.4 | −33 to −48 (floor-limited) |
+| 2.4 Msps | ±1.0 MHz | −6 at ±1.2 | −19 at ±1.4, −32 at ±1.6 | −32 to −49 |
+| 2.88 Msps | ±1.2 MHz | −5 to −7 at ±1.4 | −14 at ±1.6, −38 at ±1.8 | −30 to −41; one leak, −15 at −4.6 MHz |
+
+### 12.6 The sets scored (clean source)
+
+Aliases are the tones beyond ±R/2 that land inside the usable band; the
+figure is the worst, in dB under the in-band level at the landing.
+
+| Set | 2.048: flat ±0.8 / worst alias inside ±0.8 | 2.4: flat ±0.96 / inside ±0.8 / inside ±1.0 | 2.88: flat ±1.0 / inside ±1.0 | noise floor under the reference |
+|---|---|---|---|---|
+| ours (Hamming sinc) | 2.7 dB / 32.5 | 4.6 / 41.8 / 25.8 | 4.8 / 37.0 | 57.4 / 57.3 / 53.3 dB |
+| power-on | 2.6 / 26.2 | 2.9 / 29.4 / 17.8 | 3.0 / 29.7 | 57.0 / 56.7 / 53.2 |
+| step-9 fixture | 1.3 / 29.8 | 2.6 / 39.4 / 24.7 | 2.9 / 38.2 | 57.6 / 57.2 / 53.6 |
+
+The worst aliases at 2.048 and 2.4 Msps are tones just past ±R/2 folding
+to the band edge (e.g. +1.45 → −0.60 MHz at 2.048): the FIR and the
+chain's edge together. **At 2.88 Msps there are no images**: the output
+carries real spectrum to its edges, aliases inside ±1.0 MHz ≥ 37 dB down
+with our taps. The rate is not capped at 2.4 Msps (a cap was written on
+12.3's first reading and withdrawn the same night).
+
+### 12.7 New designs, clean room, on the bench
+
+A designer who had read only `derived/src/taps.rs`, the 12.5 tables and
+the step-12 records (no other driver, no remembered table) modelled each
+rate as FIR (12.4) × the measured chain (12.5) and designed by linear
+programming (minimax over the aliases that land inside ±u, the passband
+held to 1 dB of the chain's trend, DC gain 4,096), integers by rounding
+and a local search. Their finding: **at the full usable band (u = 0.8 /
+1.0 / 1.2 MHz at 2.048 / 2.4 / 2.88) the worst alias comes from R − u, on
+the chain's own cut-off; 32 taps at 28.8 MHz add only a few dB there.
+Narrowing u by ~0.1 MHz buys 10–15 dB.** Their model reproduced our
+measurements of ours and the power-on set within ~2 dB (ours at 2.88:
+45 modelled, 37 measured).
+
+Four candidates swept ±6 MHz (`data/step12-candidates.jsonl`, `filterstudy
+matrix`), worst alias inside ±u in dB down / passband spread (raw):
+
+| Set | 2.048: ±0.7 / ±0.8 / spread ±0.82 | 2.4: ±0.7 / ±0.9 / ±1.0 / spread ±0.96 | 2.88: ±1.0 / ±1.1 / spread ±1.0 |
+|---|---|---|---|
+| ours | 38.1 / 32.9 / 3.4 | 43.7 / 41.7 / 26.0 / 4.9 | 38.8 / 38.1 / 4.9 |
+| C2 (all rates) | 36.5 / 30.3 / 1.4 | 46.2 / 42.2 / 24.1 / 2.6 | **12.5** / 11.8 / 2.5 |
+| C3 (2.048) | 36.8 / 32.7 / 1.6 | | |
+| C4 (2.4) | 38.6 / 32.4 / 2.0 | 44.6 / 44.2 / 27.1 / 3.6 | |
+| C5 (2.88) | | | **30.0** / 28.5 / 2.6 |
+
+The candidates are flatter (1.4–3.6 dB against 3.4–4.9) and at 2.4 Msps a
+few dB better, but C2 and C5 keep FIR side lobes of −4 to −16 dB at
+4–6 MHz, and at 2.88 Msps the chain passes −4.7…−5.9 MHz well above the
+−45 dB the design assumed: those tones land inside ±1.0 MHz only 12–30 dB
+down. Ours rolls off steeply beyond 2 MHz and holds at every rate.
+
+Round 2, with the FIR held ≤ −40 dB (D1) or ≤ −35 dB (D2, D3) from 2.5 to
+14.4 MHz (`data/step12-candidates-round2.jsonl`; ours swept again
+alongside, within 0.5 dB of the first run):
+
+| Set | fields c0…c15 | 2.048: ±0.7 / ±0.8 / spread ±0.82 | 2.4: ±0.8 / ±1.0 / spread ±0.96 | 2.88: ±1.0 / spread ±1.0 |
+|---|---|---|---|---|
+| ours | −6 −5 −5 −2 3 15 34 61 96 138 185 233 279 317 345 360 | 38.1 / 33.0 / 3.4 | 41.6 / 25.9 / 4.9 | 37.4 / 5.1 |
+| D1 (all rates) | −31 −31 −37 −41 −39 −26 −3 32 80 136 199 264 324 376 413 433 | 34.8 / 29.7 / 1.5 | 37.6 / 22.7 / 2.5 | 36.9 / 2.5 |
+| D2 (2.048) | −41 −13 −7 2 17 38 64 96 129 166 200 234 263 286 302 311 | 39.7 / 34.4 / 3.8 | | |
+| D3 (2.4) | −48 −31 −32 −31 −21 −3 24 59 104 153 206 258 305 346 373 388 | | 40.7 / 24.4 / 3.3 | |
+
+**Decision (2026-10-10): the driver keeps its Hamming-sinc design.** No
+candidate is better on both counts: D1 is 2–3 dB flatter and 3–4 dB worse
+on aliases; D2 and D3 are within ±1.5 dB of ours either way. Between the
+two, aliases win: the passband droop is a fixed, measured response a
+receiver can equalise after the fact, aliased energy cannot be taken
+out. The designer's program (an LP solver from scratch, std only) stays
+outside the repository (`/tmp/rtl-design/fir-design`); a per-rate set
+would need it brought in as a generator first.
 
 ## Step 11 — the driver `derived/` on the bench — `data/step11-derived-hwcheck.jsonl` — `derived/examples/hwcheck.rs`
 
