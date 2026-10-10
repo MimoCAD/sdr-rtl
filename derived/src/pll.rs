@@ -27,8 +27,9 @@
 //!
 //! R2 VCO_INDICATOR[6:0] is named and never described; step 4c read it
 //! as one function of the VCO's position (0 and 63 outside the range,
-//! 70-127 inside), and `R2_BY_LOCK_STATE` counts, per value, how often
-//! the tone was received. The lock reading here is that table's.
+//! 70-127 inside) and step 14 filled the bottom in (64-69 inside), and
+//! `R2_BY_LOCK_STATE` counts, per value, how often the tone was
+//! received. The lock reading here is that table's.
 
 use sdr_core::{Error, Result};
 
@@ -244,12 +245,12 @@ impl Pll {
     }
 }
 
-/// The span of R2 values the sweep read with the tone received at full
-/// strength more often than not received at all (`R2_BY_LOCK_STATE`):
-/// 70..=127. 0 and 63 lie outside it (out of range on either side,
-/// findings step 4c), and the values between the sweep's steps (its
-/// Nint step is 5; step 4e read 93 at Nint 84 with the tone received)
-/// lie inside it.
+/// The span of R2 values read with the tone received at full strength
+/// more often than not received at all (`R2_BY_LOCK_STATE`, steps 4c and
+/// 14): 64..=127. 0 and 63 lie outside it (the range's ends on either
+/// side); 64-69, which step 4c's Nint steps of 5 never read, are step
+/// 14's bottom 90 MHz of the VCO; step 4e's 93 (between step 4c's steps,
+/// the tone received) lies inside.
 pub fn r2_locked_span() -> (u8, u8) {
     let inside = R2_BY_LOCK_STATE.iter().filter(|c| c.full_strength > c.not_received).map(|c| c.r2);
     let lo = inside.clone().min().unwrap_or(u8::MAX);
@@ -465,18 +466,18 @@ mod tests {
         assert_eq!(Pll::from_registers(0b110 << 5 | 0x14, 0xD1, 0x50, 0x9A), None);
     }
 
-    /// Findings step 4c: 0 and 63 are out of range, 70-127 inside; bit 7
-    /// reads 1 always and is masked; step 4e's 93 (between the sweep's
-    /// steps) is inside.
+    /// Findings steps 4c and 14: 0 and 63 are the range's ends, 64-127
+    /// inside (step 14 read 64-69 received at VCO 1.709-1.797 GHz, among
+    /// them findings 11's 220 MHz at /8, R2 69); bit 7 reads 1 always and
+    /// is masked; step 4e's 93 (between step 4c's steps) is inside.
     #[test]
     fn r2_lock_reading() {
-        assert_eq!(r2_locked_span(), (70, 127));
+        assert_eq!(r2_locked_span(), (64, 127));
         assert!(!r2_says_locked(0));
         assert!(!r2_says_locked(63));
         assert!(!r2_says_locked(0x80 | 63));
         assert!(!r2_says_locked(1));
-        assert!(!r2_says_locked(69));
-        for v in [70u8, 77, 83, 87, 91, 93, 95, 103, 108, 112, 116, 120, 122, 125, 127] {
+        for v in [64u8, 65, 66, 67, 68, 69, 70, 77, 83, 87, 91, 93, 95, 103, 108, 112, 116, 120, 122, 125, 127] {
             assert!(r2_says_locked(v), "{v}");
             assert!(r2_says_locked(0x80 | v), "{v} with bit 7");
         }

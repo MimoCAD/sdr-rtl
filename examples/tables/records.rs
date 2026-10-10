@@ -179,6 +179,46 @@ pub struct LoFind {
     pub points: Vec<(f64, i64)>,
 }
 
+// ---- vco-edge (step 14) ----
+
+/// One step 14 line: the synthesizer under one divider at one RF, R2 and
+/// the tone through the raw-sample stream (`derived/examples/vcoedge.rs`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct VcoEdgeLine {
+    pub rf_hz: f64,
+    pub divider: u32,
+    pub vco_hz: f64,
+    /// R2 VCO_INDICATOR[6:0], 20 ms after the write.
+    pub r2: u8,
+    /// The tone's bin over the median bin, dB.
+    pub tone_db: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct VcoEdge {
+    pub provenance: Provenance,
+    pub lines: Vec<VcoEdgeLine>,
+}
+
+pub const VCO_EDGE_RECORD: &str = "step14-vco-edge.jsonl";
+
+pub fn load_vco_edge(dir: &Path) -> Result<VcoEdge, String> {
+    let file = VCO_EDGE_RECORD;
+    let (_, lines, provenance) = load_jsonl(dir, file)?;
+    let mut out = Vec::new();
+    for (n, l) in lines.iter().enumerate() {
+        let line = n + 2;
+        out.push(VcoEdgeLine {
+            rf_hz: ctx(l.field_f64("rf"), file, line)?,
+            divider: ctx(l.field_i64("divider"), file, line)? as u32,
+            vco_hz: ctx(l.field_f64("vco_hz"), file, line)?,
+            r2: ctx(l.field_i64("r2"), file, line)? as u8,
+            tone_db: ctx(l.field_f64("tone_over_median_db"), file, line)?,
+        });
+    }
+    Ok(VcoEdge { provenance, lines: out })
+}
+
 pub fn load_lo_find(dir: &Path, sel_div: u8) -> Result<LoFind, String> {
     let file = format!("step4-lo-find-sel{sel_div:03b}.jsonl");
     let (header, lines, provenance) = load_jsonl(dir, &file)?;

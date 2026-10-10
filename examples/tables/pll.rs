@@ -5,7 +5,7 @@
 //! and the LO spans the usable codes reach.
 
 use crate::emit::{self, Src, f};
-use crate::records::{LoFind, PllSweep, Provenance};
+use crate::records::{LoFind, PllSweep, Provenance, VcoEdge};
 use crate::scale::RAIL_COUNTS;
 
 /// A reading at or below this many counts is the tone received at full
@@ -23,6 +23,13 @@ pub const PARTIAL_MAX_COUNTS: i64 = 6000;
 /// isolated hit is a coincidence of a harmonic or an image, findings.md
 /// step 4d).
 pub const MIN_RUN_SETTINGS: usize = 3;
+/// Step 14's tone through the stream (dB over the median bin): at or
+/// above this it is received at full strength. In the record the
+/// received tones read 58.7-59.1 dB, the absent ones 1.3-4.1 dB, and one
+/// setting between (23.8 dB, VCO 3.737 GHz).
+pub const EDGE_RECEIVED_MIN_DB: f64 = 50.0;
+/// At or above this, received partially.
+pub const EDGE_PARTIAL_MIN_DB: f64 = 10.0;
 /// The tuner's documented frequency range ([R820T] Table 1-2): a sweep
 /// setting whose tone lies outside it says nothing about the lock, so
 /// the R2 lock-state table counts only settings inside it.
@@ -178,11 +185,13 @@ pub struct PllTables {
     /// received at full strength, partially, and not at all.
     pub r2_by_value: Vec<(u8, usize, usize, usize)>,
     pub r2_settings_counted: usize,
+    /// Step 14's settings counted into `r2_by_value`.
+    pub r2_edge_counted: usize,
     pub sweep_runs: Vec<Run>,
     pub nint_step: u16,
 }
 
-pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind]) -> Result<PllTables, String> {
+pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<PllTables, String> {
     let mut entries = Vec::new();
     let mut sweep_runs = Vec::new();
     for code in 0..8u8 {
@@ -308,14 +317,35 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind]) -> Result<PllTables, Strin
             }
         }
     }
+    // Step 14 (the VCO's ends at 1 MHz RF steps, through the stream)
+    // counted into the same table, classified by its own measure.
+    let mut r2_edge_counted = 0;
+    for l in edge.lines.iter().filter(|l| l.rf_hz >= TUNER_RANGE_HZ.0 && l.rf_hz <= TUNER_RANGE_HZ.1) {
+        r2_edge_counted += 1;
+        let i = match r2_by_value.iter().position(|v| v.0 == l.r2) {
+            Some(i) => i,
+            None => {
+                r2_by_value.push((l.r2, 0, 0, 0));
+                r2_by_value.len() - 1
+            }
+        };
+        if l.tone_db >= EDGE_RECEIVED_MIN_DB {
+            r2_by_value[i].1 += 1;
+        } else if l.tone_db >= EDGE_PARTIAL_MIN_DB {
+            r2_by_value[i].2 += 1;
+        } else {
+            r2_by_value[i].3 += 1;
+        }
+    }
     r2_by_value.sort_by_key(|v| v.0);
 
-    Ok(PllTables { entries, vco_received_hz, vco_received_nint: (nint_lo, nint_hi), vco_range_hz, reach, unreachable, r2_rows, r2_10ms_differs, r2_by_value, r2_settings_counted, sweep_runs, nint_step })
+    Ok(PllTables { entries, vco_received_hz, vco_received_nint: (nint_lo, nint_hi), vco_range_hz, reach, unreachable, r2_rows, r2_10ms_differs, r2_by_value, r2_settings_counted, r2_edge_counted, sweep_runs, nint_step })
 }
 
-pub fn emit(t: &PllTables, sweep: &PllSweep, lo_finds: &[LoFind]) -> String {
+pub fn emit(t: &PllTables, sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> String {
     let mut provs: Vec<&Provenance> = vec![&sweep.provenance];
     provs.extend(lo_finds.iter().map(|l| &l.provenance));
+    provs.push(&edge.provenance);
     let mut s = Src::new(&provs);
     s.module_doc(&format!(
         "The PLL: VCO range, SEL_DIV dividers, the reference rule, the Nint
@@ -479,16 +509,24 @@ after the PLL words were written, per sweep Nint and SEL_DIV code
     s.line("];");
     s.blank();
     s.doc(&format!(
-        "R2 by lock state: for each distinct R2 value, how many sweep settings
-of the usable codes under their dividers read it with the tone received
-at full strength (at most {} counts), partially (at most {}), and not at
-all — {} settings, those whose tone lay inside the tuner's {:.0}-{:.0} MHz
-range. findings.md step 4c reads 0 and 63 as \"out of range\" and 70-127
-as the VCO's position inside it; the counts say how far the record
-bears that out.",
+        "R2 by lock state: for each distinct R2 value, how many
+settings read it with the tone received at full strength,
+partially, and not at all. Two records: the step 4c sweep's
+settings of the usable codes under their dividers ({}
+settings; the meter at most {} counts full strength, at most
+{} partial), and step 14's ends of the VCO at 1 MHz RF steps
+through the raw-sample stream ({} settings; the tone at least
+{} dB over the median bin full strength, at least {} partial)
+— those whose tone lay inside the tuner's {:.0}-{:.0} MHz
+range. Step 4c's Nint steps of 5 never read 64-69; step 14
+reads them, received, at the bottom 90 MHz of the VCO. 0 and
+63 are the range's ends.",
+        t.r2_settings_counted,
         RECEIVED_MAX_COUNTS,
         PARTIAL_MAX_COUNTS,
-        t.r2_settings_counted,
+        t.r2_edge_counted,
+        EDGE_RECEIVED_MIN_DB,
+        EDGE_PARTIAL_MIN_DB,
         TUNER_RANGE_HZ.0 / 1e6,
         TUNER_RANGE_HZ.1 / 1e6
     ));

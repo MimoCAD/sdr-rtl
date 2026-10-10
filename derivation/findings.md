@@ -95,6 +95,13 @@ above the top, each including a sliver where the tone is still received.
 The divider rule (`Pll::program`, VCO 1.71–3.65 GHz) stays inside the
 measured range at both ends.
 
+**Taken into the driver (2026-10-10):** the table generator
+(`examples/tables`) reads this record beside step 4c's (the tone ≥ 50 dB
+over the median bin = full strength, ≥ 10 dB partial; the record's
+header added after the run, naming the harness commit), and
+`R2_BY_LOCK_STATE` now counts 64–69 as received: `r2_locked_span` is
+64..=127.
+
 ## Step 13 — side by side with the earlier driver (`crates/rtl/src`, through `mimosdr`'s `rtl:` backend) — `data/step13-side-by-side.jsonl`
 
 Same dongle, same bench, one process on the dongle at a time; the earlier

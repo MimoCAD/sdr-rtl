@@ -39,6 +39,23 @@ fn program(link: &Link, pll: &Pll) -> Result<[u8; 5], String> {
     .map_err(|e| e.to_string())
 }
 
+/// The record header's `harness` (the generator's provenance): the
+/// sdr-rtl commit and whether the work tree differs from it.
+fn harness_json() -> String {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(env!("CARGO_MANIFEST_DIR"))
+            .args(args)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default()
+    };
+    let head = git(&["rev-parse", "--short", "HEAD"]);
+    let dirty = !git(&["status", "--porcelain", "--", "."]).is_empty();
+    format!("{{\"crates_rtl_head\":\"{head}\",\"harness_uncommitted\":{dirty},\"program\":\"derived/examples/vcoedge.rs\"}}")
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let get = |k: &str, d: f64| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(d);
@@ -52,6 +69,10 @@ fn run() -> Result<(), String> {
     let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
+    println!(
+        "{{\"kind\":\"header\",\"step\":\"14\",\"measured\":\"R2 (VCO_INDICATOR) and a tone 300 kHz above the RF, RF {from}-{to} MHz in {step} MHz steps, the synthesizer rewritten under /8 and /16 at each\",\"harness\":{},\"bench\":\"gains LNA 8 mixer 8 VGA 2, {rate} sps, the tone source {SOURCE_CMD:?}, txvga 0, backoff -15 dB\",\"line_legend\":\"rf Hz, divider, vco_hz, r2 = R2 & 0x7F read 20 ms after the PLL write, r2_says_locked, tone_over_median_db at the bin the words put the tone, tone_hz\"}}",
+        harness_json()
+    );
     let n = ((to - from) / step).round() as i64;
     for i in 0..=n {
         let rf = (from + i as f64 * step) * 1e6;
