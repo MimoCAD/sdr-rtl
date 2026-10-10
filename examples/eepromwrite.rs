@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use sdr_rtl::Rtl;
+use sdr_rtl::blocking::Rtl;
 use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_TUNER, windex};
 
 const EEPROM_SLAVE: u16 = 0xA0;

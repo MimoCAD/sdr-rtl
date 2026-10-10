@@ -37,7 +37,8 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
-use sdr_rtl::{OPEN_RF_HZ, Rtl, StreamReport};
+use sdr_rtl::blocking::Rtl;
+use sdr_rtl::{OPEN_RF_HZ, StreamReport};
 
 const TONE_OFFSET_HZ: f64 = 300e3;
 const RETUNE_STEP_HZ: f64 = 100e3;
@@ -119,7 +120,7 @@ fn lossless(retunes: u32, rate: f64, drain_ms: Option<u64>) -> Result<String, St
             next += EVERY;
         }
     }
-    let breaks = s.breaks().map_err(|e| e.to_string())?;
+    let breaks = s.breaks();
     let fin = s.finish().map_err(|e| e.to_string())?;
     all.extend_from_slice(&fin.tail_samples());
     // Segment boundaries: 0, each break, the end. Segment k is centred on

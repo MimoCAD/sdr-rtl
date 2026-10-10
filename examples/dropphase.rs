@@ -23,9 +23,10 @@ use std::f64::consts::PI;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::{Iq, RxSource};
+use sdr_core::Iq;
 use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
-use sdr_rtl::{OPEN_RF_HZ, Rtl};
+use sdr_rtl::OPEN_RF_HZ;
+use sdr_rtl::blocking::Rtl;
 
 const RATE_SPS: f64 = 2.4e6;
 const OFFSET_HZ: f64 = 300e3;

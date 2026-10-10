@@ -10,7 +10,6 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use sdr_core::{Iq, RxSource};
-use sdr_rtl::RtlStream;
 
 pub const FFT_N: usize = 4096;
 /// Segments averaged per spectrum.
@@ -129,7 +128,7 @@ fn cycle_once(off_time: Duration) -> Result<(String, bool, u128), String> {
     std::thread::sleep(off_time);
     let on = witness("on")?;
     let t = Instant::now();
-    while sdr_rtl::list().is_empty() {
+    while sdr_rtl::blocking::list().is_empty() {
         if t.elapsed() > ENUMERATE_DEADLINE {
             return Ok((format!("{off}; {on}"), false, t.elapsed().as_millis()));
         }
@@ -170,7 +169,7 @@ pub struct Capture {
 }
 
 /// Read and drop for `d`.
-pub fn discard(s: &mut RtlStream, buf: &mut [Iq], d: Duration) -> Result<(), String> {
+pub fn discard(s: &mut impl RxSource, buf: &mut [Iq], d: Duration) -> Result<(), String> {
     let t = Instant::now();
     while t.elapsed() < d {
         s.recv_into(buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
@@ -179,7 +178,7 @@ pub fn discard(s: &mut RtlStream, buf: &mut [Iq], d: Duration) -> Result<(), Str
 }
 
 /// At least `n` samples, or whatever arrives by `deadline`.
-pub fn capture(s: &mut RtlStream, buf: &mut [Iq], n: usize, deadline: Duration) -> Result<Capture, String> {
+pub fn capture(s: &mut impl RxSource, buf: &mut [Iq], n: usize, deadline: Duration) -> Result<Capture, String> {
     let mut c = Capture { samples: Vec::with_capacity(n.min(FFT_N * SEGMENTS)), secs: 0.0, overflows: 0, timeouts: 0 };
     let t = Instant::now();
     while c.samples.len() < n && t.elapsed() < deadline {
@@ -193,12 +192,12 @@ pub fn capture(s: &mut RtlStream, buf: &mut [Iq], n: usize, deadline: Duration) 
 }
 
 /// Everything that arrives in `d`.
-pub fn window(s: &mut RtlStream, buf: &mut [Iq], d: Duration) -> Result<Capture, String> {
+pub fn window(s: &mut impl RxSource, buf: &mut [Iq], d: Duration) -> Result<Capture, String> {
     capture(s, buf, usize::MAX, d)
 }
 
 /// A discard, then one spectrum's worth of samples.
-pub fn spectrum_capture(s: &mut RtlStream, buf: &mut [Iq]) -> Result<Capture, String> {
+pub fn spectrum_capture(s: &mut impl RxSource, buf: &mut [Iq]) -> Result<Capture, String> {
     discard(s, buf, DISCARD)?;
     capture(s, buf, FFT_N * SEGMENTS, Duration::from_secs(2))
 }

@@ -607,10 +607,10 @@ pub struct EepromWriteReport {
 
 /// All 256 offsets read, [`EEPROM_REQUEST_MAX`] bytes a request.
 #[cfg(feature = "std")]
-pub(crate) fn read_raw(link: &crate::usb::Link) -> Result<Vec<u8>> {
+pub(crate) async fn read_raw(link: &crate::usb::Link) -> Result<Vec<u8>> {
     let mut raw = Vec::with_capacity(EEPROM_ADDRESS_SPACE);
     for off in (0..EEPROM_ADDRESS_SPACE).step_by(EEPROM_REQUEST_MAX) {
-        raw.extend(link.eeprom_read(off as u8, EEPROM_REQUEST_MAX)?);
+        raw.extend(link.eeprom_read(off as u8, EEPROM_REQUEST_MAX).await?);
     }
     Ok(raw)
 }
@@ -620,9 +620,9 @@ pub(crate) fn read_raw(link: &crate::usb::Link) -> Result<Vec<u8>> {
 /// [`EEPROM_WRITE_CYCLE`] after each, the whole part read back and
 /// compared.
 #[cfg(feature = "std")]
-pub(crate) fn write(link: &crate::usb::Link, new: &Eeprom) -> Result<EepromWriteReport> {
+pub(crate) async fn write(link: &crate::usb::Link, new: &Eeprom) -> Result<EepromWriteReport> {
     new.check_writable()?;
-    let before = Eeprom::from_read(&read_raw(link)?)?;
+    let before = Eeprom::from_read(&read_raw(link).await?)?;
     if before.size() != new.size() {
         return Err(refused(format!(
             "the part reads as {} bytes (findings 17: a 128-byte part repeats in the upper half), the image is {}; compose the image from this part's read",
@@ -633,16 +633,16 @@ pub(crate) fn write(link: &crate::usb::Link, new: &Eeprom) -> Result<EepromWrite
     let chunks = changed_chunks(&before, new);
     for (i, &off) in chunks.iter().enumerate() {
         let data = &new.bytes[off..off + EEPROM_WRITE_CHUNK];
-        if let Err(e) = link.eeprom_write(off as u8, data) {
+        if let Err(e) = link.eeprom_write(off as u8, data).await {
             return Err(Error::Device {
                 backend: BACKEND,
                 context: "EEPROM write",
                 message: format!("chunk 0x{off:02X} ({} of {}, the ones before it written): {e}", i + 1, chunks.len()),
             });
         }
-        std::thread::sleep(EEPROM_WRITE_CYCLE);
+        sdr_core::time::sleep(EEPROM_WRITE_CYCLE).await;
     }
-    let back = read_raw(link)?;
+    let back = read_raw(link).await?;
     let differ: Vec<String> = (0..new.size()).filter(|&i| back[i] != new.bytes[i]).map(|i| format!("0x{i:02X}: wrote 0x{:02X}, read 0x{:02X}", new.bytes[i], back[i])).collect();
     if !differ.is_empty() {
         return Err(Error::Device { backend: BACKEND, context: "EEPROM read-back", message: format!("{} bytes differ: {}", differ.len(), differ.join("; ")) });

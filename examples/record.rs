@@ -19,8 +19,8 @@ use std::io::{BufWriter, Write};
 use std::time::Instant;
 
 use sdr_core::gain::Stage;
-use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl::Rtl;
+use sdr_core::{Iq, TuneRequest};
+use sdr_rtl::blocking::Rtl;
 use sdr_rtl::protocol::{ACCESS_GET, BLOCK_USB, windex, wvalue_usb};
 
 /// USB_EPA_FIFO_CFG, offset 0x160 in the USB block; bits 31:24 are its

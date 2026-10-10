@@ -17,18 +17,18 @@ use std::time::Duration;
 
 use bench::*;
 use sdr_core::gain::Stage;
-use sdr_core::{Iq, RxSource, TuneRequest};
+use sdr_core::{Iq, TuneRequest};
 use sdr_rtl::demod::ddc_if_hz;
 use sdr_rtl::image::{R16, R20, R21, R22};
 use sdr_rtl::pll::{Pll, VCO_INDICATOR_MASK, r2_says_locked};
-use sdr_rtl::{Rtl, usb::Link};
+use sdr_rtl::blocking::{Link, Rtl};
 
 const TONE_OFFSET_HZ: f64 = 300e3;
 const SEL_DIVS: [(u8, u32); 2] = [(0b010, 8), (0b011, 16)];
 const PLL_SETTLE: Duration = Duration::from_millis(20);
 const TOL_BINS: usize = 6;
 
-fn program(link: &Link, pll: &Pll) -> Result<[u8; 5], String> {
+fn program(link: &Link<'_>, pll: &Pll) -> Result<[u8; 5], String> {
     link.with_tuner(|l| {
         for (reg, v) in [(R16, pll.r16()), (R20, pll.r20()), (R21, pll.r21()), (R22, pll.r22())] {
             l.tuner_write(reg, v)?;
@@ -87,7 +87,7 @@ fn run() -> Result<(), String> {
                     continue;
                 }
             };
-            let st = program(rtl.link(), &pll)?;
+            let st = program(&rtl.link(), &pll)?;
             let c = spectrum_capture(&mut s, &mut buf)?;
             let p = spectrum(&c.samples).ok_or("short capture")?;
             let actual = pll.lo_hz() - ddc_if_hz();

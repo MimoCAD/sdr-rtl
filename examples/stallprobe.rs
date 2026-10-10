@@ -27,9 +27,9 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::{Iq, RxSource};
+use sdr_core::Iq;
 use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE, START_OFF, START_PAGE};
-use sdr_rtl::{Rtl, RtlStream};
+use sdr_rtl::blocking::{Rtl, RtlStream};
 
 const DRAIN: Duration = Duration::from_millis(5);
 const RUN_FOR: Duration = Duration::from_millis(500);

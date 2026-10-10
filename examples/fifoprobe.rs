@@ -17,8 +17,8 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::{Iq, RxSource};
-use sdr_rtl::Rtl;
+use sdr_core::Iq;
+use sdr_rtl::blocking::Rtl;
 use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, USB_EPA_FIFO_CFG, USB_HAZARD_OFF, windex, wvalue_usb};
 
 const SPAN: u16 = 0x200;
@@ -44,7 +44,7 @@ fn run() -> Result<(), String> {
     let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
-    let run_for = |s: &mut sdr_rtl::RtlStream, buf: &mut [Iq], d: Duration| -> Result<(), String> {
+    let run_for = |s: &mut sdr_rtl::blocking::RtlStream, buf: &mut [Iq], d: Duration| -> Result<(), String> {
         let t = Instant::now();
         while t.elapsed() < d {
             s.recv_into(buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;

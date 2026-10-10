@@ -43,7 +43,29 @@ extern crate alloc;
 #[macro_use]
 extern crate std;
 
+/// A nusb operation completed: awaited in a browser (WebUSB is async),
+/// waited on natively (nusb's native operations block, and awaiting them
+/// would need an async runtime). So the driver's async code suspends only
+/// in a browser; natively it completes in place.
+#[cfg(feature = "std")]
+macro_rules! complete {
+    ($op:expr) => {{
+        #[cfg(target_arch = "wasm32")]
+        {
+            $op.await
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            nusb::MaybeFuture::wait($op)
+        }
+    }};
+}
+#[cfg(feature = "std")]
+pub(crate) use complete;
+
 pub mod band;
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
+pub mod blocking;
 pub mod demod;
 pub mod eeprom;
 pub mod filter;
@@ -88,15 +110,15 @@ use image::{Front, R5, R6, R7, R10, R11, R12, R16, R20, R21, R22, R26, R27};
 #[cfg(feature = "std")]
 use nusb::transfer::{Bulk, In};
 #[cfg(feature = "std")]
-use nusb::{DeviceInfo, MaybeFuture};
+use core::time::Duration;
+#[cfg(feature = "std")]
+use nusb::DeviceInfo;
 #[cfg(feature = "std")]
 use sdr_core::gain::{Stage, nearest_level};
 #[cfg(feature = "std")]
 use sdr_core::usb_stream::BulkIqStream;
 #[cfg(feature = "std")]
-use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, TuneResult, open_with_deadline};
-#[cfg(feature = "std")]
-use std::time::Duration;
+use sdr_core::{Backend, DeviceDesc, Error, Result, TunePolicy, TuneRequest, TuneResult};
 #[cfg(feature = "std")]
 use usb::Link;
 
@@ -181,9 +203,11 @@ fn unsupported(what: String) -> Error {
     Error::Unsupported { backend: BACKEND, what }
 }
 
+/// The attached dongles this process may open (in a browser, those the
+/// page has been granted, `Rtl::request`).
 #[cfg(feature = "std")]
-fn candidates() -> Vec<DeviceInfo> {
-    match nusb::list_devices().wait() {
+async fn candidates() -> Vec<DeviceInfo> {
+    match complete!(nusb::list_devices()) {
         Ok(list) => list.filter(|d| KNOWN_IDS.contains(&(d.vendor_id(), d.product_id()))).collect(),
         Err(_) => Vec::new(),
     }
@@ -201,8 +225,9 @@ fn label_of(d: &DeviceInfo) -> String {
 /// Every attached dongle, as `rtl:serial=<sn>` (or `rtl:<index>` when
 /// the device reports no serial).
 #[cfg(feature = "std")]
-pub fn list() -> Vec<DeviceDesc> {
+pub async fn list() -> Vec<DeviceDesc> {
     candidates()
+        .await
         .iter()
         .enumerate()
         .map(|(i, d)| DeviceDesc {
@@ -219,9 +244,9 @@ pub fn list() -> Vec<DeviceDesc> {
 /// The device a spec remainder names: `""` the first found, `"<index>"`
 /// the nth, `"serial=<sn>"` by serial.
 #[cfg(feature = "std")]
-fn select(rest: &str) -> Result<DeviceInfo> {
+async fn select(rest: &str) -> Result<DeviceInfo> {
     let not_found = || Error::NotFound { spec: format!("rtl:{rest}") };
-    let mut found = candidates();
+    let mut found = candidates().await;
     if rest.is_empty() {
         return if found.is_empty() { Err(not_found()) } else { Ok(found.remove(0)) };
     }
@@ -240,34 +265,50 @@ impl Rtl {
     /// image (`image`) with the bring-up front end and the PLL at the
     /// 300 MHz tune every table and the stream's tone tests were taken
     /// against (findings 4e, 10.2b), every write read back where the chip
-    /// allows. Bounded by `sdr_core::open_with_deadline`.
-    pub fn open(rest: &str) -> Result<Rtl> {
-        let rest = rest.to_string();
-        open_with_deadline(BACKEND, move || Rtl::open_now(&rest))
+    /// allows. In a browser the dongles are those the page was granted
+    /// ([`Rtl::request`]). (`blocking::Rtl::open` bounds a native open
+    /// with `sdr_core::open_with_deadline`.)
+    pub async fn open(rest: &str) -> Result<Rtl> {
+        Rtl::open_info(select(rest).await?).await
     }
 
-    fn open_now(rest: &str) -> Result<Rtl> {
-        let info = select(rest)?;
+    /// In a browser: ask the user for a dongle (the WebUSB device chooser,
+    /// filtered to [`KNOWN_IDS`]; it must follow a user gesture, such as a
+    /// click), then open it as [`Rtl::open`] does. The page keeps the
+    /// grant, so later [`Rtl::open`] calls find the dongle without asking.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn request() -> Result<Rtl> {
+        let selectors: Vec<nusb::DeviceSelector> = KNOWN_IDS.iter().map(|&(vendor, product)| nusb::DeviceSelector::all().with_vid_pid(vendor, product)).collect();
+        let info = nusb::request_device(&selectors)
+            .await
+            .map_err(|e| Error::Usb { backend: BACKEND, context: "request device", message: e.to_string() })?
+            .ok_or_else(|| Error::NotFound { spec: "rtl: (no dongle chosen)".into() })?;
+        Rtl::open_info(info).await
+    }
+
+    async fn open_info(info: DeviceInfo) -> Result<Rtl> {
         let label = label_of(&info);
-        let dev = info.open().wait().map_err(|e| Error::Usb { backend: BACKEND, context: "open", message: e.to_string() })?;
+        let dev = complete!(info.open()).map_err(|e| Error::Usb { backend: BACKEND, context: "open", message: e.to_string() })?;
         let link = Link::new(dev);
-        demod::setup(&link)?;
+        demod::setup(&link).await?;
         let ratio = demod::ratio_for_output_rate(demod::DEFAULT_OUTPUT_RATE_SPS)?;
-        demod::write_rsamp(&link, ratio)?;
+        demod::write_rsamp(&link, ratio).await?;
         // The image the bench's records were taken with: the bring-up
         // front end at the 300 MHz tune (findings step 4e; the recorded
         // image in `tables::tuner_image`), the VGA under its code; the LO
         // above it by the stream's IF, as the step-10 tone tests placed it.
         let front = Front::BRING_UP;
         let pll = Pll::program(OPEN_RF_HZ + ddc_if_hz())?;
-        let status = link.with_tuner(|l| {
-            l.tuner_write_image(&front.image(&pll))?;
-            std::thread::sleep(demod::PLL_SETTLE);
-            l.tuner_status()
-        })?;
+        let status = link
+            .with_tuner(async |l| {
+                l.tuner_write_image(&front.image(&pll)).await?;
+                sdr_core::time::sleep(demod::PLL_SETTLE).await;
+                l.tuner_status().await
+            })
+            .await?;
         // The dongle must still answer after the image (findings step 4a:
         // the one write that stops it is refused by the request layer).
-        link.sys_read8(protocol::DEMOD_CTL)?;
+        link.sys_read8(protocol::DEMOD_CTL).await?;
         Ok(Rtl { link, label, front, pll, status, ratio })
     }
 
@@ -299,7 +340,7 @@ impl Rtl {
     /// fixed from `rx_stream` until the stream is dropped. A stream made
     /// after a drop and a rate change runs at the new rate (findings
     /// step 11: 1.024, 2.4, 2.88 and 2.048 Msps in turn).
-    pub fn set_rate(&mut self, sps: f64) -> Result<()> {
+    pub async fn set_rate(&mut self, sps: f64) -> Result<()> {
         if self.link.stream_open() {
             return Err(unsupported(format!(
                 "rate {:.6} Msps: a stream exists; drop it first (a live rsamp_ratio change did not dependably take, findings 10.2a)",
@@ -307,14 +348,19 @@ impl Rtl {
             )));
         }
         let ratio = demod::ratio_for_output_rate(sps)?;
-        demod::write_rsamp(&self.link, ratio)?;
+        demod::write_rsamp(&self.link, ratio).await?;
         self.ratio = ratio;
         Ok(())
     }
 
     /// The output rate the resampler register holds now: its f_symbol / 4.
-    pub fn rate(&self) -> Result<f64> {
-        Ok(demod::read_f_symbol(&self.link)? / demod::OUTPUT_DECIMATION)
+    pub async fn rate(&self) -> Result<f64> {
+        Ok(demod::read_f_symbol(&self.link).await? / demod::OUTPUT_DECIMATION)
+    }
+
+    /// The output rate last set (no request).
+    pub fn rate_set(&self) -> f64 {
+        demod::output_rate_of_ratio(self.ratio)
     }
 
     /// Tune: the LO above the RF by the DDC's IF (high side, findings 4h;
@@ -325,7 +371,7 @@ impl Rtl {
     /// outside 42-1002 MHz is refused; inside it every RF is reachable.
     /// Allowed while streaming: the bench programmed the tuner after the
     /// start in every minimisation run (findings 10.4).
-    pub fn set_freq(&mut self, req: &TuneRequest) -> Result<TuneResult> {
+    pub async fn set_freq(&mut self, req: &TuneRequest) -> Result<TuneResult> {
         let rf = match req.rf {
             TunePolicy::Manual(f) => f,
             TunePolicy::Auto | TunePolicy::Default => req.target_freq,
@@ -352,15 +398,18 @@ impl Rtl {
         front.tf_lp = path.tf_lp;
         // R26, R27 and the PLL words are above R15: written unverified
         // (findings step 4a: the read wraps after 16 registers).
-        let status = self.link.with_tuner(|l| {
-            l.tuner_write(R26, front.r26())?;
-            l.tuner_write(R27, front.r27())?;
-            for (reg, v) in [(R16, pll.r16()), (R20, pll.r20()), (R21, pll.r21()), (R22, pll.r22())] {
-                l.tuner_write(reg, v)?;
-            }
-            std::thread::sleep(demod::PLL_SETTLE);
-            l.tuner_status()
-        })?;
+        let status = self
+            .link
+            .with_tuner(async |l| {
+                l.tuner_write(R26, front.r26()).await?;
+                l.tuner_write(R27, front.r27()).await?;
+                for (reg, v) in [(R16, pll.r16()), (R20, pll.r20()), (R21, pll.r21()), (R22, pll.r22())] {
+                    l.tuner_write(reg, v).await?;
+                }
+                sdr_core::time::sleep(demod::PLL_SETTLE).await;
+                l.tuner_status().await
+            })
+            .await?;
         self.front = front;
         self.pll = pll;
         self.status = status;
@@ -384,13 +433,16 @@ impl Rtl {
     /// failed part way, the hardware is made what this `Rtl` says it is.
     /// The state fields are set only when a change's writes all succeed,
     /// so they always hold the last good state.
-    pub(crate) fn reassert(&mut self) -> Result<()> {
+    pub(crate) async fn reassert(&mut self) -> Result<()> {
         let img = self.front.image(&self.pll);
-        self.status = self.link.with_tuner(|l| {
-            l.tuner_write_image(&img)?;
-            std::thread::sleep(demod::PLL_SETTLE);
-            l.tuner_status()
-        })?;
+        self.status = self
+            .link
+            .with_tuner(async |l| {
+                l.tuner_write_image(&img).await?;
+                sdr_core::time::sleep(demod::PLL_SETTLE).await;
+                l.tuner_status().await
+            })
+            .await?;
         Ok(())
     }
 
@@ -400,32 +452,34 @@ impl Rtl {
 
     /// R5, R7 and R12 for the codes, each verified by read-back (R5-R15
     /// read back exactly, findings step 4a).
-    fn write_codes(&mut self, codes: GainCodes) -> Result<()> {
+    async fn write_codes(&mut self, codes: GainCodes) -> Result<()> {
         let mut front = self.front;
         front.lna_gain = codes.lna.min(15);
         front.mix_gain = codes.mix.min(15);
         front.vga_code = codes.vga.min(15);
-        self.write_front_regs(front, &[R5, R7, R12])
+        self.write_front_regs(front, &[R5, R7, R12]).await
     }
 
     /// Write the given registers of a front end and verify the image's
     /// R5-R15 against the register file.
-    fn write_front_regs(&mut self, front: Front, regs: &[u8]) -> Result<()> {
+    async fn write_front_regs(&mut self, front: Front, regs: &[u8]) -> Result<()> {
         let img = front.image(&self.pll);
-        self.link.with_tuner(|l| {
-            for &reg in regs {
-                l.tuner_write(reg, img[reg as usize])?;
-            }
-            l.tuner_verify(&img)
-        })?;
+        self.link
+            .with_tuner(async |l| {
+                for &reg in regs {
+                    l.tuner_write(reg, img[reg as usize]).await?;
+                }
+                l.tuner_verify(&img).await
+            })
+            .await?;
         self.front = front;
         Ok(())
     }
 
     /// One number over the three stages, front first (`gain`): the
     /// nearest rung of the ladder.
-    pub fn set_gain(&mut self, db: f64) -> Result<()> {
-        self.write_codes(gain::codes_for_db(db))
+    pub async fn set_gain(&mut self, db: f64) -> Result<()> {
+        self.write_codes(gain::codes_for_db(db)).await
     }
 
     /// The sum of the three stages' dB above code 0 (`gain`).
@@ -440,9 +494,9 @@ impl Rtl {
     }
 
     /// Each stage to the code whose measured dB is nearest the request.
-    pub fn set_gain_stages(&mut self, lna_db: f64, mixer_db: f64, vga_db: f64) -> Result<()> {
+    pub async fn set_gain_stages(&mut self, lna_db: f64, mixer_db: f64, vga_db: f64) -> Result<()> {
         let level = |stage: Stage, db: f64| nearest_level(&gain::levels_db(stage).unwrap_or([0.0; gain::CODES]), db) as u8;
-        self.write_codes(GainCodes { lna: level(Stage::Lna, lna_db), mix: level(Stage::Mixer, mixer_db), vga: level(Stage::Vga, vga_db) })
+        self.write_codes(GainCodes { lna: level(Stage::Lna, lna_db), mix: level(Stage::Mixer, mixer_db), vga: level(Stage::Vga, vga_db) }).await
     }
 
     /// The dB of every level of a stage (`tables::gain`), None for a
@@ -455,14 +509,14 @@ impl Rtl {
         self.codes().readings()
     }
 
-    pub fn set_stage_level(&mut self, stage: Stage, level: usize) -> Result<()> {
+    pub async fn set_stage_level(&mut self, stage: Stage, level: usize) -> Result<()> {
         if gain::levels_db(stage).is_none() {
             return Err(unsupported(format!("no {} stage on this tuner (LNA, mixer and VGA only)", stage.label())));
         }
         if level >= gain::CODES {
             return Err(unsupported(format!("{} level {level}: the stage has {} levels", stage.label(), gain::CODES)));
         }
-        self.write_codes(self.codes().with_level(stage, level as u8))
+        self.write_codes(self.codes().with_level(stage, level as u8)).await
     }
 
     /// `tuner_agc`: the LNA and mixer gains from the tuner's own power
@@ -473,14 +527,14 @@ impl Rtl {
     /// itself stays enabled as at reset ([RTL2832U] Table 2), its
     /// output reaching the VGA only through VGA_MODE. R5, R6, R7 and R12,
     /// verified.
-    pub fn set_agc(&mut self, tuner_agc: bool, demod_agc: bool) -> Result<()> {
+    pub async fn set_agc(&mut self, tuner_agc: bool, demod_agc: bool) -> Result<()> {
         let mut front = self.front;
         front.lna_manual = !tuner_agc;
         front.mix_manual = !tuner_agc;
         front.pdet1_on = tuner_agc;
         front.pdet3_on = tuner_agc;
         front.vga_from_pin = demod_agc;
-        self.write_front_regs(front, &[R5, R6, R7, R12])
+        self.write_front_regs(front, &[R5, R6, R7, R12]).await
     }
 
     pub fn tuner_agc(&self) -> bool {
@@ -494,7 +548,7 @@ impl Rtl {
     /// The IF filter to the narrowest measured setting that passes the
     /// bandwidth about the IF (`filter`); wider than any corner is
     /// clamped to the widest. R10 and R11, verified.
-    pub fn set_bandwidth(&mut self, hz: f64) -> Result<()> {
+    pub async fn set_bandwidth(&mut self, hz: f64) -> Result<()> {
         if !hz.is_finite() || hz <= 0.0 {
             return Err(unsupported(format!("bandwidth {hz} Hz: a positive width is needed")));
         }
@@ -502,7 +556,7 @@ impl Rtl {
         let mut front = self.front;
         front.filt_code = s.filt_code;
         front.filt_bw = s.filt_bw;
-        self.write_front_regs(front, &[R10, R11])
+        self.write_front_regs(front, &[R10, R11]).await
     }
 
     /// The IF filter's upper −3 dB corner at the current codes.
@@ -527,8 +581,8 @@ impl Rtl {
     }
 
     /// R0-R4 read now, with the synthesizer's words and the front end.
-    pub fn tuner_status(&mut self) -> Result<RtlTunerStatus> {
-        self.status = self.link.with_tuner(Link::tuner_status)?;
+    pub async fn tuner_status(&mut self) -> Result<RtlTunerStatus> {
+        self.status = self.link.with_tuner(async |l| l.tuner_status().await).await?;
         let s = self.status;
         Ok(RtlTunerStatus {
             tuner: self.tuner_kind(),
@@ -559,8 +613,8 @@ impl Rtl {
     /// at least [`session::MIN_QUEUE_DEPTH`] transfers are kept in flight
     /// (fewer let a pause or a request use the queue up, findings 16.7).
     /// Nothing is written until the first read (or `start`).
-    pub fn into_stream(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<Stream, StreamError> {
-        Stream::new(self, transfer_bytes, queue_depth)
+    pub async fn into_stream(self, transfer_bytes: usize, queue_depth: usize) -> std::result::Result<Stream, StreamError> {
+        Stream::new(self, transfer_bytes, queue_depth).await
     }
 
     pub(crate) fn link_ref(&self) -> &Link {
@@ -568,8 +622,8 @@ impl Rtl {
     }
 
     /// The raw stream under every kind, with our taps.
-    pub(crate) fn open_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
-        self.open_stream_with_taps(transfer_bytes, queue_depth, taps::design_registers())
+    pub(crate) async fn open_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
+        self.open_stream_with_taps(transfer_bytes, queue_depth, taps::design_registers()).await
     }
 
     /// The raw stream, for bench programs (`--features bench`): every
@@ -578,30 +632,27 @@ impl Rtl {
     /// byte I (`stream::WIRE_FORMAT`, findings 10.2b), at the rate set now,
     /// our own taps (`taps::design_registers`). One stream at a time.
     #[cfg(feature = "bench")]
-    pub fn rx_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
-        self.open_stream(transfer_bytes, queue_depth)
+    pub async fn rx_stream(&mut self, transfer_bytes: usize, queue_depth: usize) -> Result<RtlStream> {
+        self.open_stream(transfer_bytes, queue_depth).await
     }
 
     /// [`Rtl::rx_stream`] with a given image of the 20 tap registers
     /// (page 1 0x1C-0x2F, `taps::pack`'s layout) in place of our design.
     #[cfg(feature = "bench")]
-    pub fn rx_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; taps::TAP_REGS]) -> Result<RtlStream> {
-        self.open_stream_with_taps(transfer_bytes, queue_depth, tap_regs)
+    pub async fn rx_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; taps::TAP_REGS]) -> Result<RtlStream> {
+        self.open_stream_with_taps(transfer_bytes, queue_depth, tap_regs).await
     }
 
     /// The interface is claimed with nusb's `detach_and_claim_interface`,
     /// which on Linux first detaches a kernel driver bound to it and
     /// elsewhere is a plain claim.
-    fn open_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; taps::TAP_REGS]) -> Result<RtlStream> {
+    async fn open_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; taps::TAP_REGS]) -> Result<RtlStream> {
         if !self.link.claim_stream() {
             return Err(unsupported("a stream of this receiver already exists; one at a time".into()));
         }
         let usb = |context: &'static str, e: nusb::Error| Error::Usb { backend: BACKEND, context, message: e.to_string() };
-        let endpoint = self
-            .link
-            .device()
-            .detach_and_claim_interface(stream::BULK_INTERFACE)
-            .wait()
+        let claimed = complete!(self.link.device().detach_and_claim_interface(stream::BULK_INTERFACE));
+        let endpoint = claimed
             .map_err(|e| usb("claim interface", e))
             .and_then(|iface| iface.endpoint::<Bulk, In>(stream::BULK_IN_ENDPOINT).map_err(|e| usb("open bulk endpoint", e)));
         let endpoint = match endpoint {
@@ -620,8 +671,8 @@ impl Rtl {
 
     /// The 20 tap registers as they read now (page 1 0x1C-0x2F; after a
     /// power cycle, before any stream, the chip's power-on values).
-    pub fn taps(&self) -> Result<[u8; taps::TAP_REGS]> {
-        let v = self.link.demod_read(protocol::TAP_PAGE, protocol::TAP_FIRST, taps::TAP_REGS as u16)?;
+    pub async fn taps(&self) -> Result<[u8; taps::TAP_REGS]> {
+        let v = self.link.demod_read(protocol::TAP_PAGE, protocol::TAP_FIRST, taps::TAP_REGS as u16).await?;
         let mut r = [0u8; taps::TAP_REGS];
         r.copy_from_slice(&v[..taps::TAP_REGS]);
         Ok(r)
@@ -631,8 +682,8 @@ impl Rtl {
     /// 16-byte block 3 reads (findings 17), cut to 128 bytes when the
     /// upper half repeats the lower (`eeprom::part_size`). Sixteen control
     /// transfers: during a stream each costs samples (findings 16).
-    pub fn read_eeprom(&self) -> Result<Eeprom> {
-        Eeprom::from_read(&eeprom::read_raw(&self.link)?)
+    pub async fn read_eeprom(&self) -> Result<Eeprom> {
+        Eeprom::from_read(&eeprom::read_raw(&self.link).await?)
     }
 
     /// Write an image to the configuration EEPROM (findings 17; eeprom.md
@@ -646,11 +697,11 @@ impl Rtl {
     /// part is read back, and any byte that differs is an error. The new
     /// identity is served after the next power cycle: the firmware reads
     /// the EEPROM only at boot (eeprom.md §5).
-    pub fn write_eeprom(&mut self, new: &Eeprom) -> Result<EepromWriteReport> {
+    pub async fn write_eeprom(&mut self, new: &Eeprom) -> Result<EepromWriteReport> {
         if self.link.stream_open() {
             return Err(unsupported("EEPROM write: a stream exists; drop it first".into()));
         }
-        eeprom::write(&self.link, new)
+        eeprom::write(&self.link, new).await
     }
 
     /// The request layer, for bench programs (`--features bench`).

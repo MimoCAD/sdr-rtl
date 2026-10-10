@@ -6,16 +6,20 @@
 //! is written. Ported from the harness's request layer
 //! (`examples/harness/usb.rs`), which every bench record was taken
 //! through.
+//!
+//! Every request is async: awaited in a browser (WebUSB), completed in
+//! place natively (nusb's native requests block), see `complete!`.
 
+use core::time::Duration;
 use std::fmt::Display;
 use std::string::{String, ToString};
-use std::vec::Vec;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::vec::Vec;
 
-use nusb::MaybeFuture;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
+use sdr_core::sync::Lock;
+use sdr_core::time::{Instant, sleep};
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
@@ -51,7 +55,7 @@ pub struct Refusal {
 
 /// An open dongle's control pipe. Clones share the device and the state
 /// below: the receiver and its stream each hold one, possibly on two
-/// threads.
+/// threads (or two tasks in a browser).
 #[derive(Clone)]
 pub struct Link {
     dev: nusb::Device,
@@ -63,8 +67,8 @@ struct Shared {
     /// Held across every read-modify-write, so two clones never
     /// interleave on one register (page 1 0x01 carries both the I2C
     /// repeater and the pause bit).
-    rmw: Mutex<()>,
-    /// A stream exists (from `Rtl::rx_stream` until the stream drops).
+    rmw: Lock<()>,
+    /// A stream exists (from `Rtl::into_stream` until the stream drops).
     stream_open: AtomicBool,
     /// Requests the chip refused (STALL) and that were tried again.
     stall_retries: AtomicU64,
@@ -99,17 +103,11 @@ fn refuse_block0_eeprom(value: u16, index: u16, context: &'static str) -> Result
 
 impl Link {
     pub fn new(dev: nusb::Device) -> Link {
-        Link { dev, shared: Arc::new(Shared { rmw: Mutex::new(()), stream_open: AtomicBool::new(false), stall_retries: AtomicU64::new(0), refusals: Mutex::new(Vec::new()) }) }
+        Link { dev, shared: Arc::new(Shared { rmw: Lock::new(()), stream_open: AtomicBool::new(false), stall_retries: AtomicU64::new(0), refusals: Mutex::new(Vec::new()) }) }
     }
 
     pub fn device(&self) -> &nusb::Device {
         &self.dev
-    }
-
-    fn rmw_lock(&self) -> MutexGuard<'_, ()> {
-        // A panic while holding the lock leaves no register half-written
-        // that the next holder could not read back; take it regardless.
-        self.shared.rmw.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Mark a stream as existing; false when one already does.
@@ -130,24 +128,16 @@ impl Link {
     /// A vendor Get: bmRequestType 0xC0 (vendor, device, IN), bRequest
     /// don't care, wLength = bytes to read (Table 27). A block 0 request
     /// to the EEPROM's slave is refused ([`refuse_block0_eeprom`]).
-    pub fn get(&self, value: u16, index: u16, len: u16, context: &'static str) -> Result<Vec<u8>> {
+    pub async fn get(&self, value: u16, index: u16, len: u16, context: &'static str) -> Result<Vec<u8>> {
         refuse_block0_eeprom(value, index, context)?;
         let v = self
             .retry_stall(value, index, false, context, || {
-                self.dev
-                    .control_in(
-                        ControlIn {
-                            control_type: ControlType::Vendor,
-                            recipient: Recipient::Device,
-                            request: BREQUEST,
-                            value,
-                            index,
-                            length: len,
-                        },
-                        CONTROL_TIMEOUT,
-                    )
-                    .wait()
+                self.dev.control_in(
+                    ControlIn { control_type: ControlType::Vendor, recipient: Recipient::Device, request: BREQUEST, value, index, length: len },
+                    CONTROL_TIMEOUT,
+                )
             })
+            .await
             .map_err(|e| usb_error(context, e))?;
         if v.len() != len as usize {
             return Err(usb_error(context, format!("short read: {} of {len} bytes", v.len())));
@@ -158,49 +148,44 @@ impl Link {
     /// A vendor Set: bmRequestType 0x40 (vendor, device, OUT), the bytes
     /// in the data stage (Table 27). A block 0 request to the EEPROM's
     /// slave is refused ([`refuse_block0_eeprom`]).
-    pub fn set(&self, value: u16, index: u16, data: &[u8], context: &'static str) -> Result<()> {
+    pub async fn set(&self, value: u16, index: u16, data: &[u8], context: &'static str) -> Result<()> {
         refuse_block0_eeprom(value, index, context)?;
         self.retry_stall(value, index, true, context, || {
-            self.dev
-                .control_out(
-                    ControlOut {
-                        control_type: ControlType::Vendor,
-                        recipient: Recipient::Device,
-                        request: BREQUEST,
-                        value,
-                        index,
-                        data,
-                    },
-                    CONTROL_TIMEOUT,
-                )
-                .wait()
+            self.dev.control_out(
+                ControlOut { control_type: ControlType::Vendor, recipient: Recipient::Device, request: BREQUEST, value, index, data },
+                CONTROL_TIMEOUT,
+            )
         })
+        .await
         .map_err(|e| usb_error(context, e))
     }
 
     /// A request the chip refused with a STALL tried again, up to
     /// [`STALL_RETRIES`] times, [`STALL_RETRY_WAIT`] apart: now and then the
-    /// chip refuses a request (findings 16.4, 16.6 — "endpoint stalled",
-    /// intermittent, no order or rate isolated). Every request here is
+    /// chip refuses a request (findings 16.4-16.7). Every request here is
     /// safe to repeat: reads, writes of whole values, and read-modify-
     /// writes judged by their read-back. Each retry is counted
     /// ([`Link::stall_retries`]) and kept ([`Link::refusals`]).
-    fn retry_stall<T>(&self, value: u16, index: u16, set: bool, context: &'static str, mut f: impl FnMut() -> std::result::Result<T, TransferError>) -> std::result::Result<T, TransferError> {
+    async fn retry_stall<T, F>(&self, value: u16, index: u16, set: bool, context: &'static str, mut request: impl FnMut() -> F) -> core::result::Result<T, TransferError>
+    where
+        F: nusb::MaybeFuture<Output = core::result::Result<T, TransferError>>,
+    {
         let mut tries = 0;
         loop {
             let at = Instant::now();
-            match f() {
+            match crate::complete!(request()) {
                 Err(TransferError::Stall) if tries < STALL_RETRIES => {
                     let took = at.elapsed();
                     tries += 1;
                     self.shared.stall_retries.fetch_add(1, Ordering::Relaxed);
-                    let mut kept = self.shared.refusals.lock().unwrap_or_else(|e| e.into_inner());
-                    if kept.len() == REFUSALS_KEPT {
-                        kept.remove(0);
+                    {
+                        let mut kept = self.shared.refusals.lock().unwrap_or_else(|e| e.into_inner());
+                        if kept.len() == REFUSALS_KEPT {
+                            kept.remove(0);
+                        }
+                        kept.push(Refusal { value, index, set, context, at, took });
                     }
-                    kept.push(Refusal { value, index, set, context, at, took });
-                    drop(kept);
-                    std::thread::sleep(STALL_RETRY_WAIT);
+                    sleep(STALL_RETRY_WAIT).await;
                 }
                 r => return r,
             }
@@ -219,24 +204,24 @@ impl Link {
 
     // ---- System block: wValue = 0x3000 + offset (findings step 1A) ----
 
-    pub fn sys_read8(&self, off: u16) -> Result<u8> {
-        Ok(self.get(wvalue_sys(off), windex(BLOCK_SYS, ACCESS_GET, 0), 1, "system register read")?[0])
+    pub async fn sys_read8(&self, off: u16) -> Result<u8> {
+        Ok(self.get(wvalue_sys(off), windex(BLOCK_SYS, ACCESS_GET, 0), 1, "system register read").await?[0])
     }
 
-    fn sys_write8(&self, off: u16, v: u8) -> Result<()> {
-        self.set(wvalue_sys(off), windex(BLOCK_SYS, ACCESS_SET, 0), &[v], "system register write")
+    async fn sys_write8(&self, off: u16, v: u8) -> Result<()> {
+        self.set(wvalue_sys(off), windex(BLOCK_SYS, ACCESS_SET, 0), &[v], "system register write").await
     }
 
     /// Read-modify-write one system byte: clear `clear`, set `set`, then
     /// read back and compare the bits touched (DEMOD_CTL's bit 2 never
     /// reads back, findings step 3's block scan, so only the written bits
     /// are judged). Returns the byte read back.
-    pub fn sys_rmw8(&self, off: u16, clear: u8, set: u8) -> Result<u8> {
-        let _held = self.rmw_lock();
-        let old = self.sys_read8(off)?;
+    pub async fn sys_rmw8(&self, off: u16, clear: u8, set: u8) -> Result<u8> {
+        let _held = self.shared.rmw.lock().await;
+        let old = self.sys_read8(off).await?;
         let new = (old & !clear) | set;
-        self.sys_write8(off, new)?;
-        let back = self.sys_read8(off)?;
+        self.sys_write8(off, new).await?;
+        let back = self.sys_read8(off).await?;
         let mask = clear | set;
         if back & mask != new & mask {
             return Err(device_error(
@@ -251,18 +236,18 @@ impl Link {
     /// it: for the registers whose read-back the bench has not shown
     /// (GPD and GPOE — step 1A read their power-on values, no step wrote
     /// them with a verified read-back). Returns the byte read back.
-    pub fn sys_rmw8_unjudged(&self, off: u16, clear: u8, set: u8) -> Result<u8> {
-        let _held = self.rmw_lock();
-        let old = self.sys_read8(off)?;
-        self.sys_write8(off, (old & !clear) | set)?;
-        self.sys_read8(off)
+    pub async fn sys_rmw8_unjudged(&self, off: u16, clear: u8, set: u8) -> Result<u8> {
+        let _held = self.shared.rmw.lock().await;
+        let old = self.sys_read8(off).await?;
+        self.sys_write8(off, (old & !clear) | set).await?;
+        self.sys_read8(off).await
     }
 
     /// Write one whole system byte and read it back; every bit must
     /// agree except `not_read_back` (DEMOD_CTL's bit 2, findings step 3).
-    pub fn sys_write8_verified(&self, off: u16, v: u8, not_read_back: u8) -> Result<()> {
-        self.sys_write8(off, v)?;
-        let back = self.sys_read8(off)?;
+    pub async fn sys_write8_verified(&self, off: u16, v: u8, not_read_back: u8) -> Result<()> {
+        self.sys_write8(off, v).await?;
+        let back = self.sys_read8(off).await?;
         if back & !not_read_back != v & !not_read_back {
             return Err(device_error(
                 "system register read-back",
@@ -274,66 +259,66 @@ impl Link {
 
     // ---- USB block: wValue = 0x2000 + offset (findings step 1A) ----
 
-    pub fn usb_read8(&self, off: u16) -> Result<u8> {
-        Ok(self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), 1, "USB register read")?[0])
+    pub async fn usb_read8(&self, off: u16) -> Result<u8> {
+        Ok(self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), 1, "USB register read").await?[0])
     }
 
     /// One USB-block byte written. Offset 0x1C is refused: it is the
     /// test-mode register whose write wedges the chip
     /// (derivation/HAZARD-usb-0x1C.md).
-    pub fn usb_write8(&self, off: u16, v: u8) -> Result<()> {
+    pub async fn usb_write8(&self, off: u16, v: u8) -> Result<()> {
         if off == USB_HAZARD_OFF {
             return Err(device_error("USB register write", format!("USB block 0x{off:03X} is the test-mode register; never written")));
         }
-        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), &[v], "USB register write")
+        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), &[v], "USB register write").await
     }
 
     /// `len` USB-block bytes from `off` (a 32-bit register reads
     /// little-endian, findings step 1A).
-    pub fn usb_read_n(&self, off: u16, len: u16) -> Result<Vec<u8>> {
-        self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), len, "USB register read")
+    pub async fn usb_read_n(&self, off: u16, len: u16) -> Result<Vec<u8>> {
+        self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), len, "USB register read").await
     }
 
     /// USB-block bytes written from `off`; refused if they would cover
     /// offset 0x1C (derivation/HAZARD-usb-0x1C.md).
-    pub fn usb_write_n(&self, off: u16, data: &[u8]) -> Result<()> {
+    pub async fn usb_write_n(&self, off: u16, data: &[u8]) -> Result<()> {
         if (off..off + data.len() as u16).contains(&USB_HAZARD_OFF) {
             return Err(device_error("USB register write", format!("0x{off:03X}+{}: covers the test-mode register 0x01C; never written", data.len())));
         }
-        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), data, "USB register write")
+        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), data, "USB register write").await
     }
 
     // ---- Demodulator: wValue = offset << 8 | 0x20 (findings step 1B/1C) ----
 
     /// `len` bytes from `off` on `page`; multi-byte reads auto-increment
     /// (findings step 1D).
-    pub fn demod_read(&self, page: u8, off: u8, len: u16) -> Result<Vec<u8>> {
-        self.get(wvalue_demod(off), windex(BLOCK_DEMOD, ACCESS_GET, page as u16), len, "demodulator register read")
+    pub async fn demod_read(&self, page: u8, off: u8, len: u16) -> Result<Vec<u8>> {
+        self.get(wvalue_demod(off), windex(BLOCK_DEMOD, ACCESS_GET, page as u16), len, "demodulator register read").await
     }
 
-    pub fn demod_read8(&self, page: u8, off: u8) -> Result<u8> {
-        Ok(self.demod_read(page, off, 1)?[0])
+    pub async fn demod_read8(&self, page: u8, off: u8) -> Result<u8> {
+        Ok(self.demod_read(page, off, 1).await?[0])
     }
 
-    fn demod_write8(&self, page: u8, off: u8, v: u8) -> Result<()> {
-        self.demod_write(page, off, &[v])
+    async fn demod_write8(&self, page: u8, off: u8, v: u8) -> Result<()> {
+        self.demod_write(page, off, &[v]).await
     }
 
     /// Consecutive registers from `off` in one Set (wLength = the byte
     /// count), as the stream sequence writes page 1 0x16-0x17, 0x19-0x1A
     /// and the rsamp_ratio pairs (findings 9b; the harness's `demod_write`,
     /// `examples/harness/usb.rs`).
-    pub fn demod_write(&self, page: u8, off: u8, data: &[u8]) -> Result<()> {
-        self.set(wvalue_demod(off), windex(BLOCK_DEMOD, ACCESS_SET, page as u16), data, "demodulator register write")
+    pub async fn demod_write(&self, page: u8, off: u8, data: &[u8]) -> Result<()> {
+        self.set(wvalue_demod(off), windex(BLOCK_DEMOD, ACCESS_SET, page as u16), data, "demodulator register write").await
     }
 
     /// [`Link::demod_write`], then the same registers read back in one
     /// auto-incrementing Get (findings step 1D) and compared whole: every
     /// write of the stream sequence read back as written on the bench
     /// (findings 10.1: "All 47 read-backs match").
-    pub fn demod_write_verified(&self, page: u8, off: u8, data: &[u8]) -> Result<()> {
-        self.demod_write(page, off, data)?;
-        let back = self.demod_read(page, off, data.len() as u16)?;
+    pub async fn demod_write_verified(&self, page: u8, off: u8, data: &[u8]) -> Result<()> {
+        self.demod_write(page, off, data).await?;
+        let back = self.demod_read(page, off, data.len() as u16).await?;
         if back != data {
             return Err(device_error(
                 "demodulator register read-back",
@@ -346,12 +331,12 @@ impl Link {
     /// Read-modify-write one demodulator byte: the bits of `mask` take
     /// `value`, the rest are kept; the read-back must agree on `mask`.
     /// Returns the byte read back.
-    pub fn demod_rmw8(&self, page: u8, off: u8, mask: u8, value: u8) -> Result<u8> {
-        let _held = self.rmw_lock();
-        let old = self.demod_read8(page, off)?;
+    pub async fn demod_rmw8(&self, page: u8, off: u8, mask: u8, value: u8) -> Result<u8> {
+        let _held = self.shared.rmw.lock().await;
+        let old = self.demod_read8(page, off).await?;
         let new = (old & !mask) | (value & mask);
-        self.demod_write8(page, off, new)?;
-        let back = self.demod_read8(page, off)?;
+        self.demod_write8(page, off, new).await?;
+        let back = self.demod_read8(page, off).await?;
         if back & mask != new & mask {
             return Err(device_error(
                 "demodulator register read-back",
@@ -365,11 +350,11 @@ impl Link {
 
     /// `len` EEPROM bytes from `offset`: one block 3 Get, at most 16 bytes
     /// (one I²C transaction, eeprom.md §1, §8), within the 256 offsets.
-    pub fn eeprom_read(&self, offset: u8, len: usize) -> Result<Vec<u8>> {
+    pub async fn eeprom_read(&self, offset: u8, len: usize) -> Result<Vec<u8>> {
         if len == 0 || len > EEPROM_REQUEST_MAX || offset as usize + len > EEPROM_ADDRESS_SPACE {
             return Err(device_error("EEPROM read", format!("0x{offset:02X}+{len}: 1-{EEPROM_REQUEST_MAX} bytes within the {EEPROM_ADDRESS_SPACE} offsets")));
         }
-        self.get(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_GET, 0), len as u16, "EEPROM read")
+        self.get(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_GET, 0), len as u16, "EEPROM read").await
     }
 
     /// EEPROM bytes written from `offset`: one block 3 Set, unverified
@@ -377,9 +362,10 @@ impl Link {
     /// `EEPROM_WRITE_CHUNK` (8) bytes and never across an 8-byte boundary,
     /// so the firmware makes it exactly one I²C write (eeprom.md §8: a
     /// second write in one request meets the part in its write cycle and
-    /// STALLs) and it stays inside one write page (findings 17). The caller waits out the
-    /// write cycle (`eeprom::EEPROM_WRITE_CYCLE`) before the next request.
-    pub fn eeprom_write(&self, offset: u8, data: &[u8]) -> Result<()> {
+    /// STALLs) and it stays inside one write page (findings 17). The
+    /// caller waits out the write cycle (`eeprom::EEPROM_WRITE_CYCLE`)
+    /// before the next request.
+    pub async fn eeprom_write(&self, offset: u8, data: &[u8]) -> Result<()> {
         let start = offset as usize;
         if data.is_empty() || start / EEPROM_WRITE_CHUNK != (start + data.len() - 1) / EEPROM_WRITE_CHUNK {
             return Err(device_error(
@@ -387,7 +373,7 @@ impl Link {
                 format!("0x{offset:02X}+{}: 1-{EEPROM_WRITE_CHUNK} bytes inside one {EEPROM_WRITE_CHUNK}-byte-aligned chunk", data.len()),
             ));
         }
-        self.set(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_SET, 0), data, "EEPROM write")
+        self.set(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_SET, 0), data, "EEPROM write").await
     }
 
     // ---- Tuner: wValue (reg << 8) | 0x34 to write, 0x0034 to read (step 2) ----
@@ -399,10 +385,10 @@ impl Link {
     /// here, so between accesses page 1 0x01 rests at its power-on 0x10,
     /// the state the pause bit was measured from (findings 10.2c) and
     /// the vendor driver kept (findings 9a).
-    pub fn with_tuner<T>(&self, f: impl FnOnce(&Link) -> Result<T>) -> Result<T> {
-        self.demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, IIC_REPEAT_BIT)?;
-        let r = f(self);
-        let closed = self.demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, 0);
+    pub async fn with_tuner<T>(&self, f: impl AsyncFnOnce(&Link) -> Result<T>) -> Result<T> {
+        self.demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, IIC_REPEAT_BIT).await?;
+        let r = f(self).await;
+        let closed = self.demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, 0).await;
         let v = r?;
         closed?;
         Ok(v)
@@ -416,7 +402,7 @@ impl Link {
     /// clock output, and that write ended every USB request until a power
     /// cycle (findings step 4a). Like every tuner access, it needs the
     /// repeater open: call it inside [`Link::with_tuner`].
-    pub fn tuner_write(&self, reg: u8, v: u8) -> Result<()> {
+    pub async fn tuner_write(&self, reg: u8, v: u8) -> Result<()> {
         if reg == R15 && v & CLK_OUT_ENB != 0 {
             return Err(device_error(
                 "tuner register write",
@@ -425,15 +411,16 @@ impl Link {
                 ),
             ));
         }
-        self.set(wvalue_tuner_write(reg), windex(BLOCK_TUNER, ACCESS_SET, 0), &[v], "tuner register write")
+        self.set(wvalue_tuner_write(reg), windex(BLOCK_TUNER, ACCESS_SET, 0), &[v], "tuner register write").await
     }
 
     /// `len` bytes from register 0, each bit-reversed ([R820T] p. 17).
     /// The register file wraps after R15 (findings step 4a), so at most 16
     /// distinct registers come back.
-    pub fn tuner_read(&self, len: u16) -> Result<Vec<u8>> {
+    pub async fn tuner_read(&self, len: u16) -> Result<Vec<u8>> {
         Ok(self
-            .get(wvalue_tuner_read(), windex(BLOCK_TUNER, ACCESS_GET, 0), len, "tuner register read")?
+            .get(wvalue_tuner_read(), windex(BLOCK_TUNER, ACCESS_GET, 0), len, "tuner register read")
+            .await?
             .into_iter()
             .map(tuner_read_byte)
             .collect())
@@ -441,8 +428,8 @@ impl Link {
 
     /// R0-R4: the check byte (must be 0x96), R1 and R4 (unspecified), R2
     /// VCO_INDICATOR, R3 RF_INDICATOR ([R820T2] Table 1-2).
-    pub fn tuner_status(&self) -> Result<[u8; 5]> {
-        let v = self.tuner_read(5)?;
+    pub async fn tuner_status(&self) -> Result<[u8; 5]> {
+        let v = self.tuner_read(5).await?;
         if v[0] != TUNER_R0_CHECK {
             return Err(device_error(
                 "tuner check byte",
@@ -455,16 +442,16 @@ impl Link {
     /// Write R5-R15 of an image and verify each by read-back; write
     /// R16-R31 unverified (the read wraps). The image is written in
     /// ascending register order, as every bench record's was.
-    pub fn tuner_write_image(&self, img: &[u8; 32]) -> Result<()> {
+    pub async fn tuner_write_image(&self, img: &[u8; 32]) -> Result<()> {
         for reg in crate::image::IMAGE_FIRST_REG..32 {
-            self.tuner_write(reg, img[reg as usize])?;
+            self.tuner_write(reg, img[reg as usize]).await?;
         }
-        self.tuner_verify(img)
+        self.tuner_verify(img).await
     }
 
     /// R5-R15 of the register file against an image.
-    pub fn tuner_verify(&self, img: &[u8; 32]) -> Result<()> {
-        let back = self.tuner_read(crate::image::READBACK_REGS as u16)?;
+    pub async fn tuner_verify(&self, img: &[u8; 32]) -> Result<()> {
+        let back = self.tuner_read(crate::image::READBACK_REGS as u16).await?;
         if back[0] != TUNER_R0_CHECK {
             return Err(device_error("tuner check byte", format!("R0 read 0x{:02X}", back[0])));
         }

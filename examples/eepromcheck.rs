@@ -8,7 +8,7 @@
 //! dongle, whose strings end at 0x31) to 0x55 and read back, then to 0x00
 //! again and read back. Prints what each step saw.
 
-use sdr_rtl::Rtl;
+use sdr_rtl::blocking::Rtl;
 use sdr_rtl::eeprom::Eeprom;
 
 const PROBE: usize = 0x33;

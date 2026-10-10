@@ -30,8 +30,8 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl::{Rtl, RtlStream};
+use sdr_core::{Iq, TuneRequest};
+use sdr_rtl::blocking::{Rtl, RtlStream};
 
 /// Bins the peak may sit from the predicted bin: the source and the
 /// dongle disagreed by ~+3 bins at 300 MHz (findings 10.2b).

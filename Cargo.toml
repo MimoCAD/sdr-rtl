@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["sdr", "rtl-sdr", "rtl2832u", "radio", "usb"]
 categories = ["hardware-support"]
 # The derivation's records and bench programs stay in the repository.
-exclude = ["derivation/", "examples/"]
+exclude = ["derivation/", "examples/", "web/"]
 
 [lib]
 doctest = false

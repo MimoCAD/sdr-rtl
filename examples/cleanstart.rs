@@ -29,9 +29,9 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::gain::Stage;
-use sdr_core::{Iq, RxSource};
+use sdr_core::Iq;
 use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE};
-use sdr_rtl::Rtl;
+use sdr_rtl::blocking::Rtl;
 
 const MODES: [&str; 4] = ["plain", "clean_start", "clean_stop", "both"];
 const DRAIN: Duration = Duration::from_millis(5);

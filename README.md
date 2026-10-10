@@ -18,13 +18,18 @@ is refused with the reason, never guessed.
 - Gain as one number or per stage (LNA, mixer, VGA — 16 levels each, dB
   measured on the bench), tuner and demodulator AGC, the IF filter.
 - Output rates 1.024–2.88 Msps, with our own decimation filter taps.
+- Async at its core, so it runs in a browser too: on `wasm32` it drives
+  the dongle over WebUSB (`Rtl::request` opens the browser's device
+  chooser; see [`web/`](web/) for a page that streams and writes the
+  EEPROM). Natively every operation also comes blocking, in
+  [`blocking`](src/blocking.rs), with no async runtime needed.
 - A `Stream` that cannot lose samples unseen. The chip marks nothing in
   its sample stream, and a control request served while samples flow can
   cost some; so the receiver streams by becoming a `Stream`, which offers
   only what keeps every sample:
-  - `std::io::Read`: the wire bytes, unsigned 8-bit I then Q — the
-    layout RTL-SDR tools read and write. `recv_into` hands out the same
-    samples widened to 16-bit I/Q.
+  - `read`: the wire bytes, unsigned 8-bit I then Q — the layout RTL-SDR
+    tools read and write (`blocking::Stream` is a `std::io::Read`).
+    `recv_into` hands out the same samples widened to 16-bit I/Q.
   - Retune, gain and filter changes inside a pause that loses nothing;
     each change is a `Break` at an exact sample position.
   - `split()` into a `ReadHalf` and a `Control`, for a reading thread and
@@ -38,25 +43,39 @@ is refused with the reason, never guessed.
   metal with `default-features = false`; the default `std` feature adds
   the receiver itself (the USB transport, `Rtl`, `Stream`).
 
+Async (a browser, or any async native code):
+
+```rust
+use sdr_core::TuneRequest;
+use sdr_rtl::Rtl;
+
+let mut rtl = Rtl::open("").await?;          // in a browser: Rtl::request()
+rtl.set_rate(2.4e6).await?;
+rtl.set_freq(&TuneRequest::auto(100.1e6)).await?;
+let (mut reader, control) = rtl.into_stream(0, 0).await.map_err(|e| e.error)?.split();
+let mut buf = [0u8; 16384];
+let n = reader.read(&mut buf).await?;        // I, Q, I, Q, … as unsigned bytes
+let (_, at) = control.retune(&TuneRequest::auto(101.1e6)).await?;
+// Samples from `at.settled_at` on are 101.1 MHz.
+```
+
+Blocking (native), the two halves on two threads:
+
 ```rust
 use std::io::Read;
 use sdr_core::TuneRequest;
-use sdr_rtl::{Rtl, Stream};
+use sdr_rtl::blocking::{Rtl, Stream};
 
 let mut rtl = Rtl::open("")?;
 rtl.set_rate(2.4e6)?;
 rtl.set_freq(&TuneRequest::auto(100.1e6))?;
-rtl.set_gain(30.0)?;
 let (mut reader, control) = rtl.into_stream(0, 0).map_err(|e| e.error)?.split();
 
-// Read on one thread …
 let reading = std::thread::spawn(move || {
-    let mut buf = [0u8; 16384];
-    let n = reader.read(&mut buf)?; // I, Q, I, Q, … as unsigned bytes
+    let mut file = std::fs::File::create("capture.u8")?;
+    std::io::copy(&mut (&mut reader).take(48_000_000), &mut file)?; // 10 s at 2.4 Msps
     std::io::Result::Ok(reader)
 });
-
-// … retune on another; samples from `at.settled_at` on are 101.1 MHz.
 let (_, at) = control.retune(&TuneRequest::auto(101.1e6))?;
 
 let reader = reading.join().unwrap()?;

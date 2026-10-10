@@ -22,8 +22,8 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use sdr_core::gain::Stage;
-use sdr_core::{Iq, RxSource, TuneRequest};
-use sdr_rtl::Rtl;
+use sdr_core::{Iq, TuneRequest};
+use sdr_rtl::blocking::Rtl;
 
 fn arg<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> T {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(default)
@@ -72,13 +72,14 @@ fn run_once(o: &Opts) -> Result<String, String> {
         n += s.recv_into(&mut buf, o.timeout).map_err(|e| e.to_string())?.n_samples;
     }
     let rate = o.rate;
-    let finish_at = Instant::now();
+    // The request layer's clock (`Refusal::at`).
+    let finish_at = sdr_core::time::Instant::now();
     let f = s.finish().map_err(|e| e.to_string())?;
     let finish_took = finish_at.elapsed();
     let r = &f.report;
     // Each refusal by when it came: ms after the finish began (negative:
     // before it, from the start), and how long the chip took to refuse.
-    let ms = |at: Instant| if at >= finish_at { (at - finish_at).as_secs_f64() * 1e3 } else { -((finish_at - at).as_secs_f64() * 1e3) };
+    let ms = |at: sdr_core::time::Instant| if at >= finish_at { (at - finish_at).as_secs_f64() * 1e3 } else { -((finish_at - at).as_secs_f64() * 1e3) };
     let refused: Vec<String> = f
         .rtl
         .link()

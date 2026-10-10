@@ -45,7 +45,8 @@ use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
 use sdr_rtl::protocol::{DAGC_OFF, DAGC_PAGE, EN_DAGC};
 use sdr_rtl::taps::{self, TAP_REGS, TAPS};
-use sdr_rtl::{OPEN_RF_HZ, Rtl, RtlStream};
+use sdr_rtl::OPEN_RF_HZ;
+use sdr_rtl::blocking::{Rtl, RtlStream};
 
 /// Bins a line may sit from where a model puts it: the source and the
 /// dongle differ by ~4.2 ppm (findings 11), +1.3 kHz at 300 MHz.
@@ -130,7 +131,6 @@ fn open_stream(rtl: &mut Rtl, regs: [u8; TAP_REGS]) -> Result<(RtlStream, Vec<Iq
     Ok((s, buf))
 }
 
-use sdr_core::RxSource;
 
 fn linearity(rtl: &mut Rtl, src: &mut Source, dagc: Option<bool>) -> Result<(), String> {
     if let Some(on) = dagc {

@@ -530,6 +530,32 @@ application's device layer (`Device::set_freq` on the control while it
 reads on the reading half): 6 retunes at 2.4 Msps, 0 blocks; 5 s with no
 change, 0 blocks.
 
+### 16.10 The async core on the bench; the backlog must not starve the queue
+
+The driver's core became async (2026-10-10: every request awaited in a
+browser, completed in place natively; `blocking::` wraps it), on the
+second host:
+
+- **A pile of breaks lost a break's worth.** `tiercheck` asking for 20
+  retunes every 150 ms from the start: the first is held to 1 s
+  (`CHANGE_AFTER_START`), so breaks 0-10 come back to back, and break 12
+  (sometimes 13 too) lost 141-255 blocks in 6 runs of 6; with the first
+  retune asked for at 1 s, 0 in 3 of 3 at break 12. While a reader worked
+  through the backlog the hold and the wait had filled, nothing took
+  completions from the transfer queue, and it ran dry. The engine now takes
+  every transfer already complete into the backlog, and resubmits it,
+  before serving the backlog (sdr-core `BulkIqStream::reap`): **4 runs of
+  4, all 80 breaks 0 blocks**.
+- **The rest unchanged**: `finishloop` 8 of 8 finishes 0 blocks; the
+  EEPROM round trip leaves the part as before; through an application's
+  device layer 4 retunes at 2.4 Msps, 0 blocks.
+- **Open: a split stream's finish.** `readsplit` (reading half on one
+  thread, control on another, then `reunite` and `finish`) lost 15-47
+  blocks with a refused request in 3 runs of 11 at 2.4 Msps — and 145 in
+  1 of 7 with the reap above removed from the byte path, so not the reap.
+  The same finish unsplit: 0 in 8. Before the async core, 8 runs of 8 were
+  clean. Counted, reported, not yet explained.
+
 ## Step 14 — R2 across the bottom and top of the VCO range — `data/step14-vco-edge.jsonl` — `derived/examples/vcoedge.rs`
 
 RF 200–232 MHz in 1 MHz steps; at each, the driver tunes (the band

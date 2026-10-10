@@ -183,54 +183,54 @@ pub const TUNER_POWER_SETTLE: Duration = Duration::from_millis(50);
 /// I2C repeater is not left open either: each tuner access opens and
 /// closes it (`usb::Link::with_tuner`).
 #[cfg(feature = "std")]
-pub fn setup(link: &Link) -> Result<()> {
+pub async fn setup(link: &Link) -> Result<()> {
     // Table 15: the PLL (what tuner access needs, findings step 2), both
     // ADCs (without them the stream is all 0x80, findings 10.4), the
     // reset released — 0xE8 from the power-on 0x20.
-    link.sys_rmw8(DEMOD_CTL, 0, DEMOD_CTL_STREAM)?;
+    link.sys_rmw8(DEMOD_CTL, 0, DEMOD_CTL_STREAM).await?;
     // Tables 16-19 (p. 29): GPIO3 as an output driven 0 = tuner power on.
     // GPO's read-back is shown (findings step 3's block scan: every
     // value reads back); GPD's and GPOE's are not, so those two are read
     // back without being judged.
-    link.sys_rmw8_unjudged(GPD, GPIO_TUNER_POWER, 0)?;
-    link.sys_rmw8_unjudged(GPOE, 0, GPIO_TUNER_POWER)?;
-    link.sys_rmw8(GPO, GPIO_TUNER_POWER, 0)?;
-    std::thread::sleep(TUNER_POWER_SETTLE);
+    link.sys_rmw8_unjudged(GPD, GPIO_TUNER_POWER, 0).await?;
+    link.sys_rmw8_unjudged(GPOE, 0, GPIO_TUNER_POWER).await?;
+    link.sys_rmw8(GPO, GPIO_TUNER_POWER, 0).await?;
+    sdr_core::time::sleep(TUNER_POWER_SETTLE).await;
     // 9.3: the DDC at the IF, the spectrum inverted for the high-side LO.
     // The stream's sequence writes both again in its own form.
-    set_ddc(link, DDC_IF_HZ, true)?;
+    set_ddc(link, DDC_IF_HZ, true).await?;
     // Table 2: both analog loops enabled and not held (their resets);
     // Table 10: the digital AGC enabled (its reset); Table 2: the pins'
     // polarity 0 (findings step 4b: polarity 0 closes the IF loop through
     // the VAGC pin, 1 is positive feedback).
-    link.demod_rmw8(AAGC_PAGE, AAGC_OFF, EN_IF_AGC | EN_RF_AGC | AAGC_HOLD, EN_IF_AGC | EN_RF_AGC)?;
-    link.demod_rmw8(DAGC_PAGE, DAGC_OFF, EN_DAGC, EN_DAGC)?;
-    link.demod_rmw8(AGC_POLARITY_PAGE, AGC_POLARITY_OFF, POLAR_RF_AGC | POLAR_IF_AGC, 0)?;
+    link.demod_rmw8(AAGC_PAGE, AAGC_OFF, EN_IF_AGC | EN_RF_AGC | AAGC_HOLD, EN_IF_AGC | EN_RF_AGC).await?;
+    link.demod_rmw8(DAGC_PAGE, DAGC_OFF, EN_DAGC, EN_DAGC).await?;
+    link.demod_rmw8(AGC_POLARITY_PAGE, AGC_POLARITY_OFF, POLAR_RF_AGC | POLAR_IF_AGC, 0).await?;
     // A stream an earlier process left running or paused is stopped and
     // unpaused: both bits to their power-on 0 (findings 9b: page 0 0x06
     // power-on 0x00; step 2: page 1 0x01 power-on 0x10).
-    link.demod_rmw8(START_PAGE, START_OFF, START_BIT, 0)?;
-    link.demod_rmw8(PAUSE_PAGE, PAUSE_OFF, PAUSE_BIT, 0)?;
+    link.demod_rmw8(START_PAGE, START_OFF, START_BIT, 0).await?;
+    link.demod_rmw8(PAUSE_PAGE, PAUSE_OFF, PAUSE_BIT, 0).await?;
     Ok(())
 }
 
 /// pset_iffreq and Spec_inv (Table 6, 9.3), verified.
 #[cfg(feature = "std")]
-pub fn set_ddc(link: &Link, if_hz: f64, spec_inv: bool) -> Result<()> {
+pub async fn set_ddc(link: &Link, if_hz: f64, spec_inv: bool) -> Result<()> {
     let b = pset_iffreq_bytes(if_hz);
-    link.demod_rmw8(IFFREQ_PAGE, IFFREQ_MSB, IFFREQ_MSB_MASK, b[0])?;
-    link.demod_rmw8(IFFREQ_PAGE, IFFREQ_MSB + 1, 0xFF, b[1])?;
-    link.demod_rmw8(IFFREQ_PAGE, IFFREQ_MSB + 2, 0xFF, b[2])?;
-    link.demod_rmw8(SPEC_INV_PAGE, SPEC_INV_OFF, SPEC_INV, if spec_inv { SPEC_INV } else { 0 })?;
+    link.demod_rmw8(IFFREQ_PAGE, IFFREQ_MSB, IFFREQ_MSB_MASK, b[0]).await?;
+    link.demod_rmw8(IFFREQ_PAGE, IFFREQ_MSB + 1, 0xFF, b[1]).await?;
+    link.demod_rmw8(IFFREQ_PAGE, IFFREQ_MSB + 2, 0xFF, b[2]).await?;
+    link.demod_rmw8(SPEC_INV_PAGE, SPEC_INV_OFF, SPEC_INV, if spec_inv { SPEC_INV } else { 0 }).await?;
     Ok(())
 }
 
 /// rsamp_ratio in the stream sequence's form ([`rsamp_transfers`]), each
 /// transfer read back.
 #[cfg(feature = "std")]
-pub fn write_rsamp(link: &Link, ratio: u32) -> Result<()> {
+pub async fn write_rsamp(link: &Link, ratio: u32) -> Result<()> {
     for (reg, pair) in rsamp_transfers(ratio) {
-        link.demod_write_verified(RSAMP_PAGE, reg, &pair)?;
+        link.demod_write_verified(RSAMP_PAGE, reg, &pair).await?;
     }
     Ok(())
 }
@@ -238,8 +238,8 @@ pub fn write_rsamp(link: &Link, ratio: u32) -> Result<()> {
 /// The f_symbol the resampler register holds (one auto-incrementing
 /// read of the four bytes, findings step 1D).
 #[cfg(feature = "std")]
-pub fn read_f_symbol(link: &Link) -> Result<f64> {
-    let b = link.demod_read(RSAMP_PAGE, RSAMP_MSB, 4)?;
+pub async fn read_f_symbol(link: &Link) -> Result<f64> {
+    let b = link.demod_read(RSAMP_PAGE, RSAMP_MSB, 4).await?;
     let ratio = rsamp_from_bytes([b[0], b[1], b[2], b[3]]);
     if ratio == 0 {
         return Err(Error::Device { backend: BACKEND, context: "resampler read", message: "rsamp_ratio reads 0".into() });

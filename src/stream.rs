@@ -40,10 +40,11 @@
 //! FIFO overflows while the request is served (findings 16). The host's
 //! ledger does not see it; the dropped-block counter does.
 
+use core::time::Duration;
 use std::vec::Vec;
 
 use sdr_core::usb_stream::{BulkIqStream, WireSample};
-use sdr_core::{Iq, IqStream, RecvInfo, Result, RxSource, elevate_current_thread};
+use sdr_core::{Iq, RecvInfo, Result};
 
 use crate::demod::{DDC_IF_HZ, output_rate_of_ratio, pset_iffreq_bytes, rsamp_transfers};
 use crate::protocol::*;
@@ -103,10 +104,10 @@ impl Write {
     }
 
     /// Make the transfer and read it back.
-    pub fn apply(&self, link: &Link) -> Result<()> {
+    pub async fn apply(&self, link: &Link) -> Result<()> {
         match self {
-            Write::Sys { off, value, not_read_back } => link.sys_write8_verified(*off, *value, *not_read_back),
-            Write::Demod { page, reg, data } => link.demod_write_verified(*page, *reg, data),
+            Write::Sys { off, value, not_read_back } => link.sys_write8_verified(*off, *value, *not_read_back).await,
+            Write::Demod { page, reg, data } => link.demod_write_verified(*page, *reg, data).await,
         }
     }
 }
@@ -194,8 +195,8 @@ impl BitWrite {
     }
 
     /// Make the write, read back and checked on the mask.
-    pub fn apply(self, link: &Link) -> Result<u8> {
-        link.demod_rmw8(self.page, self.reg, self.mask, self.value)
+    pub async fn apply(self, link: &Link) -> Result<u8> {
+        link.demod_rmw8(self.page, self.reg, self.mask, self.value).await
     }
 }
 
@@ -287,7 +288,7 @@ impl RtlStream {
     /// bit alone after a [`RtlStream::stop`]. A failed write leaves the
     /// state as it was and the transfers cancelled. Starting a running
     /// stream does nothing.
-    pub fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self) -> Result<()> {
         let writes: Vec<Write> = match self.state {
             State::Running => return Ok(()),
             State::Idle => start_sequence(self.ratio, &self.taps).into_iter().flat_map(|s| s.writes).collect(),
@@ -296,12 +297,12 @@ impl RtlStream {
         // Nothing flows yet: the FIFO reset (whatever an earlier run left
         // in it would come out first, findings 16.6) and the counter clear
         // cost no samples.
-        self.reset_fifo()?;
-        self.link.usb_write8(BLK_DROP_COUNTER, 0)?;
+        self.reset_fifo().await?;
+        self.link.usb_write8(BLK_DROP_COUNTER, 0).await?;
         self.drop_mark = 0;
         self.inner.start()?;
         for w in &writes {
-            if let Err(e) = w.apply(&self.link) {
+            if let Err(e) = w.apply(&self.link).await {
                 let _ = self.inner.stop();
                 return Err(e);
             }
@@ -312,11 +313,11 @@ impl RtlStream {
 
     /// Stop: the start bit cleared ([`STOP`]), then the queued transfers
     /// cancelled. Stopping a stream that is not running does nothing.
-    pub fn stop(&mut self) -> Result<()> {
+    pub async fn stop(&mut self) -> Result<()> {
         if self.state != State::Running {
             return Ok(());
         }
-        let wrote = STOP.apply(&self.link);
+        let wrote = STOP.apply(&self.link).await;
         let cancelled = self.inner.stop();
         self.state = State::Stopped;
         wrote?;
@@ -333,15 +334,15 @@ impl RtlStream {
     /// [`BLK_DROP_CLEAR_AT`], because a read and a clear back to back while
     /// running lose ~4,800 samples and the clear erases the count of its
     /// own loss. [`RtlStream::start`] clears it as well.
-    pub fn take_dropped_blocks(&mut self) -> Result<DroppedBlocks> {
-        let now = self.link.usb_read8(BLK_DROP_COUNTER)?;
+    pub async fn take_dropped_blocks(&mut self) -> Result<DroppedBlocks> {
+        let now = self.link.usb_read8(BLK_DROP_COUNTER).await?;
         // Below the mark only if something else cleared it: count from 0.
         let blocks = if now >= self.drop_mark { now - self.drop_mark } else { now };
         // Stopped or paused nothing flows, and the clear costs nothing.
         let quiet = self.state != State::Running || self.paused;
         let clear = now != 0 && (quiet || now >= BLK_DROP_CLEAR_AT);
         if clear {
-            self.link.usb_write8(BLK_DROP_COUNTER, 0)?;
+            self.link.usb_write8(BLK_DROP_COUNTER, 0).await?;
         }
         self.drop_mark = if clear { 0 } else { now };
         Ok(DroppedBlocks { blocks, saturated: now == BLK_DROP_COUNTER_SATURATED })
@@ -350,23 +351,17 @@ impl RtlStream {
     /// Pause: page 1 0x01 bit 2 set ([`PAUSE`]); the endpoint goes quiet
     /// and the stream's ledger counts the paused interval as samples not
     /// delivered (they never existed: a time discontinuity).
-    pub fn pause(&mut self) -> Result<()> {
-        PAUSE.apply(&self.link)?;
+    pub async fn pause(&mut self) -> Result<()> {
+        PAUSE.apply(&self.link).await?;
         self.paused = true;
         Ok(())
     }
 
     /// Resume: page 1 0x01 bit 2 cleared ([`RESUME`]).
-    pub fn resume(&mut self) -> Result<()> {
-        RESUME.apply(&self.link)?;
+    pub async fn resume(&mut self) -> Result<()> {
+        RESUME.apply(&self.link).await?;
         self.paused = false;
         Ok(())
-    }
-
-    /// Start the stream on a worker thread (`sdr_core::IqStream`), at
-    /// most `depth` chunks queued for the consumer.
-    pub fn into_stream(self, depth: usize) -> Result<IqStream> {
-        IqStream::spawn(self, depth)
     }
 
     /// Pause with one write of the whole register: page 1 0x01 ←
@@ -377,15 +372,15 @@ impl RtlStream {
     /// whenever no tuner access is in flight (the I²C repeater, bit 3, is
     /// closed again by every `Link::with_tuner`), and nothing else here
     /// writes it.
-    pub fn pause_blind(&mut self) -> Result<()> {
-        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT])?;
+    pub async fn pause_blind(&mut self) -> Result<()> {
+        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT]).await?;
         self.paused = true;
         Ok(())
     }
 
     /// Resume with one write: page 1 0x01 ← [`PAGE1_0X01_POWER_ON`].
-    pub fn resume_blind(&mut self) -> Result<()> {
-        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON])?;
+    pub async fn resume_blind(&mut self) -> Result<()> {
+        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON]).await?;
         self.paused = false;
         Ok(())
     }
@@ -393,33 +388,33 @@ impl RtlStream {
     /// Pulse USB_EPA_CTL's FIFO reset (bit 9 set, then the register as it
     /// was), discarding what the endpoint FIFO holds. Only with the output
     /// paused or stopped: findings 16.6.
-    pub fn reset_fifo(&mut self) -> Result<()> {
-        let v = self.link.usb_read_n(USB_EPA_CTL, 2)?;
+    pub async fn reset_fifo(&mut self) -> Result<()> {
+        let v = self.link.usb_read_n(USB_EPA_CTL, 2).await?;
         let was = u16::from_le_bytes([v[0], v[1]]);
-        self.link.usb_write_n(USB_EPA_CTL, &(was | EPA_CTL_FIFO_RESET).to_le_bytes())?;
-        self.link.usb_write_n(USB_EPA_CTL, &was.to_le_bytes())
+        self.link.usb_write_n(USB_EPA_CTL, &(was | EPA_CTL_FIFO_RESET).to_le_bytes()).await?;
+        self.link.usb_write_n(USB_EPA_CTL, &was.to_le_bytes()).await
     }
 
     /// Halt the output with one write of the start register: page 0 0x06
     /// ← 0 (the sequence writes it whole, [`START_VALUE`]). The stream's
     /// state stays running; [`RtlStream::restart_blind`] starts it again.
-    pub fn halt_blind(&mut self) -> Result<()> {
-        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE & !START_BIT])?;
+    pub async fn halt_blind(&mut self) -> Result<()> {
+        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE & !START_BIT]).await?;
         self.paused = true;
         Ok(())
     }
 
     /// Start the output again with one write: page 0 0x06 ← [`START_VALUE`].
-    pub fn restart_blind(&mut self) -> Result<()> {
-        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE])?;
+    pub async fn restart_blind(&mut self) -> Result<()> {
+        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE]).await?;
         self.paused = false;
         Ok(())
     }
 
-    /// The engine's hold ([`BulkIqStream::hold`]): call with the output
-    /// paused and drained; returns the break's sample position.
-    pub fn hold(&mut self) -> Result<u64> {
-        self.inner.hold()
+    /// The engine's hold ([`BulkIqStream::hold_async`]): call with the
+    /// output paused and drained; returns the break's sample position.
+    pub async fn hold(&mut self) -> Result<u64> {
+        self.inner.hold_async().await
     }
 
     /// The engine's release ([`BulkIqStream::release`]): call before the
@@ -433,35 +428,28 @@ impl RtlStream {
         self.inner.delivered()
     }
 
-    /// The wire bytes as the chip sends them ([`WIRE_FORMAT`]: unsigned
-    /// 8-bit I then Q): the engine's [`BulkIqStream::recv_bytes`].
-    pub fn recv_bytes(&mut self, buf: &mut [u8], timeout_secs: f64) -> Result<(usize, RecvInfo)> {
-        self.inner.recv_bytes(buf, timeout_secs)
-    }
-
-    /// Keep receiving for `span` into the engine's backlog
-    /// ([`BulkIqStream::absorb`]): the samples are kept for the next
-    /// receives and the transfer queue stays full.
-    pub fn absorb(&mut self, span: std::time::Duration) -> Result<()> {
-        self.inner.absorb(span)
-    }
-}
-
-impl RxSource for RtlStream {
-    fn max_num_samps(&self) -> usize {
+    /// Samples a receive hands out at most.
+    pub fn max_num_samps(&self) -> usize {
         self.inner.max_num_samps()
     }
 
-    fn start(&mut self) -> Result<()> {
-        RtlStream::start(self)
+    /// Samples into `buf`, widened (`WireSample::OffsetU8`); at most
+    /// `timeout_secs` waiting. Start the stream first.
+    pub async fn recv_into(&mut self, buf: &mut [Iq], timeout_secs: f64) -> Result<RecvInfo> {
+        self.inner.recv_into_async(buf, timeout_secs).await
     }
 
-    fn recv_into(&mut self, buf: &mut [Iq], timeout_secs: f64) -> Result<RecvInfo> {
-        self.inner.recv_into(buf, timeout_secs)
+    /// The wire bytes as the chip sends them ([`WIRE_FORMAT`]: unsigned
+    /// 8-bit I then Q): the engine's [`BulkIqStream::recv_bytes_async`].
+    pub async fn recv_bytes(&mut self, buf: &mut [u8], timeout_secs: f64) -> Result<(usize, RecvInfo)> {
+        self.inner.recv_bytes_async(buf, timeout_secs).await
     }
 
-    fn setup_worker_thread(&self) {
-        elevate_current_thread();
+    /// Keep receiving for `span` into the engine's backlog
+    /// ([`BulkIqStream::absorb_async`]): the samples are kept for the next
+    /// receives and the transfer queue stays full.
+    pub async fn absorb(&mut self, span: Duration) -> Result<()> {
+        self.inner.absorb_async(span).await
     }
 }
 
@@ -469,11 +457,16 @@ impl Drop for RtlStream {
     /// The stream stopped, unpaused (the register back at its power-on
     /// state for the next stream), and the receiver free to change the
     /// rate again. The transfers are cancelled by the engine's own drop.
+    /// In a browser nothing can be awaited here: a stream is stopped by its
+    /// `finish` (`session::Stream`), and a raw one by `stop` before it drops.
     fn drop(&mut self) {
-        let _ = self.stop();
-        if self.paused {
-            let _ = RESUME.apply(&self.link);
-        }
+        #[cfg(not(target_arch = "wasm32"))]
+        sdr_core::block_on(async {
+            let _ = self.stop().await;
+            if self.paused {
+                let _ = RESUME.apply(&self.link).await;
+            }
+        });
         self.link.release_stream();
     }
 }

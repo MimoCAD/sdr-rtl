@@ -20,7 +20,8 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::TuneRequest;
 use sdr_core::gain::Stage;
-use sdr_rtl::{OPEN_RF_HZ, Rtl, Stream};
+use sdr_rtl::OPEN_RF_HZ;
+use sdr_rtl::blocking::{ReadHalf, Rtl, Stream};
 
 const READ_BYTES: usize = 4095;
 const RETUNE_STEP_HZ: f64 = 100e3;
@@ -43,7 +44,7 @@ fn run() -> Result<String, String> {
     let (mut reader, control) = rtl.into_stream(0, 0).map_err(|e| e.error.to_string())?.split();
 
     let t = Instant::now();
-    let reading = std::thread::spawn(move || -> Result<(sdr_rtl::ReadHalf, u64), String> {
+    let reading = std::thread::spawn(move || -> Result<(ReadHalf, u64), String> {
         let mut sink: Box<dyn Write> = match &out {
             Some(p) => Box::new(File::create(p).map_err(|e| e.to_string())?),
             None => Box::new(std::io::sink()),
@@ -68,7 +69,7 @@ fn run() -> Result<String, String> {
     }
     let (reader, bytes) = reading.join().map_err(|_| "the reading thread panicked".to_string())??;
     let elapsed = t.elapsed().as_secs_f64();
-    let breaks = control.breaks().map_err(|e| e.to_string())?;
+    let breaks = control.breaks();
     let stream = Stream::reunite(reader, control).map_err(|_| "the halves did not reunite".to_string())?;
     let fin = stream.finish().map_err(|e| e.to_string())?;
     let r = &fin.report;
