@@ -34,13 +34,21 @@ impl Provenance {
 
     /// "derivation/data/FILE (harness HASH[, uncommitted changes])".
     pub fn cite(&self) -> String {
-        let dirty = if self.harness_uncommitted { ", uncommitted changes" } else { "" };
-        format!("derivation/data/{} (harness {}{dirty})", self.file, self.harness_head)
+        let dirty = if self.harness_uncommitted {
+            ", uncommitted changes"
+        } else {
+            ""
+        };
+        format!(
+            "derivation/data/{} (harness {}{dirty})",
+            self.file, self.harness_head
+        )
     }
 }
 
 fn read(dir: &Path, file: &str) -> Result<String, String> {
-    std::fs::read_to_string(dir.join(file)).map_err(|e| format!("{}: {e}", dir.join(file).display()))
+    std::fs::read_to_string(dir.join(file))
+        .map_err(|e| format!("{}: {e}", dir.join(file).display()))
 }
 
 fn ctx<T>(r: Result<T, String>, file: &str, line: usize) -> Result<T, String> {
@@ -52,7 +60,10 @@ pub fn load_json(dir: &Path, file: &str) -> Result<(Value, Provenance), String> 
     let text = read(dir, file)?;
     let v = Value::parse(&text).map_err(|e| format!("{file}: {e}"))?;
     if let Some(a) = v.get("aborted") {
-        return Err(format!("{file}: the record is marked aborted: {}", a.as_str().unwrap_or("?")));
+        return Err(format!(
+            "{file}: the record is marked aborted: {}",
+            a.as_str().unwrap_or("?")
+        ));
     }
     let p = Provenance::from_header(file, &v)?;
     Ok((v, p))
@@ -61,7 +72,10 @@ pub fn load_json(dir: &Path, file: &str) -> Result<(Value, Provenance), String> 
 /// A JSONL record: the header line, then every other line parsed.
 pub fn load_jsonl(dir: &Path, file: &str) -> Result<(Value, Vec<Value>, Provenance), String> {
     let text = read(dir, file)?;
-    let mut lines = text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty());
+    let mut lines = text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty());
     let (_, first) = lines.next().ok_or_else(|| format!("{file}: empty"))?;
     let header = Value::parse(first).map_err(|e| format!("{file} line 1: {e}"))?;
     if header.get("kind").and_then(Value::as_str) != Some("header") {
@@ -123,7 +137,10 @@ pub fn load_pll_sweep(dir: &Path) -> Result<PllSweep, String> {
     let options = header.field("options")?;
     let ref_div2 = options.field_bool("ref_div2")?;
     let if_hz = options.field_f64("if_hz")?;
-    let setup = lines.iter().find(|l| l.get("kind").and_then(Value::as_str) == Some("setup")).ok_or("pll-sweep: no setup line")?;
+    let setup = lines
+        .iter()
+        .find(|l| l.get("kind").and_then(Value::as_str) == Some("setup"))
+        .ok_or("pll-sweep: no setup line")?;
     let f_ref_hz = setup.field("pll")?.field_f64("f_ref_hz")?;
     let mut out = Vec::new();
     for (n, l) in lines.iter().enumerate() {
@@ -133,14 +150,23 @@ pub fn load_pll_sweep(dir: &Path) -> Result<PllSweep, String> {
         let line = ctx(pll_line(l), file, n + 2)?;
         out.push(line);
     }
-    Ok(PllSweep { provenance, ref_div2, f_ref_hz, if_hz, lines: out })
+    Ok(PllSweep {
+        provenance,
+        ref_div2,
+        f_ref_hz,
+        if_hz,
+        lines: out,
+    })
 }
 
 const R2_INDICATOR_MASK: u8 = 0x7F;
 
 fn status_r2(v: &Value) -> Result<u8, String> {
     let bytes = v.as_arr().ok_or("status: array expected")?;
-    let r2 = bytes.get(2).and_then(Value::as_i64).ok_or("status: R2 missing")?;
+    let r2 = bytes
+        .get(2)
+        .and_then(Value::as_i64)
+        .ok_or("status: R2 missing")?;
     Ok((r2 as u8) & R2_INDICATOR_MASK)
 }
 
@@ -151,7 +177,11 @@ fn pll_line(l: &Value) -> Result<PllLine, String> {
             div: h.field_i64("div")? as u32,
             lo_hz: h.field_f64("lo")?,
             rf_hz: h.field_f64("rf")?,
-            reading: if h.get("skip").is_some() { None } else { Some(meter_of(h.field("m")?)?) },
+            reading: if h.get("skip").is_some() {
+                None
+            } else {
+                Some(meter_of(h.field("m")?)?)
+            },
         });
     }
     Ok(PllLine {
@@ -216,7 +246,10 @@ pub fn load_vco_edge(dir: &Path) -> Result<VcoEdge, String> {
             tone_db: ctx(l.field_f64("tone_over_median_db"), file, line)?,
         });
     }
-    Ok(VcoEdge { provenance, lines: out })
+    Ok(VcoEdge {
+        provenance,
+        lines: out,
+    })
 }
 
 pub fn load_lo_find(dir: &Path, sel_div: u8) -> Result<LoFind, String> {
@@ -227,7 +260,10 @@ pub fn load_lo_find(dir: &Path, sel_div: u8) -> Result<LoFind, String> {
         return Err(format!("{file}: options.div is not {sel_div}"));
     }
     let if_hz = options.field_f64("if_hz")?;
-    let setup = lines.iter().find(|l| l.get("kind").and_then(Value::as_str) == Some("setup")).ok_or("lo-find: no setup line")?;
+    let setup = lines
+        .iter()
+        .find(|l| l.get("kind").and_then(Value::as_str) == Some("setup"))
+        .ok_or("lo-find: no setup line")?;
     let pll = setup.field("pll")?;
     let nint = pll.field_i64("nint")? as u16;
     let vco_hz = pll.field_f64("vco_hz_if_f_vco_is_f_ref_x_ndiv")?;
@@ -236,12 +272,28 @@ pub fn load_lo_find(dir: &Path, sel_div: u8) -> Result<LoFind, String> {
     for (n, l) in lines.iter().enumerate() {
         match l.get("k").and_then(Value::as_str) {
             Some("off") => off_reading = Some(ctx(meter_of(l.field("m")?), &file, n + 2)?),
-            Some("lof") => points.push(ctx((|| Ok::<_, String>((l.field_f64("rf")?, meter_of(l.field("m")?)?)))(), &file, n + 2)?),
+            Some("lof") => points.push(ctx(
+                (|| Ok::<_, String>((l.field_f64("rf")?, meter_of(l.field("m")?)?)))(),
+                &file,
+                n + 2,
+            )?),
             _ => {}
         }
     }
-    let rf_step_hz = points.windows(2).map(|w| w[1].0 - w[0].0).fold(f64::INFINITY, f64::min);
-    Ok(LoFind { provenance, sel_div, nint, vco_hz, if_hz, rf_step_hz, off_reading: off_reading.ok_or("lo-find: no off line")?, points })
+    let rf_step_hz = points
+        .windows(2)
+        .map(|w| w[1].0 - w[0].0)
+        .fold(f64::INFINITY, f64::min);
+    Ok(LoFind {
+        provenance,
+        sel_div,
+        nint,
+        vco_hz,
+        if_hz,
+        rf_step_hz,
+        off_reading: off_reading.ok_or("lo-find: no off line")?,
+        points,
+    })
 }
 
 // ---- gain-ladder ----
@@ -290,25 +342,59 @@ pub fn load_gain_ladder(dir: &Path, file: &str) -> Result<GainLadder, String> {
         for c in s.field_arr("codes")? {
             let errors = c.field_arr("write_errors")?;
             if !errors.is_empty() {
-                return Err(format!("{file}: write errors at code {}", c.field_i64("code")?));
+                return Err(format!(
+                    "{file}: write errors at code {}",
+                    c.field_i64("code")?
+                ));
             }
-            let probed: Vec<i64> = c.path(&["search", "readings"]).and_then(Value::as_arr).map(|r| r.iter().filter_map(|x| x.get("level_db").and_then(Value::as_i64)).collect()).unwrap_or_default();
+            let probed: Vec<i64> = c
+                .path(&["search", "readings"])
+                .and_then(Value::as_arr)
+                .map(|r| {
+                    r.iter()
+                        .filter_map(|x| x.get("level_db").and_then(Value::as_i64))
+                        .collect()
+                })
+                .unwrap_or_default();
             codes.push(GainCodeReading {
                 code: c.field_i64("code")? as u8,
-                threshold_level_db: c.get("threshold_level_db").and_then(Value::as_i64).map(|t| t as i32),
-                stop: c.path(&["search", "stop"]).and_then(Value::as_str).map(str::to_string),
-                probed_levels_db: probed.iter().min().zip(probed.iter().max()).map(|(a, b)| (*a as i32, *b as i32)),
+                threshold_level_db: c
+                    .get("threshold_level_db")
+                    .and_then(Value::as_i64)
+                    .map(|t| t as i32),
+                stop: c
+                    .path(&["search", "stop"])
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                probed_levels_db: probed
+                    .iter()
+                    .min()
+                    .zip(probed.iter().max())
+                    .map(|(a, b)| (*a as i32, *b as i32)),
                 meter_value: c.get("meter_value").and_then(Value::as_i64),
-                source_level_db: c.path(&["source", "level_db_relative"]).and_then(Value::as_i64).map(|t| t as i32),
+                source_level_db: c
+                    .path(&["source", "level_db_relative"])
+                    .and_then(Value::as_i64)
+                    .map(|t| t as i32),
             });
         }
-        stages.push(GainStage { name: s.field_str("stage")?.to_string(), register: s.field_i64("register")? as u8, method, comparator, codes });
+        stages.push(GainStage {
+            name: s.field_str("stage")?.to_string(),
+            register: s.field_i64("register")? as u8,
+            method,
+            comparator,
+            codes,
+        });
     }
     Ok(GainLadder {
         provenance,
         config: options.field_str("config")?.to_string(),
         freq_hz: options.field_f64("freq_hz")?,
-        fixed_codes: (fixed.field_i64("lna")? as u8, fixed.field_i64("mix")? as u8, fixed.field_i64("vga")? as u8),
+        fixed_codes: (
+            fixed.field_i64("lna")? as u8,
+            fixed.field_i64("mix")? as u8,
+            fixed.field_i64("vga")? as u8,
+        ),
         stages,
     })
 }
@@ -340,7 +426,10 @@ pub fn load_meter(dir: &Path) -> Result<Meter, String> {
         let mut off = None;
         for s in l.field_arr("states")? {
             let m = meter_of(s.field("medians")?)?;
-            match s.path(&["source", "level_db_relative"]).and_then(Value::as_i64) {
+            match s
+                .path(&["source", "level_db_relative"])
+                .and_then(Value::as_i64)
+            {
                 Some(level) => states.push((level as i32, m)),
                 None => {
                     if off.is_none() {
@@ -349,9 +438,17 @@ pub fn load_meter(dir: &Path) -> Result<Meter, String> {
                 }
             }
         }
-        ladders.push(MeterLadder { config: l.field_str("config")?.to_string(), polar: l.field_bool("polar_if_agc_and_rf_agc")?, states, off_reading: off.ok_or("meter: a ladder without an off state")? });
+        ladders.push(MeterLadder {
+            config: l.field_str("config")?.to_string(),
+            polar: l.field_bool("polar_if_agc_and_rf_agc")?,
+            states,
+            off_reading: off.ok_or("meter: a ladder without an off state")?,
+        });
     }
-    Ok(Meter { provenance, ladders })
+    Ok(Meter {
+        provenance,
+        ladders,
+    })
 }
 
 // ---- band-table ----
@@ -387,15 +484,62 @@ pub struct BandFreq {
 
 #[derive(Clone, Debug)]
 pub struct BandTable {
-    pub provenance: Provenance,
+    /// One per record, in [`BAND_TABLE_RECORDS`] order.
+    pub provenance: Vec<Provenance>,
     pub if_hz: f64,
     pub grid_step_hz: f64,
     pub staged: bool,
     pub freqs: Vec<BandFreq>,
 }
 
+/// The band-table records, oldest first: step 4f's run (42-1002 MHz, with
+/// 112-202 MHz untuned: SEL_DIV 011 was then taken as the document's /1).
+/// Its three staged re-runs of 112-202 MHz with 011 = /16
+/// (step4-band-table-div16*.jsonl) are findings 4f2's evidence against the
+/// staged method and are not read here; step 4f2's every-path table
+/// (`band_paths`) covers the span. A later record's frequency would
+/// replace an earlier one only where the earlier could not tune it.
+pub const BAND_TABLE_RECORDS: [&str; 1] = ["step4-band-table.jsonl"];
+
 pub fn load_band_table(dir: &Path) -> Result<BandTable, String> {
-    let file = "step4-band-table.jsonl";
+    let mut table: Option<BandTable> = None;
+    for file in BAND_TABLE_RECORDS {
+        let next = load_band_file(dir, file)?;
+        let Some(t) = table.as_mut() else {
+            table = Some(next);
+            continue;
+        };
+        if next.if_hz != t.if_hz || next.staged != t.staged {
+            return Err(format!(
+                "{file}: IF or search differs from {}",
+                t.provenance[0].file
+            ));
+        }
+        for fq in next.freqs {
+            match t.freqs.iter_mut().find(|x| x.rf_hz == fq.rf_hz) {
+                Some(old) if old.reference.is_some() => {
+                    return Err(format!(
+                        "{file}: {} Hz is already measured in an earlier record",
+                        fq.rf_hz
+                    ));
+                }
+                Some(old) => *old = fq,
+                None => t.freqs.push(fq),
+            }
+        }
+        t.provenance.extend(next.provenance);
+    }
+    let mut t = table.ok_or("no band-table record")?;
+    t.freqs.sort_by_key(|f| f.rf_hz);
+    t.grid_step_hz = t
+        .freqs
+        .windows(2)
+        .map(|w| (w[1].rf_hz - w[0].rf_hz) as f64)
+        .fold(f64::INFINITY, f64::min);
+    Ok(t)
+}
+
+fn load_band_file(dir: &Path, file: &str) -> Result<BandTable, String> {
     let (header, lines, provenance) = load_jsonl(dir, file)?;
     let options = header.field("options")?;
     let staged = header.field_str("search")?.starts_with("staged");
@@ -404,7 +548,13 @@ pub fn load_band_table(dir: &Path) -> Result<BandTable, String> {
         match freqs.iter().position(|x| x.rf_hz == f) {
             Some(i) => i,
             None => {
-                freqs.push(BandFreq { rf_hz: f, reference: None, error: None, stage_a_best: Vec::new(), readings: Vec::new() });
+                freqs.push(BandFreq {
+                    rf_hz: f,
+                    reference: None,
+                    error: None,
+                    stage_a_best: Vec::new(),
+                    readings: Vec::new(),
+                });
                 freqs.len() - 1
             }
         }
@@ -422,20 +572,30 @@ pub fn load_band_table(dir: &Path) -> Result<BandTable, String> {
                         }
                         freqs[i].reference = Some(BandRef {
                             reading: l.field_i64("m")?,
-                            source_level_db: l.field("source")?.field_i64("level_db_relative")? as i32,
+                            source_level_db: l.field("source")?.field_i64("level_db_relative")?
+                                as i32,
                             sel_div: pll.field_i64("sel_div")? as u8,
                             nint: pll.field_i64("nint")? as u16,
                             r2: l.field("status")?.field_i64("r2_vco_indicator")? as u8,
                         });
                     } else {
-                        freqs[i].error = Some(errors.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; "));
+                        freqs[i].error = Some(
+                            errors
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .collect::<Vec<_>>()
+                                .join("; "),
+                        );
                     }
                 }
                 Some("stage_a") => {
                     let i = at(&mut freqs, l.field_i64("f")? as u32);
                     for p in l.field_arr("best_paths_rffilt_rfmux")? {
                         let p = p.as_arr().ok_or("best path: array expected")?;
-                        freqs[i].stage_a_best.push((p[0].as_i64().ok_or("rffilt")? as u8, p[1].as_i64().ok_or("rfmux")? as u8));
+                        freqs[i].stage_a_best.push((
+                            p[0].as_i64().ok_or("rffilt")? as u8,
+                            p[1].as_i64().ok_or("rfmux")? as u8,
+                        ));
                     }
                 }
                 Some("bt") => {
@@ -458,8 +618,206 @@ pub fn load_band_table(dir: &Path) -> Result<BandTable, String> {
         ctx(r, file, n + 2)?;
     }
     freqs.sort_by_key(|f| f.rf_hz);
-    let grid_step_hz = freqs.windows(2).map(|w| (w[1].rf_hz - w[0].rf_hz) as f64).fold(f64::INFINITY, f64::min);
-    Ok(BandTable { provenance, if_hz: options.field_f64("if_hz")?, grid_step_hz, staged, freqs })
+    Ok(BandTable {
+        provenance: vec![provenance],
+        if_hz: options.field_f64("if_hz")?,
+        grid_step_hz: f64::INFINITY,
+        staged,
+        freqs,
+    })
+}
+
+// ---- band-paths (step 4f2) ----
+
+/// The step 4f2 runs, each the whole grid: every path at every
+/// frequency, each reading a settled average (harness `band-paths`).
+pub const BAND_PATHS_RECORDS: [&str; 3] = [
+    "step4f2-band-paths-run1.jsonl",
+    "step4f2-band-paths-run2.jsonl",
+    "step4f2-band-paths-run3.jsonl",
+];
+
+/// One `pa` line: a path's averaged meter at one place in a frequency's
+/// sequence (0 = the bypass first, 1-16 the paths, 17 = the bypass again).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathAverage {
+    pub i: usize,
+    pub rffilt: u8,
+    pub rfmux: u8,
+    /// The meter's mean over the window, counts.
+    pub mean: f64,
+    /// Its sample standard deviation, counts.
+    pub sd: f64,
+    pub reads: usize,
+    /// Write attempts (more than 1 = a stall was retried).
+    pub attempts: usize,
+}
+
+/// One grid frequency of a run: its `ref` line and its `pa` lines; a
+/// frequency counts only with its closing `fd` line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathsFreq {
+    pub rf_hz: u32,
+    pub source_level_db: i32,
+    pub readings: Vec<PathAverage>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BandPathsRun {
+    pub provenance: Provenance,
+    pub if_hz: f64,
+    /// From the header's procedure line: the wait after a path write and
+    /// the averaging window, ms.
+    pub settle_ms: f64,
+    pub average_ms: f64,
+    pub freqs: Vec<PathsFreq>,
+}
+
+/// The number between `before` and `after` in `text`.
+fn number_between(text: &str, before: &str, after: &str) -> Result<f64, String> {
+    let rest = text
+        .split_once(before)
+        .ok_or_else(|| format!("procedure: no {before:?}"))?
+        .1;
+    let n = rest
+        .split_once(after)
+        .ok_or_else(|| format!("procedure: no {after:?} after {before:?}"))?
+        .0;
+    n.trim()
+        .parse()
+        .map_err(|e| format!("procedure: {n:?}: {e}"))
+}
+
+// ---- path-settle (step 4f2) ----
+
+pub const PATH_SETTLE_RECORD: &str = "step4-path-settle.jsonl";
+
+/// One `tr` line: the meter read back-to-back after a path change.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettleTransition {
+    pub rf_hz: u32,
+    pub to: (u8, u8),
+    /// ms after the write returned.
+    pub t_ms: Vec<f64>,
+    pub meter: Vec<Option<f64>>,
+    /// A write of the transition stalled (the path may not have changed).
+    pub stalled: bool,
+}
+
+pub struct PathSettle {
+    pub provenance: Provenance,
+    pub transitions: Vec<SettleTransition>,
+}
+
+pub fn load_path_settle(dir: &Path) -> Result<PathSettle, String> {
+    let (_, lines, provenance) = load_jsonl(dir, PATH_SETTLE_RECORD)?;
+    let mut transitions = Vec::new();
+    for (n, l) in lines.iter().enumerate() {
+        if l.get("k").and_then(Value::as_str) != Some("tr") {
+            continue;
+        }
+        let r: Result<SettleTransition, String> = (|| {
+            let to = l.field_arr("to")?;
+            let byte = |v: &Value| v.as_i64().map(|x| x as u8).ok_or("to: integer expected");
+            Ok(SettleTransition {
+                rf_hz: l.field_i64("f")? as u32,
+                to: (byte(&to[0])?, byte(&to[1])?),
+                t_ms: l
+                    .field_arr("t")?
+                    .iter()
+                    .map(|v| v.as_f64().ok_or("t: number expected"))
+                    .collect::<Result<_, _>>()?,
+                meter: l.field_arr("m")?.iter().map(Value::as_f64).collect(),
+                stalled: l
+                    .get("e")
+                    .and_then(Value::as_arr)
+                    .is_some_and(|e| !e.is_empty()),
+            })
+        })();
+        transitions.push(ctx(r, PATH_SETTLE_RECORD, n + 2)?);
+    }
+    Ok(PathSettle {
+        provenance,
+        transitions,
+    })
+}
+
+pub fn load_band_paths(dir: &Path, file: &str) -> Result<BandPathsRun, String> {
+    let (header, lines, provenance) = load_jsonl(dir, file)?;
+    let options = header.field("options")?;
+    let mut freqs: Vec<PathsFreq> = Vec::new();
+    // The frequency being read; a `ref` line starts it afresh (a chunk
+    // stopped mid-frequency is measured again whole by the next one).
+    let mut open: Option<PathsFreq> = None;
+    for (n, l) in lines.iter().enumerate() {
+        let r: Result<(), String> = (|| {
+            match l.get("k").and_then(Value::as_str) {
+                Some("ref") => {
+                    let errors = l.field_arr("e")?;
+                    if !errors.is_empty() {
+                        return Err(format!("ref line with errors: {errors:?}"));
+                    }
+                    open = Some(PathsFreq {
+                        rf_hz: l.field_i64("f")? as u32,
+                        source_level_db: l.field("source")?.field_i64("level_db_relative")? as i32,
+                        readings: Vec::new(),
+                    });
+                }
+                Some("pa") => {
+                    let fq = open.as_mut().ok_or("pa line before its ref line")?;
+                    if l.field_i64("f")? as u32 != fq.rf_hz {
+                        return Err("pa line of another frequency".into());
+                    }
+                    if l.get("e").is_some() {
+                        return Err(
+                            "pa line with errors (a write that stalled on every attempt)".into(),
+                        );
+                    }
+                    fq.readings.push(PathAverage {
+                        i: l.field_i64("i")? as usize,
+                        rffilt: l.field_i64("rf")? as u8,
+                        rfmux: l.field_i64("mx")? as u8,
+                        mean: l.field_f64("mean")?,
+                        sd: l.field_f64("sd")?,
+                        reads: l.field_i64("n")? as usize,
+                        attempts: l.field_i64("w")? as usize,
+                    });
+                }
+                Some("fd") => {
+                    let fq = open.take().ok_or("fd line before its ref line")?;
+                    if l.field_i64("f")? as u32 != fq.rf_hz {
+                        return Err("fd line of another frequency".into());
+                    }
+                    if freqs.iter().any(|x| x.rf_hz == fq.rf_hz) {
+                        return Err(format!("{} Hz finished twice", fq.rf_hz));
+                    }
+                    freqs.push(fq);
+                }
+                _ => {}
+            }
+            Ok(())
+        })();
+        ctx(r, file, n + 2)?;
+    }
+    freqs.sort_by_key(|f| f.rf_hz);
+    let procedure = header.field_str("procedure")?;
+    let settle_ms = ctx(
+        number_between(procedure, "while a write stalls),", "ms, then"),
+        file,
+        1,
+    )?;
+    let average_ms = ctx(
+        number_between(procedure, "read back-to-back for", "ms and averaged"),
+        file,
+        1,
+    )?;
+    Ok(BandPathsRun {
+        provenance,
+        if_hz: options.field_f64("if_hz")?,
+        settle_ms,
+        average_ms,
+        freqs,
+    })
 }
 
 // ---- filter ----
@@ -498,11 +856,25 @@ pub fn load_filter(dir: &Path) -> Result<Filter, String> {
             if l.get("e").is_some() {
                 return Err("flt line with errors".into());
             }
-            let key = (l.field_str("st")?.to_string(), l.field_i64("c")? as u8, l.field_i64("bw")? as u8, l.field_i64("h")? as u8);
+            let key = (
+                l.field_str("st")?.to_string(),
+                l.field_i64("c")? as u8,
+                l.field_i64("bw")? as u8,
+                l.field_i64("h")? as u8,
+            );
             let point = (l.field_f64("fi")?, l.field_i64("m")?);
-            match curves.iter_mut().find(|c| (c.stage.as_str(), c.filt_code, c.filt_bw, c.hpf) == (key.0.as_str(), key.1, key.2, key.3)) {
+            match curves.iter_mut().find(|c| {
+                (c.stage.as_str(), c.filt_code, c.filt_bw, c.hpf)
+                    == (key.0.as_str(), key.1, key.2, key.3)
+            }) {
                 Some(c) => c.points.push(point),
-                None => curves.push(FilterCurve { stage: key.0, filt_code: key.1, filt_bw: key.2, hpf: key.3, points: vec![point] }),
+                None => curves.push(FilterCurve {
+                    stage: key.0,
+                    filt_code: key.1,
+                    filt_bw: key.2,
+                    hpf: key.3,
+                    points: vec![point],
+                }),
             }
             Ok(())
         })();
@@ -510,12 +882,18 @@ pub fn load_filter(dir: &Path) -> Result<Filter, String> {
     }
     let mut if_step_hz = f64::INFINITY;
     for c in &mut curves {
-        c.points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        c.points
+            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         for w in c.points.windows(2) {
             if_step_hz = if_step_hz.min(w[1].0 - w[0].0);
         }
     }
-    Ok(Filter { provenance, ddc_track, if_step_hz, curves })
+    Ok(Filter {
+        provenance,
+        ddc_track,
+        if_step_hz,
+        curves,
+    })
 }
 
 // ---- tune (the register image) ----
@@ -545,7 +923,9 @@ pub struct TuneRecord {
 }
 
 fn hex_byte(s: &str) -> Result<u8, String> {
-    s.strip_prefix("0x").and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or_else(|| format!("{s}: 0xNN expected"))
+    s.strip_prefix("0x")
+        .and_then(|h| u8::from_str_radix(h, 16).ok())
+        .ok_or_else(|| format!("{s}: 0xNN expected"))
 }
 
 fn scalar_pairs(v: &Value) -> Vec<(String, String)> {
@@ -574,20 +954,40 @@ pub fn load_tune(dir: &Path, file: &str) -> Result<TuneRecord, String> {
     let setup = v.field("setup")?;
     let image = setup.field("tuner_image")?;
     let applied = setup.field("tuner_applied")?;
-    let bytes: Vec<u8> = applied.field_arr("image")?.iter().map(|b| b.as_str().ok_or("image byte: string expected".to_string()).and_then(hex_byte)).collect::<Result<_, _>>()?;
+    let bytes: Vec<u8> = applied
+        .field_arr("image")?
+        .iter()
+        .map(|b| {
+            b.as_str()
+                .ok_or("image byte: string expected".to_string())
+                .and_then(hex_byte)
+        })
+        .collect::<Result<_, _>>()?;
     let first_reg = 5u8;
     let mut registers = Vec::new();
     for r in image.field_arr("registers")? {
         let reg = r.field_i64("reg")? as u8;
         let value = hex_byte(r.field_str("value")?)?;
-        let from_applied = *bytes.get((reg - first_reg) as usize).ok_or_else(|| format!("R{reg}: not in the applied image"))?;
+        let from_applied = *bytes
+            .get((reg - first_reg) as usize)
+            .ok_or_else(|| format!("R{reg}: not in the applied image"))?;
         if from_applied != value {
-            return Err(format!("{file}: R{reg} differs between tuner_image (0x{value:02X}) and tuner_applied (0x{from_applied:02X})"));
+            return Err(format!(
+                "{file}: R{reg} differs between tuner_image (0x{value:02X}) and tuner_applied (0x{from_applied:02X})"
+            ));
         }
-        registers.push(RegisterChoice { reg, value, why: r.field_str("why")?.to_string() });
+        registers.push(RegisterChoice {
+            reg,
+            value,
+            why: r.field_str("why")?.to_string(),
+        });
     }
     if registers.len() != bytes.len() {
-        return Err(format!("{file}: {} notes for {} image bytes", registers.len(), bytes.len()));
+        return Err(format!(
+            "{file}: {} notes for {} image bytes",
+            registers.len(),
+            bytes.len()
+        ));
     }
     let check = applied.field("readback_check")?;
     Ok(TuneRecord {
@@ -600,6 +1000,11 @@ pub fn load_tune(dir: &Path, file: &str) -> Result<TuneRecord, String> {
         fixed_cell_violations: image.field_arr("fixed_cell_violations")?.len(),
         registers,
         write_errors: applied.field_arr("write_errors")?.len(),
-        readback_differs_at: check.field_arr("r5_to_r15_differ_at")?.iter().filter_map(Value::as_i64).map(|r| r as u8).collect(),
+        readback_differs_at: check
+            .field_arr("r5_to_r15_differ_at")?
+            .iter()
+            .filter_map(Value::as_i64)
+            .map(|r| r as u8)
+            .collect(),
     })
 }

@@ -40,13 +40,24 @@ impl MeterScale {
 /// tone-on states, sorted by level (METHODS.md §8: the ladder is taken
 /// coarse-outer and must be analysed sorted).
 pub fn fit(meter: &Meter) -> Result<MeterScale, String> {
-    let ladder = meter.ladders.iter().find(|l| l.config == METER_CONFIG && l.polar == METER_POLAR).ok_or("meter record: no vagc / polar 0 ladder")?;
+    let ladder = meter
+        .ladders
+        .iter()
+        .find(|l| l.config == METER_CONFIG && l.polar == METER_POLAR)
+        .ok_or("meter record: no vagc / polar 0 ladder")?;
     // The positive control's null: with the tone off the meter sits on
     // its rail.
     if ladder.off_reading < RAIL_COUNTS {
-        return Err(format!("meter record: the tone-off reading ({}) is not on the rail {RAIL_COUNTS}", ladder.off_reading));
+        return Err(format!(
+            "meter record: the tone-off reading ({}) is not on the rail {RAIL_COUNTS}",
+            ladder.off_reading
+        ));
     }
-    let mut pts: Vec<(f64, f64)> = ladder.states.iter().map(|&(level, m)| (level as f64, m as f64)).collect();
+    let mut pts: Vec<(f64, f64)> = ladder
+        .states
+        .iter()
+        .map(|&(level, m)| (level as f64, m as f64))
+        .collect();
     pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     let n = pts.len() as f64;
     if n < 2.0 {
@@ -59,8 +70,19 @@ pub fn fit(meter: &Meter) -> Result<MeterScale, String> {
     let slope = sxy / sxx;
     let intercept = my - slope * mx;
     if slope >= 0.0 {
-        return Err(format!("meter record: the fitted slope is {slope}, not falling with signal"));
+        return Err(format!(
+            "meter record: the fitted slope is {slope}, not falling with signal"
+        ));
     }
-    let max_residual = pts.iter().map(|p| (p.1 - (intercept + slope * p.0)).abs()).fold(0.0, f64::max);
-    Ok(MeterScale { provenance: meter.provenance.clone(), counts_per_db: -slope, zero_at_db: -intercept / slope, max_residual_counts: max_residual, points: pts.len() })
+    let max_residual = pts
+        .iter()
+        .map(|p| (p.1 - (intercept + slope * p.0)).abs())
+        .fold(0.0, f64::max);
+    Ok(MeterScale {
+        provenance: meter.provenance.clone(),
+        counts_per_db: -slope,
+        zero_at_db: -intercept / slope,
+        max_residual_counts: max_residual,
+        points: pts.len(),
+    })
 }

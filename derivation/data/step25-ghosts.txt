@@ -1,0 +1,61 @@
+# step 25 ghosts: chip output (record, dongle B unless named), a tone at f = +0.175 (g-) or +0.233 (h-) of the rate, the USRP LO 400 or 137 kHz from it; dB over the median 1 kHz block at f and f ± rate/n
+rate 950000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 58.5 0.3 1.7 -0.5 0.2 0.8 0.4 -0.2 0.1 0.6 
+rate 950000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 58.5 2.8 2.7 1.2 2.0 2.3 1.9 2.1 0.6 1.6 
+rate 1000000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.0 5.7 0.1 -1.9 4.3 0.6 0.4 -2.1 4.2 0.7 
+rate 1000000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 58.7 1.2 0.7 2.1 0.5 1.1 -0.4 1.1 -0.1 1.0 
+rate 1024000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 58.9 2.3 -0.2 2.2 1.8 0.8 -0.4 1.7 2.8 0.6 
+rate 1024000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 58.8 2.4 2.2 0.2 3.5 1.3 1.6 -0.5 1.4 1.8 
+rate 1100000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.1 1.2 1.3 -0.1 1.6 2.0 2.1 0.3 1.0 2.8 
+rate 1100000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.1 4.0 0.6 12.4 4.3 0.8 0.6 3.0 3.0 1.9 
+rate 1200000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.8 7.9 37.7 -0.2 10.0 3.3 10.2 -0.4 7.4 3.8 
+rate 1200000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.5 3.0 1.3 5.6 1.9 2.1 2.0 1.7 1.8 2.5 
+rate 1220000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.5 4.2 0.6 16.9 1.0 0.4 -0.2 14.3 0.0 0.1 
+rate 1220000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.7 1.9 0.0 3.7 0.9 0.7 -0.1 3.1 0.6 0.1 
+rate 1240000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.5 1.6 0.3 17.9 1.4 2.6 1.4 15.0 0.8 2.6 
+rate 1240000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.6 1.0 0.9 0.2 0.1 2.8 2.8 0.3 -0.3 2.3 
+rate 1300000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.7 1.9 1.0 1.7 2.7 1.4 -0.0 2.1 2.4 0.2 
+rate 1300000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 59.7 1.4 0.3 0.9 1.9 0.7 -0.3 0.4 0.9 0.5 
+rate 1400000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.1 1.8 2.1 0.5 2.0 1.7 2.4 -1.0 1.1 1.9 
+rate 1400000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.0 1.6 1.5 -1.0 3.1 0.3 1.3 -1.2 1.5 2.3 
+rate 1440000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.2 1.8 3.2 0.0 2.5 2.0 2.5 0.5 1.5 1.7 
+rate 1440000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.3 2.0 -0.1 1.1 9.5 0.3 -0.3 1.1 5.5 -0.0 
+rate 1500000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.5 2.9 2.4 -0.7 5.2 2.5 1.9 -0.9 3.4 2.9 
+rate 1500000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.4 3.2 2.1 2.9 5.7 1.1 1.2 2.5 4.0 2.0 
+rate 1600000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.1 15.0 1.6 37.5 4.8 1.9 1.9 4.5 5.4 3.2 
+rate 1600000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.7 2.1 3.0 1.8 3.0 2.7 1.9 0.5 2.5 3.8 
+rate 1800000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.1 -0.4 4.3 -0.3 1.2 5.6 3.3 0.2 1.1 3.3 
+rate 1800000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.0 1.4 0.2 1.2 1.6 7.5 1.0 1.5 2.1 4.6 
+rate 1900000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 62.3 2.8 6.2 0.4 2.3 9.1 3.3 0.1 4.1 10.2 
+rate 1900000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.3 2.0 1.0 -0.5 2.4 0.3 0.1 -0.4 2.5 0.2 
+rate 2000000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 62.2 7.7 -0.1 0.6 38.8 0.1 -0.4 0.1 7.8 0.2 
+rate 2000000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.5 1.8 1.1 2.9 1.9 0.3 -0.5 3.2 2.7 -0.3 
+rate 2048000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.5 1.4 -0.3 0.1 1.0 0.2 -0.4 0.0 1.4 1.2 
+rate 2048000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.8 4.2 3.7 0.3 5.1 2.8 2.7 -0.0 3.6 2.0 
+rate 2200000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.7 0.4 0.7 -0.2 1.3 1.2 0.5 -0.2 1.2 0.9 
+rate 2200000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 61.8 1.0 -0.2 4.9 2.1 -0.4 -0.1 1.4 2.9 -0.0 
+rate 2400000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 62.3 7.8 15.7 0.0 8.2 39.0 5.7 0.5 8.6 6.2 
+rate 2400000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 62.4 0.9 1.7 5.4 2.9 0.2 -0.6 4.3 3.4 1.3 
+rate 2600000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.4 3.4 2.4 0.3 2.0 3.2 2.0 -0.2 1.5 2.3 
+rate 2600000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 60.2 1.0 0.4 0.0 0.2 1.6 -0.2 0.3 -0.4 2.2 
+rate 2880000 lo_offset 400000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 58.9 1.2 1.2 -0.8 2.0 2.1 -0.9 0.0 -0.1 1.1 
+rate 2880000 lo_offset 137000 tone,f-r/2,f-r/3,f-r/4,f-r/5,f-r/6,f+r/3,f+r/4,f+r/5,f+r/6: 58.9 3.3 1.4 4.6 2.4 4.4 0.6 6.6 4.9 0.2 
+rate 905000 dongle B lo_offset 400000 tone,f-r/3: 58.2 14.6 
+rate 905000 dongle B lo_offset 137000 tone,f-r/3: 58.3 9.8 
+rate 905000 dongle A lo_offset 400000 tone,f-r/3: 58.9 14.1 
+rate 905000 dongle A lo_offset 137000 tone,f-r/3: 58.9 1.8 
+rate 915000 dongle B lo_offset 400000 tone,f-r/3: 58.3 15.2 
+rate 915000 dongle B lo_offset 137000 tone,f-r/3: 58.3 10.3 
+rate 915000 dongle A lo_offset 400000 tone,f-r/3: 59.2 16.3 
+rate 915000 dongle A lo_offset 137000 tone,f-r/3: 59.0 5.4 
+rate 930000 dongle B lo_offset 400000 tone,f-r/3: 58.3 12.2 
+rate 930000 dongle B lo_offset 137000 tone,f-r/3: 58.4 10.5 
+rate 930000 dongle A lo_offset 400000 tone,f-r/3: 59.0 11.6 
+rate 930000 dongle A lo_offset 137000 tone,f-r/3: 58.9 1.5 
+rate 940000 dongle B lo_offset 400000 tone,f-r/3: 58.4 3.5 
+rate 940000 dongle B lo_offset 137000 tone,f-r/3: 58.5 10.8 
+rate 940000 dongle A lo_offset 400000 tone,f-r/3: 59.1 3.7 
+rate 940000 dongle A lo_offset 137000 tone,f-r/3: 60.0 2.0 
+rate 960000 dongle B lo_offset 400000 tone,f-r/3: 58.5 4.2 
+rate 960000 dongle B lo_offset 137000 tone,f-r/3: 58.6 11.8 
+rate 960000 dongle A lo_offset 400000 tone,f-r/3: 59.2 1.1 
+rate 960000 dongle A lo_offset 137000 tone,f-r/3: 59.2 1.7 

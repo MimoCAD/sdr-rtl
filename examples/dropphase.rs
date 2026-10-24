@@ -24,9 +24,9 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::Iq;
-use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
 use sdr_rtl::OPEN_RF_HZ;
 use sdr_rtl::blocking::Rtl;
+use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
 
 const RATE_SPS: f64 = 2.4e6;
 const OFFSET_HZ: f64 = 300e3;
@@ -43,30 +43,49 @@ fn wrap(a: f64) -> f64 {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str, d: u64| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(d);
+    let get = |k: &str, d: u64| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
     let (secs, poll_ms) = (get("--seconds", 10), get("--poll-ms", 0));
-    let kind = args.iter().position(|a| a == "--poll-kind").and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| "take".into());
+    let kind = args
+        .iter()
+        .position(|a| a == "--poll-kind")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .unwrap_or_else(|| "take".into());
     let cycle = power_cycle()?;
     let mut src = Source::spawn(SOURCE_CMD, 0, -15)?;
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
     rtl.set_rate(RATE_SPS).map_err(|e| e.to_string())?;
     src.tone(OPEN_RF_HZ + OFFSET_HZ)?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
-    let pause_reg = rtl.link().demod_read8(PAUSE_PAGE, PAUSE_OFF).map_err(|e| e.to_string())?;
+    let pause_reg = rtl
+        .link()
+        .demod_read8(PAUSE_PAGE, PAUSE_OFF)
+        .map_err(|e| e.to_string())?;
     let t_start = Instant::now();
     let (mut taken, mut saturated) = (0u64, false);
     let expected = 2.0 * PI * OFFSET_HZ / RATE_SPS;
     let t = Instant::now();
-    let (mut n, mut jumps, mut overflows, mut polls, mut near_poll) = (0u64, 0u64, 0usize, 0u64, 0u64);
+    let (mut n, mut jumps, mut overflows, mut polls, mut near_poll) =
+        (0u64, 0u64, 0usize, 0u64, 0u64);
     let mut bins = [0u64; BINS];
     let mut prev: Option<Iq> = None;
     let mut step_est = expected;
     let mut last_poll_n: Option<u64> = None;
     let mut next_poll = Duration::from_millis(poll_ms);
     while t.elapsed() < Duration::from_secs(secs) {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         overflows += info.overflow as usize;
         for v in &buf[..info.n_samples] {
             if let Some(p) = prev {
@@ -95,11 +114,25 @@ fn run() -> Result<(), String> {
                     taken += d.blocks as u64;
                     saturated |= d.saturated;
                 }
-                "usbread" => drop(rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(|e| e.to_string())?),
-                "usbwrite" => rtl.link().usb_write8(BLK_DROP_COUNTER, 0).map_err(|e| e.to_string())?,
-                "demodread" => drop(rtl.link().demod_read8(PAUSE_PAGE, PAUSE_OFF).map_err(|e| e.to_string())?),
+                "usbread" => drop(
+                    rtl.link()
+                        .usb_read8(BLK_DROP_COUNTER)
+                        .map_err(|e| e.to_string())?,
+                ),
+                "usbwrite" => rtl
+                    .link()
+                    .usb_write8(BLK_DROP_COUNTER, 0)
+                    .map_err(|e| e.to_string())?,
+                "demodread" => drop(
+                    rtl.link()
+                        .demod_read8(PAUSE_PAGE, PAUSE_OFF)
+                        .map_err(|e| e.to_string())?,
+                ),
                 // The pause register written with the value it holds.
-                "demodwrite" => rtl.link().demod_write(PAUSE_PAGE, PAUSE_OFF, &[pause_reg]).map_err(|e| e.to_string())?,
+                "demodwrite" => rtl
+                    .link()
+                    .demod_write(PAUSE_PAGE, PAUSE_OFF, &[pause_reg])
+                    .map_err(|e| e.to_string())?,
                 other => return Err(format!("unknown --poll-kind {other}")),
             }
             polls += 1;

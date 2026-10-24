@@ -172,6 +172,28 @@ pub struct BandSegment {
     pub grid_points: u16,
 }
 
+/// One grid frequency of the every-path band table (findings step 4f2):
+/// each (RFFILT, RFMUX) at TF 0000/0000, settled and averaged, in every
+/// run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandPathPoint {
+    pub rf_hz: f64,
+    /// Every path's reading in dB relative to the bypass path, the mean
+    /// over the runs, indexed RFFILT * 4 + RFMUX; positive = more signal.
+    /// None where the meter sat at its rail (nothing passed) in a run.
+    pub paths_db_vs_bypass: [Option<f64>; 16],
+    /// The path with the most signal by that mean.
+    pub best: FrontPath,
+    /// How far it beats the next path, dB.
+    pub margin_over_runner_up_db: f64,
+    /// In how many runs the same path read the most signal on its own.
+    pub runs_agreeing: u8,
+    /// The path the driver takes: `best`, or the dominant path where
+    /// `best` beats it by less than the tie (`tie_kept_dominant`).
+    pub path: FrontPath,
+    pub tie_kept_dominant: bool,
+}
+
 /// One tuner register of the bring-up image and the reason it holds
 /// its value.
 #[derive(Clone, Copy, Debug, PartialEq)]

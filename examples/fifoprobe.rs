@@ -19,38 +19,75 @@ use std::time::{Duration, Instant};
 use bench::*;
 use sdr_core::Iq;
 use sdr_rtl::blocking::Rtl;
-use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, USB_EPA_FIFO_CFG, USB_HAZARD_OFF, windex, wvalue_usb};
+use sdr_rtl::protocol::{
+    ACCESS_GET, ACCESS_SET, BLOCK_USB, USB_EPA_FIFO_CFG, USB_HAZARD_OFF, windex, wvalue_usb,
+};
 
 const SPAN: u16 = 0x200;
 
 fn image(rtl: &Rtl) -> Result<Vec<i32>, String> {
     (0..SPAN)
-        .map(|off| if off == USB_HAZARD_OFF { Ok(-1) } else { rtl.link().usb_read8(off).map(i32::from).map_err(|e| e.to_string()) })
+        .map(|off| {
+            if off == USB_HAZARD_OFF {
+                Ok(-1)
+            } else {
+                rtl.link()
+                    .usb_read8(off)
+                    .map(i32::from)
+                    .map_err(|e| e.to_string())
+            }
+        })
         .collect()
 }
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
-    let rate: f64 = get("--rate").and_then(|v| v.parse().ok()).unwrap_or(1.152e6);
+    let get = |k: &str| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let rate: f64 = get("--rate")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.152e6);
     let fifo: Option<u8> = get("--fifo").and_then(|v| v.parse().ok());
     let cycle = power_cycle()?;
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
     if let Some(n) = fifo {
-        let v = rtl.link().get(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_GET, 0), 4, "FIFO_CFG read").map_err(|e| e.to_string())?;
-        rtl.link().set(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_SET, 0), &[n, v[1], v[2], 0], "FIFO_CFG write").map_err(|e| e.to_string())?;
+        let v = rtl
+            .link()
+            .get(
+                wvalue_usb(USB_EPA_FIFO_CFG),
+                windex(BLOCK_USB, ACCESS_GET, 0),
+                4,
+                "FIFO_CFG read",
+            )
+            .map_err(|e| e.to_string())?;
+        rtl.link()
+            .set(
+                wvalue_usb(USB_EPA_FIFO_CFG),
+                windex(BLOCK_USB, ACCESS_SET, 0),
+                &[n, v[1], v[2], 0],
+                "FIFO_CFG write",
+            )
+            .map_err(|e| e.to_string())?;
     }
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
-    let run_for = |s: &mut sdr_rtl::blocking::RtlStream, buf: &mut [Iq], d: Duration| -> Result<(), String> {
-        let t = Instant::now();
-        while t.elapsed() < d {
-            s.recv_into(buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    };
+    let run_for =
+        |s: &mut sdr_rtl::blocking::RtlStream, buf: &mut [Iq], d: Duration| -> Result<(), String> {
+            let t = Instant::now();
+            while t.elapsed() < d {
+                s.recv_into(buf, RECV_TIMEOUT_S)
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        };
     run_for(&mut s, &mut buf, Duration::from_millis(500))?;
     s.pause_blind().map_err(|e| e.to_string())?;
     std::thread::sleep(Duration::from_millis(5));
@@ -59,7 +96,9 @@ fn run() -> Result<(), String> {
     run_for(&mut s, &mut buf, Duration::from_millis(500))?;
     let running = image(&rtl)?;
     s.stop().map_err(|e| e.to_string())?;
-    println!("{{\"cycle\":\"{cycle}\",\"rate\":{rate},\"fifo\":{fifo:?},\"paused\":{paused:?},\"running\":{running:?}}}");
+    println!(
+        "{{\"cycle\":\"{cycle}\",\"rate\":{rate},\"fifo\":{fifo:?},\"paused\":{paused:?},\"running\":{running:?}}}"
+    );
     Ok(())
 }
 

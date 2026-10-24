@@ -2,7 +2,7 @@
 //! R9[5:0]; documents.md: "image gain 0 min … 63 max", "image phase 0 min
 //! … 63 max", no value given) at one RF, against a tone on the image.
 //!
-//!   imrsearch [--rf HZ] [--step N] [--backoff DB]
+//!   imrsearch [--rf HZ] [--step N | --values a,b,… [--pvalues a,b,…] | --driver] [--backoff DB] [--boost DB] [--source-cmd "<command line>"]
 //!   imrsearch --profile [--rf HZ] [--backoff DB] [--boost DB] [--from HZ --to HZ --xstep HZ]
 //!
 //! Built with `--features bench`. The candidate space, declared before
@@ -25,8 +25,8 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
+use sdr_rtl::Stage;
 use sdr_rtl::blocking::Rtl;
 use sdr_rtl::demod::ddc_if_hz;
 use sdr_rtl::image::IMR_MIDDLE;
@@ -46,17 +46,47 @@ const CAPTURE_SEGMENTS: usize = 8;
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str, d: f64| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(d);
-    let (rf, step, backoff) = (get("--rf", 300e6), get("--step", 1.0) as u8, get("--backoff", -10.0) as i32);
-    let mut src = Source::spawn(SOURCE_CMD, 0, backoff)?;
-    let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
+    let get = |k: &str, d: f64| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
+    let (rf, step, backoff) = (
+        get("--rf", 300e6),
+        get("--step", 1.0) as u8,
+        get("--backoff", -10.0) as i32,
+    );
+    // `--source-cmd`: another source (the USRP's `usrp_tone_source`);
+    // `SDR_BENCH_RTL` names the dongle (`serial=…`, `,ppm=…` so the tones
+    // land on their bins).
+    let cmd = args
+        .iter()
+        .position(|a| a == "--source-cmd")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .unwrap_or_else(|| SOURCE_CMD.into());
+    let mut src = Source::spawn(&cmd, 0, backoff)?;
+    let mut rtl = Rtl::open(&rtl_spec()).map_err(|e| e.to_string())?;
     for (stage, code) in [(Stage::Lna, 8), (Stage::Mixer, 8), (Stage::Vga, 2)] {
-        rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
+        rtl.set_stage_level(stage, code)
+            .map_err(|e| e.to_string())?;
     }
-    let tuned = rtl.set_freq(&TuneRequest::auto(rf)).map_err(|e| e.to_string())?;
+    let tuned = rtl
+        .set_freq(&TuneRequest::auto(rf))
+        .map_err(|e| e.to_string())?;
     let actual = tuned.actual_rf_freq;
     let rate = rtl.rate().map_err(|e| e.to_string())?;
-    let (r8, r9) = rtl.link().with_tuner(|l| Ok((l.tuner_read(10)?[R8 as usize], l.tuner_read(10)?[R9 as usize]))).map_err(|e| e.to_string())?;
+    let (r8, r9) = rtl
+        .link()
+        .with_tuner(|l| {
+            Ok((
+                l.tuner_read(10)?[R8 as usize],
+                l.tuner_read(10)?[R9 as usize],
+            ))
+        })
+        .map_err(|e| e.to_string())?;
     let (r8_keep, r9_keep) = (r8 & !IMR_MASK, r9 & !IMR_MASK);
     let write = |rtl: &Rtl, g: u8, p: u8| {
         rtl.link()
@@ -68,7 +98,9 @@ fn run() -> Result<(), String> {
             })
             .map_err(|e| e.to_string())
     };
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
     let k = bin_of(OFFSET_HZ, rate);
@@ -78,14 +110,24 @@ fn run() -> Result<(), String> {
         let p = spectrum(&c.samples).ok_or("short capture")?;
         Ok((db(p[near(&p, k, TOL_BINS)]), db(median(&p))))
     };
-    write(&rtl, IMR_MIDDLE, IMR_MIDDLE)?;
+    // `--driver`: no search — the rejection at the R8/R9 the driver set at
+    // its tuning (the dongle's calibration from its spec, `imr=`), by the
+    // same method, one line.
+    let driver = args.iter().any(|a| a == "--driver");
+    if !driver {
+        write(&rtl, IMR_MIDDLE, IMR_MIDDLE)?;
+    }
     if args.iter().any(|a| a == "--profile") {
         // The rejection across the passband at the driver's 32/32: per
         // offset x the wanted tone at RF + x (the backoff) and the image
         // tone at RF + 2·IF − x, `--boost` dB stronger for range; both
         // read at +x; the rejection is wanted − (image − boost).
         let boost = get("--boost", 10.0) as i32;
-        let (lo, hi, st) = (get("--from", -1.1e6), get("--to", 1.1e6), get("--xstep", 100e3));
+        let (lo, hi, st) = (
+            get("--from", -1.1e6),
+            get("--to", 1.1e6),
+            get("--xstep", 100e3),
+        );
         let n = ((hi - lo) / st).round() as i64;
         for i in 0..=n {
             let x = lo + i as f64 * st;
@@ -119,7 +161,18 @@ fn run() -> Result<(), String> {
     let wanted = wanted_measured + boost as f64;
     let image_rf = actual + 2.0 * ddc_if_hz() - OFFSET_HZ;
     src.tone_at(image_rf, 0, backoff + boost)?;
-    let (image_mid, _) = level(&mut s, &mut buf, SEGMENTS)?;
+    let (image_mid, image_med) = level(&mut s, &mut buf, SEGMENTS)?;
+    if driver {
+        src.off()?;
+        println!(
+            "{{\"kind\":\"driver\",\"rf\":{actual:.1},\"g\":{},\"p\":{},\"boost_db\":{boost},\"wanted_dbfs\":{wanted:.2},\"image_dbfs\":{image_mid:.2},\"median_dbfs\":{image_med:.2},\"rejection_db\":{:.2},\"floor_limited\":{}}}",
+            r8 & IMR_MASK,
+            r9 & IMR_MASK,
+            wanted - image_mid,
+            image_mid < image_med + 6.0
+        );
+        return Ok(());
+    }
     src.off()?;
     let (off_level, off_med) = level(&mut s, &mut buf, SEGMENTS)?;
     println!(
@@ -131,15 +184,40 @@ fn run() -> Result<(), String> {
     let t = Instant::now();
     // `--values a,b,…`: the candidate values for both fields in place of
     // the stepped range (declared in the head line the same way).
-    let values: Vec<u8> = match args.iter().position(|a| a == "--values").and_then(|i| args.get(i + 1)) {
-        Some(list) => list.split(',').filter_map(|v| v.parse().ok()).filter(|v| *v <= IMR_MASK).collect(),
+    let values: Vec<u8> = match args
+        .iter()
+        .position(|a| a == "--values")
+        .and_then(|i| args.get(i + 1))
+    {
+        Some(list) => list
+            .split(',')
+            .filter_map(|v| v.parse().ok())
+            .filter(|v| *v <= IMR_MASK)
+            .collect(),
         None => (0..=IMR_MASK).step_by(step.max(1) as usize).collect(),
     };
+    // `--pvalues`: IMR_P's own list (else `--values`' for both).
+    let pvalues: Vec<u8> = match args
+        .iter()
+        .position(|a| a == "--pvalues")
+        .and_then(|i| args.get(i + 1))
+    {
+        Some(list) => list
+            .split(',')
+            .filter_map(|v| v.parse().ok())
+            .filter(|v| *v <= IMR_MASK)
+            .collect(),
+        None => values.clone(),
+    };
     for &g in &values {
-        for &p in &values {
+        for &p in &pvalues {
             let ok = write(&rtl, g, p)?;
             let (img, med) = level(&mut s, &mut buf, CAPTURE_SEGMENTS)?;
-            println!("{{\"g\":{g},\"p\":{p},\"read_back\":{ok},\"image_dbfs\":{img:.2},\"median_dbfs\":{med:.2},\"rejection_db\":{:.2},\"floor_limited\":{}}}", wanted - img, img < med + 6.0);
+            println!(
+                "{{\"g\":{g},\"p\":{p},\"read_back\":{ok},\"image_dbfs\":{img:.2},\"median_dbfs\":{med:.2},\"rejection_db\":{:.2},\"floor_limited\":{}}}",
+                wanted - img,
+                img < med + 6.0
+            );
         }
         eprintln!("G {g} done at {:.0} s", t.elapsed().as_secs_f64());
     }

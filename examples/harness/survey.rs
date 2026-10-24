@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::baselines::Baseline;
-use crate::json::{J, hex8, hex16, hex_bytes};
+use crate::json::{J, hex_bytes, hex8, hex16};
 use crate::regs::*;
 use crate::step3;
 use crate::usb::{self, BulkCounter, Rtl};
@@ -24,7 +24,12 @@ pub const XDATA_CHUNK: u16 = 64;
 /// (findings 5c).
 pub const XDATA_STRAIGHT: u16 = 1;
 /// The external-data ranges surveyed (inclusive), the project owner's list.
-pub const XDATA_RANGES: [(u16, u16); 4] = [(0x2200, 0x2FFF), (0x3100, 0x3FFF), (0x4000, 0xFBFF), (0xFC00, 0xFDFF)];
+pub const XDATA_RANGES: [(u16, u16); 4] = [
+    (0x2200, 0x2FFF),
+    (0x3100, 0x3FFF),
+    (0x4000, 0xFBFF),
+    (0xFC00, 0xFDFF),
+];
 /// Reference spans read the same way, for the mirror check: the USB and
 /// system blocks every earlier scan read (reads only).
 pub const XDATA_REFERENCES: [(u16, u16); 2] = [(0x2000, 0x21FF), (0x3000, 0x30FF)];
@@ -40,7 +45,11 @@ pub const DATA_RAM: (u16, u16) = (0x4000, 0x41FF);
 pub const LIVE_GAP: Duration = Duration::from_millis(100);
 
 fn xdata_read(rtl: &Rtl, addr: u16) -> usb::R<Vec<u8>> {
-    rtl.get(addr, windex(BLOCK_SYS, ACCESS_GET, XDATA_STRAIGHT), XDATA_CHUNK)
+    rtl.get(
+        addr,
+        windex(BLOCK_SYS, ACCESS_GET, XDATA_STRAIGHT),
+        XDATA_CHUNK,
+    )
 }
 
 /// One pass over the external-data chunks: Ok(bytes) or the error.
@@ -55,7 +64,11 @@ struct Bench {
 impl Bench {
     fn fresh() -> Result<Bench, String> {
         let (rtl, bulk, setup) = Baseline::LowIfOpen.fresh()?;
-        Ok(Bench { rtl, bulk, recoveries: J::Arr(vec![setup.with("kind", "setup")]) })
+        Ok(Bench {
+            rtl,
+            bulk,
+            recoveries: J::Arr(vec![setup.with("kind", "setup")]),
+        })
     }
 
     /// After a failed read: if the chip no longer answers, power-cycle and
@@ -67,7 +80,8 @@ impl Bench {
         let (rtl, bulk, setup) = Baseline::LowIfOpen.fresh()?;
         self.rtl = rtl;
         self.bulk = bulk;
-        self.recoveries.push(setup.with("kind", "recovery").with("after", what));
+        self.recoveries
+            .push(setup.with("kind", "recovery").with("after", what));
         Ok(true)
     }
 }
@@ -82,7 +96,17 @@ fn xpass(b: &mut Bench, chunks: &[u16]) -> Result<XPass, String> {
             Ok(v) => out.push((a, Ok(v))),
             Err(e) => {
                 let wedged = b.after_error(format!("X:{a:04X} read: {e}"))?;
-                out.push((a, Err(format!("{e}{}", if wedged { " (chip gone: power cycle, held state rebuilt, span skipped)" } else { "" }))));
+                out.push((
+                    a,
+                    Err(format!(
+                        "{e}{}",
+                        if wedged {
+                            " (chip gone: power cycle, held state rebuilt, span skipped)"
+                        } else {
+                            ""
+                        }
+                    )),
+                ));
             }
         }
     }
@@ -146,25 +170,48 @@ pub fn run() -> Result<(), String> {
     let d1 = dpass(&mut b, &pages)?;
     std::thread::sleep(LIVE_GAP);
     let d2 = dpass(&mut b, &pages)?;
-    let page0 = d1.iter().find(|(p, _, _)| *p == 0).map(|(_, _, r)| r.clone()).unwrap_or_default();
-    let refs: Vec<(u8, Vec<Option<u8>>)> = d1.iter().filter(|(p, _, _)| REF_PAGES.contains(p)).map(|(p, _, r)| (*p, r.clone())).collect();
+    let page0 = d1
+        .iter()
+        .find(|(p, _, _)| *p == 0)
+        .map(|(_, _, r)| r.clone())
+        .unwrap_or_default();
+    let refs: Vec<(u8, Vec<Option<u8>>)> = d1
+        .iter()
+        .filter(|(p, _, _)| REF_PAGES.contains(p))
+        .map(|(p, _, r)| (*p, r.clone()))
+        .collect();
     let mut dsum = J::Arr(Vec::new());
     for ((p, r0, a), (_, r0b, bb)) in d1.iter().zip(d2.iter()) {
         if !NEW_PAGES.contains(p) {
             continue;
         }
-        let nontrivial: Vec<u8> = (0..=255u8).filter(|&o| a[o as usize].is_some_and(|v| v != 0 && v != 0xFF)).collect();
-        let differ0: Vec<u8> = (0..=255u8).filter(|&o| a[o as usize] != page0[o as usize]).collect();
-        let live: Vec<u8> = (0..=255u8).filter(|&o| a[o as usize] != bb[o as usize]).collect();
+        let nontrivial: Vec<u8> = (0..=255u8)
+            .filter(|&o| a[o as usize].is_some_and(|v| v != 0 && v != 0xFF))
+            .collect();
+        let differ0: Vec<u8> = (0..=255u8)
+            .filter(|&o| a[o as usize] != page0[o as usize])
+            .collect();
+        let live: Vec<u8> = (0..=255u8)
+            .filter(|&o| a[o as usize] != bb[o as usize])
+            .collect();
         let failed: Vec<u8> = (0..=255u8).filter(|&o| a[o as usize].is_none()).collect();
         let equal_ref: Vec<J> = refs
             .iter()
-            .map(|(rp, rr)| J::obj().with("page", *rp).with("equal_offsets", (0..256).filter(|&o| rr[o] == a[o]).count()))
+            .map(|(rp, rr)| {
+                J::obj()
+                    .with("page", *rp)
+                    .with("equal_offsets", (0..256).filter(|&o| rr[o] == a[o]).count())
+            })
             .collect();
         let hexes = |v: &[u8]| J::Arr(v.iter().map(|o| hex8(*o)).collect());
         println!(
             "page {p}: reg 0x00 = {:?}/{:?}; non-trivial {}, differ from page 0 at {}, live {}, failed reads {}",
-            r0, r0b, nontrivial.len(), differ0.len(), live.len(), failed.len()
+            r0,
+            r0b,
+            nontrivial.len(),
+            differ0.len(),
+            live.len(),
+            failed.len()
         );
         dsum.push(
             J::obj()
@@ -172,17 +219,45 @@ pub fn run() -> Result<(), String> {
                 .with("reg0_first_read", r0.map(hex8))
                 .with("reg0_is_page", *r0 == Some(*p))
                 .with("reg0_second_pass", r0b.map(hex8))
-                .with("bytes_pass1", J::Arr(a.iter().map(|v| v.map(hex8).unwrap_or(J::Null)).collect()))
+                .with(
+                    "bytes_pass1",
+                    J::Arr(a.iter().map(|v| v.map(hex8).unwrap_or(J::Null)).collect()),
+                )
                 .with("nontrivial_offsets", hexes(&nontrivial))
                 .with("differ_from_page0_offsets", hexes(&differ0))
                 .with("equal_to_reference_page", J::Arr(equal_ref))
                 .with("live_offsets", hexes(&live))
-                .with("live_values", J::Arr(live.iter().map(|&o| J::obj().with("offset", hex8(o)).with("pass1", a[o as usize].map(hex8)).with("pass2", bb[o as usize].map(hex8))).collect()))
+                .with(
+                    "live_values",
+                    J::Arr(
+                        live.iter()
+                            .map(|&o| {
+                                J::obj()
+                                    .with("offset", hex8(o))
+                                    .with("pass1", a[o as usize].map(hex8))
+                                    .with("pass2", bb[o as usize].map(hex8))
+                            })
+                            .collect(),
+                    ),
+                )
                 .with("failed_offsets", hexes(&failed)),
         );
     }
     rec.set("demod_pages", dsum);
-    rec.set("demod_reference_pages_pass1", J::Arr(d1.iter().filter(|(p, _, _)| REF_PAGES.contains(p)).map(|(p, _, r)| J::obj().with("page", *p).with("bytes", J::Arr(r.iter().map(|v| v.map(hex8).unwrap_or(J::Null)).collect()))).collect()));
+    rec.set(
+        "demod_reference_pages_pass1",
+        J::Arr(
+            d1.iter()
+                .filter(|(p, _, _)| REF_PAGES.contains(p))
+                .map(|(p, _, r)| {
+                    J::obj().with("page", *p).with(
+                        "bytes",
+                        J::Arr(r.iter().map(|v| v.map(hex8).unwrap_or(J::Null)).collect()),
+                    )
+                })
+                .collect(),
+        ),
+    );
     // External data.
     let mut chunks: Vec<u16> = Vec::new();
     for (lo, hi) in XDATA_REFERENCES.iter().chain(XDATA_RANGES.iter()) {
@@ -207,7 +282,10 @@ pub fn run() -> Result<(), String> {
                 let k = class(p, q);
                 if k == "other" {
                     if let Some(src) = seen.get(p).filter(|&&s| s != *a) {
-                        format!("mirror of 0x{src:04X} (delta 0x{:04X})", a.wrapping_sub(*src))
+                        format!(
+                            "mirror of 0x{src:04X} (delta 0x{:04X})",
+                            a.wrapping_sub(*src)
+                        )
                     } else {
                         seen.insert(p.clone(), *a);
                         k.to_string()
@@ -242,12 +320,22 @@ pub fn run() -> Result<(), String> {
     while i < rows.len() {
         let (start, ref c, k) = rows[i];
         let mut j = i;
-        while j + 1 < rows.len() && rows[j + 1].1 == *c && rows[j + 1].2 == k && rows[j + 1].0 as u32 == rows[j].0 as u32 + XDATA_CHUNK as u32 {
+        while j + 1 < rows.len()
+            && rows[j + 1].1 == *c
+            && rows[j + 1].2 == k
+            && rows[j + 1].0 as u32 == rows[j].0 as u32 + XDATA_CHUNK as u32
+        {
             j += 1;
         }
         let end = rows[j].0 as u32 + XDATA_CHUNK as u32 - 1;
         // A mirror class names its source chunk; merge on the delta instead.
-        ranges.push(J::obj().with("from", hex16(start)).with("to", format!("0x{end:04X}")).with("class", c.as_str()).with("constant_byte", k.map(hex8)));
+        ranges.push(
+            J::obj()
+                .with("from", hex16(start))
+                .with("to", format!("0x{end:04X}"))
+                .with("class", c.as_str())
+                .with("constant_byte", k.map(hex8)),
+        );
         i = j + 1;
     }
     let mirror_merged = merge_mirrors(&rows);
@@ -255,7 +343,10 @@ pub fn run() -> Result<(), String> {
         println!("{r}");
     }
     rec.set("xdata_ranges", ranges);
-    rec.set("xdata_ranges_mirrors_merged", J::Arr(mirror_merged.into_iter().map(J::from).collect()));
+    rec.set(
+        "xdata_ranges_mirrors_merged",
+        J::Arr(mirror_merged.into_iter().map(J::from).collect()),
+    );
     rec.set("xdata_live_other_failed_chunks", raw);
     rec.set("power_sessions", b.recoveries.clone());
     rec.set("elapsed_s", t0.elapsed().as_secs_f64());
@@ -277,12 +368,21 @@ fn merge_mirrors(rows: &[(u16, String, Option<u8>)]) -> Vec<String> {
     while i < rows.len() {
         let k = key(&rows[i].1);
         let mut j = i;
-        while j + 1 < rows.len() && key(&rows[j + 1].1) == k && rows[j + 1].2 == rows[i].2 && rows[j + 1].0 as u32 == rows[j].0 as u32 + XDATA_CHUNK as u32 {
+        while j + 1 < rows.len()
+            && key(&rows[j + 1].1) == k
+            && rows[j + 1].2 == rows[i].2
+            && rows[j + 1].0 as u32 == rows[j].0 as u32 + XDATA_CHUNK as u32
+        {
             j += 1;
         }
         let end = rows[j].0 as u32 + XDATA_CHUNK as u32 - 1;
         let cb = rows[i].2.map(|b| format!(" 0x{b:02X}")).unwrap_or_default();
-        out.push(format!("X:{:04X}-X:{end:04X} {}{cb} ({} chunks)", rows[i].0, k, j - i + 1));
+        out.push(format!(
+            "X:{:04X}-X:{end:04X} {}{cb} ({} chunks)",
+            rows[i].0,
+            k,
+            j - i + 1
+        ));
         i = j + 1;
     }
     out

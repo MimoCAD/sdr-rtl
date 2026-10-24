@@ -7,4 +7,5 @@ pub mod pll;
 pub mod gain;
 pub mod if_filter;
 pub mod band;
+pub mod band_paths;
 pub mod tuner_image;

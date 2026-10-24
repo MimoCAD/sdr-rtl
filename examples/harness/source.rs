@@ -92,7 +92,11 @@ pub fn interrupted() -> bool {
 
 /// Err("interrupted") once Ctrl-C was seen.
 pub fn check() -> Result<(), String> {
-    if interrupted() { Err("interrupted".into()) } else { Ok(()) }
+    if interrupted() {
+        Err("interrupted".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Split a command line into arguments: whitespace separates, single and
@@ -163,7 +167,11 @@ impl Tone {
     }
 
     pub fn record(&self) -> J {
-        J::obj().with("hz", self.hz).with("txvga_db", self.txvga_db).with("backoff_db", self.backoff_db).with("level_db_relative", self.level_db())
+        J::obj()
+            .with("hz", self.hz)
+            .with("txvga_db", self.txvga_db)
+            .with("backoff_db", self.backoff_db)
+            .with("level_db_relative", self.level_db())
     }
 }
 
@@ -190,11 +198,18 @@ impl Level {
             self.txvga_db = t;
             return Ok("txvga");
         }
-        Err(format!("source at its limit: txvga {} backoff {} cannot move {delta_db:+} dB", self.txvga_db, self.backoff_db))
+        Err(format!(
+            "source at its limit: txvga {} backoff {} cannot move {delta_db:+} dB",
+            self.txvga_db, self.backoff_db
+        ))
     }
 
     pub fn tone(&self, hz: f64) -> Tone {
-        Tone { hz, txvga_db: self.txvga_db, backoff_db: self.backoff_db }
+        Tone {
+            hz,
+            txvga_db: self.txvga_db,
+            backoff_db: self.backoff_db,
+        }
     }
 }
 
@@ -213,7 +228,8 @@ pub struct Source {
 impl Source {
     /// Spawn `--source-cmd` and wait for `ready`.
     pub fn open() -> Result<Source, String> {
-        let cmd = command().ok_or("a signal source is required: --source-cmd \"<command line>\"")?;
+        let cmd =
+            command().ok_or("a signal source is required: --source-cmd \"<command line>\"")?;
         Source::spawn(cmd)
     }
 
@@ -221,7 +237,10 @@ impl Source {
         let args = split_args(command_line)?;
         let (prog, rest) = args.split_first().ok_or("--source-cmd is empty")?;
         let mut cmd = Command::new(prog);
-        cmd.args(rest).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+        cmd.args(rest)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -243,21 +262,43 @@ impl Source {
                 }
             }
         });
-        let mut src = Source { child, stdin, lines, command_line: command_line.to_string(), ready_fields: J::obj(), current: None, commands: 0, closed: false };
+        let mut src = Source {
+            child,
+            stdin,
+            lines,
+            command_line: command_line.to_string(),
+            ready_fields: J::obj(),
+            current: None,
+            commands: 0,
+            closed: false,
+        };
         let start = Instant::now();
         loop {
-            let left = READY_TIMEOUT.checked_sub(start.elapsed()).ok_or("the source did not print ready in time")?;
+            let left = READY_TIMEOUT
+                .checked_sub(start.elapsed())
+                .ok_or("the source did not print ready in time")?;
             match src.lines.recv_timeout(left) {
                 Ok(l) if l.starts_with("ready") => {
                     // Keep only the numeric fields after "rate" and "offset".
                     let w: Vec<&str> = l.split_whitespace().collect();
-                    let after = |k: &str| w.iter().position(|x| *x == k).and_then(|i| w.get(i + 1)).and_then(|v| v.parse::<f64>().ok());
-                    src.ready_fields = J::obj().with("rate_hz", after("rate")).with("tone_offset_above_lo_hz", after("offset"));
+                    let after = |k: &str| {
+                        w.iter()
+                            .position(|x| *x == k)
+                            .and_then(|i| w.get(i + 1))
+                            .and_then(|v| v.parse::<f64>().ok())
+                    };
+                    src.ready_fields = J::obj()
+                        .with("rate_hz", after("rate"))
+                        .with("tone_offset_above_lo_hz", after("offset"));
                     break;
                 }
                 Ok(_) => continue,
-                Err(RecvTimeoutError::Timeout) => return Err("the source did not print ready in time".into()),
-                Err(RecvTimeoutError::Disconnected) => return Err("the source exited before ready".into()),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err("the source did not print ready in time".into());
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err("the source exited before ready".into());
+                }
             }
         }
         Ok(src)
@@ -274,7 +315,9 @@ impl Source {
 
     fn reply(&mut self, line: &str) -> Result<String, String> {
         self.commands += 1;
-        writeln!(self.stdin, "{line}").and_then(|_| self.stdin.flush()).map_err(|e| format!("source stdin: {e}"))?;
+        writeln!(self.stdin, "{line}")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|e| format!("source stdin: {e}"))?;
         match self.lines.recv_timeout(REPLY_TIMEOUT) {
             Ok(r) if r.starts_with("ok") => Ok(r),
             Ok(r) => Err(format!("source answered {r:?} to {line:?}")),
@@ -342,7 +385,10 @@ mod tests {
     #[test]
     fn splits_quoted_arguments() {
         assert_eq!(split_args("a b  c").unwrap(), ["a", "b", "c"]);
-        assert_eq!(split_args("sh -c 'echo \"x y\"'").unwrap(), ["sh", "-c", "echo \"x y\""]);
+        assert_eq!(
+            split_args("sh -c 'echo \"x y\"'").unwrap(),
+            ["sh", "-c", "echo \"x y\""]
+        );
         assert_eq!(split_args("a \"b c\" d\\ e").unwrap(), ["a", "b c", "d e"]);
         assert!(split_args("\"open").is_err());
     }
@@ -350,8 +396,17 @@ mod tests {
     #[test]
     fn drives_a_stub_that_answers_ok() {
         let mut s = Source::spawn(STUB).expect("spawn stub");
-        assert_eq!(s.ready_fields.render(), "{\"rate_hz\":2400000,\"tone_offset_above_lo_hz\":400000}");
-        let r = s.tone(Tone { hz: 300e6, txvga_db: 10, backoff_db: -6 }).expect("tone");
+        assert_eq!(
+            s.ready_fields.render(),
+            "{\"rate_hz\":2400000,\"tone_offset_above_lo_hz\":400000}"
+        );
+        let r = s
+            .tone(Tone {
+                hz: 300e6,
+                txvga_db: 10,
+                backoff_db: -6,
+            })
+            .expect("tone");
         assert!(r.render().contains("\"reply\":\"ok tone 300000000 10 -6\""));
         assert_eq!(s.current.map(|t| t.level_db()), Some(4));
         let off = s.off().expect("off");
@@ -362,13 +417,19 @@ mod tests {
 
     #[test]
     fn level_steps_backoff_first_then_txvga() {
-        let mut l = Level { txvga_db: 10, backoff_db: -30 };
+        let mut l = Level {
+            txvga_db: 10,
+            backoff_db: -30,
+        };
         assert_eq!(l.step(-6).unwrap(), "backoff");
         assert_eq!(l.backoff_db, -36);
         assert_eq!(l.step(-6).unwrap(), "txvga");
         assert_eq!((l.txvga_db, l.backoff_db), (4, -36));
         assert!(l.step(-6).is_err());
-        let mut l = Level { txvga_db: 40, backoff_db: 0 };
+        let mut l = Level {
+            txvga_db: 40,
+            backoff_db: 0,
+        };
         assert_eq!(l.step(6).unwrap(), "txvga");
         assert_eq!(l.txvga_db, 46);
         assert!(l.step(6).is_err());

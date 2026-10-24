@@ -33,7 +33,10 @@ impl fmt::Display for ParseError {
 
 impl Value {
     pub fn parse(text: &str) -> Result<Value, ParseError> {
-        let mut p = Parser { b: text.as_bytes(), i: 0 };
+        let mut p = Parser {
+            b: text.as_bytes(),
+            i: 0,
+        };
         p.ws();
         let v = p.value()?;
         p.ws();
@@ -98,23 +101,33 @@ impl Value {
     // instead of producing a table with gaps.
 
     pub fn field_i64(&self, key: &str) -> Result<i64, String> {
-        self.get(key).and_then(Value::as_i64).ok_or_else(|| format!("field {key}: integer expected"))
+        self.get(key)
+            .and_then(Value::as_i64)
+            .ok_or_else(|| format!("field {key}: integer expected"))
     }
 
     pub fn field_f64(&self, key: &str) -> Result<f64, String> {
-        self.get(key).and_then(Value::as_f64).ok_or_else(|| format!("field {key}: number expected"))
+        self.get(key)
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("field {key}: number expected"))
     }
 
     pub fn field_str(&self, key: &str) -> Result<&str, String> {
-        self.get(key).and_then(Value::as_str).ok_or_else(|| format!("field {key}: string expected"))
+        self.get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("field {key}: string expected"))
     }
 
     pub fn field_bool(&self, key: &str) -> Result<bool, String> {
-        self.get(key).and_then(Value::as_bool).ok_or_else(|| format!("field {key}: boolean expected"))
+        self.get(key)
+            .and_then(Value::as_bool)
+            .ok_or_else(|| format!("field {key}: boolean expected"))
     }
 
     pub fn field_arr(&self, key: &str) -> Result<&[Value], String> {
-        self.get(key).and_then(Value::as_arr).ok_or_else(|| format!("field {key}: array expected"))
+        self.get(key)
+            .and_then(Value::as_arr)
+            .ok_or_else(|| format!("field {key}: array expected"))
     }
 
     pub fn field(&self, key: &str) -> Result<&Value, String> {
@@ -129,7 +142,10 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn err(&self, what: &'static str) -> ParseError {
-        ParseError { offset: self.i, what }
+        ParseError {
+            offset: self.i,
+            what,
+        }
     }
 
     fn ws(&mut self) {
@@ -273,7 +289,8 @@ impl Parser<'_> {
                     if end > self.b.len() {
                         return Err(self.err("truncated UTF-8"));
                     }
-                    let s = std::str::from_utf8(&self.b[start..end]).map_err(|_| self.err("bad UTF-8"))?;
+                    let s = std::str::from_utf8(&self.b[start..end])
+                        .map_err(|_| self.err("bad UTF-8"))?;
                     out.push_str(s);
                     self.i = end;
                 }
@@ -285,7 +302,8 @@ impl Parser<'_> {
         if self.i + 4 > self.b.len() {
             return Err(self.err("short \\u escape"));
         }
-        let s = std::str::from_utf8(&self.b[self.i..self.i + 4]).map_err(|_| self.err("bad \\u escape"))?;
+        let s = std::str::from_utf8(&self.b[self.i..self.i + 4])
+            .map_err(|_| self.err("bad \\u escape"))?;
         let v = u32::from_str_radix(s, 16).map_err(|_| self.err("bad \\u escape"))?;
         self.i += 4;
         Ok(v)
@@ -307,11 +325,16 @@ impl Parser<'_> {
         }
         let s = std::str::from_utf8(&self.b[start..self.i]).map_err(|_| self.err("bad number"))?;
         if float {
-            s.parse::<f64>().map(Value::Num).map_err(|_| self.err("bad number"))
+            s.parse::<f64>()
+                .map(Value::Num)
+                .map_err(|_| self.err("bad number"))
         } else {
             match s.parse::<i64>() {
                 Ok(i) => Ok(Value::Int(i)),
-                Err(_) => s.parse::<f64>().map(Value::Num).map_err(|_| self.err("bad number")),
+                Err(_) => s
+                    .parse::<f64>()
+                    .map(Value::Num)
+                    .map_err(|_| self.err("bad number")),
             }
         }
     }

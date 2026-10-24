@@ -1,0 +1,14 @@
+{"kind":"driver","rf":153999997.5,"g":33,"p":32,"boost_db":20,"wanted_dbfs":-4.01,"image_dbfs":-81.93,"median_dbfs":-83.59,"rejection_db":77.92,"floor_limited":true}
+{"kind":"driver","rf":419999984.3,"g":0,"p":32,"boost_db":20,"wanted_dbfs":-5.12,"image_dbfs":-65.53,"median_dbfs":-84.24,"rejection_db":60.41,"floor_limited":false}
+{"kind":"driver","rf":459999991.3,"g":33,"p":0,"boost_db":20,"wanted_dbfs":-5.05,"image_dbfs":-66.59,"median_dbfs":-84.32,"rejection_db":61.54,"floor_limited":false}
+{"kind":"driver","rf":500000039.5,"g":33,"p":0,"boost_db":20,"wanted_dbfs":-5.27,"image_dbfs":-67.24,"median_dbfs":-84.25,"rejection_db":61.97,"floor_limited":false}
+{"kind":"driver","rf":759999968.4,"g":3,"p":0,"boost_db":20,"wanted_dbfs":-10.65,"image_dbfs":-65.60,"median_dbfs":-83.91,"rejection_db":54.95,"floor_limited":false}
+{"kind":"driver","rf":773999968.8,"g":3,"p":33,"boost_db":20,"wanted_dbfs":-10.63,"image_dbfs":-66.17,"median_dbfs":-84.39,"rejection_db":55.54,"floor_limited":false}
+{"kind":"driver","rf":805000008.9,"g":4,"p":0,"boost_db":20,"wanted_dbfs":-10.36,"image_dbfs":-68.51,"median_dbfs":-84.32,"rejection_db":58.15,"floor_limited":false}
+{"kind":"driver","rf":851000025.8,"g":4,"p":0,"boost_db":20,"wanted_dbfs":-9.77,"image_dbfs":-70.31,"median_dbfs":-84.15,"rejection_db":60.54,"floor_limited":false}
+{"kind":"driver","rf":861999904.5,"g":7,"p":33,"boost_db":20,"wanted_dbfs":-9.55,"image_dbfs":-72.91,"median_dbfs":-84.43,"rejection_db":63.36,"floor_limited":false}
+{"kind":"driver","rf":868999959.7,"g":7,"p":33,"boost_db":20,"wanted_dbfs":-9.42,"image_dbfs":-72.23,"median_dbfs":-84.34,"rejection_db":62.81,"floor_limited":false}
+{"kind":"driver","rf":999999955.5,"g":8,"p":33,"boost_db":20,"wanted_dbfs":-8.73,"image_dbfs":-66.60,"median_dbfs":-84.12,"rejection_db":57.87,"floor_limited":false}
+{"kind":"driver","rf":1090000036.5,"g":9,"p":33,"boost_db":20,"wanted_dbfs":-9.87,"image_dbfs":-73.46,"median_dbfs":-84.45,"rejection_db":63.59,"floor_limited":false}
+{"kind":"driver","rf":1200000086.7,"g":9,"p":33,"boost_db":20,"wanted_dbfs":-12.88,"image_dbfs":-72.97,"median_dbfs":-84.49,"rejection_db":60.09,"floor_limited":false}
+{"kind":"driver","rf":1500000063.7,"g":0,"p":0,"boost_db":20,"wanted_dbfs":-14.62,"image_dbfs":-82.87,"median_dbfs":-85.23,"rejection_db":68.25,"floor_limited":true}

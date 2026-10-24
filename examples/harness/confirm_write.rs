@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use crate::baselines::{self, Baseline};
 use crate::content::{self, Content};
-use crate::json::{J, hex8, hex32, hex_bytes};
+use crate::json::{J, hex_bytes, hex8, hex32};
 use crate::regs::*;
 use crate::source::{self, Source};
 use crate::step3;
@@ -65,7 +65,9 @@ fn num(s: &str) -> Result<u32, String> {
 
 /// USB_EPA_FIFO_CFG's dropped-block counter, bits 31:24 (Table 34).
 fn dropped(rtl: &Rtl) -> Option<u32> {
-    rtl.usb_read32(USB_EPA_FIFO_CFG).ok().map(|v| v >> EPA_FIFO_DROP_SHIFT)
+    rtl.usb_read32(USB_EPA_FIFO_CFG)
+        .ok()
+        .map(|v| v >> EPA_FIFO_DROP_SHIFT)
 }
 
 /// In-place radix-2 FFT.
@@ -111,7 +113,11 @@ fn spectrum(data: &[u8], complex: bool) -> J {
     let Some((power, segs, mi, mq)) = spectrum_power(data, complex) else {
         return J::from("too few bytes");
     };
-    let bins: Vec<usize> = if complex { (0..FFT_N).collect() } else { (0..=FFT_N / 2).collect() };
+    let bins: Vec<usize> = if complex {
+        (0..FFT_N).collect()
+    } else {
+        (0..=FFT_N / 2).collect()
+    };
     let mut sorted: Vec<f64> = bins.iter().map(|&k| power[k]).collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = sorted[sorted.len() / 2].max(f64::MIN_POSITIVE);
@@ -121,14 +127,35 @@ fn spectrum(data: &[u8], complex: bool) -> J {
         let best = bins
             .iter()
             .copied()
-            .filter(|&k| taken.iter().all(|&t| (k as i64 - t as i64).unsigned_abs() as usize > PEAK_GUARD_BINS && (FFT_N - (k as i64 - t as i64).unsigned_abs() as usize) > PEAK_GUARD_BINS))
-            .max_by(|&a, &b| power[a].partial_cmp(&power[b]).unwrap_or(std::cmp::Ordering::Equal));
+            .filter(|&k| {
+                taken.iter().all(|&t| {
+                    (k as i64 - t as i64).unsigned_abs() as usize > PEAK_GUARD_BINS
+                        && (FFT_N - (k as i64 - t as i64).unsigned_abs() as usize) > PEAK_GUARD_BINS
+                })
+            })
+            .max_by(|&a, &b| {
+                power[a]
+                    .partial_cmp(&power[b])
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         let Some(k) = best else { break };
         taken.push(k);
-        peaks.push(J::obj().with("bin", k).with("cycles_per_sample", cycles(k)).with("db_over_median", 10.0 * (power[k] / median).log10()));
+        peaks.push(
+            J::obj()
+                .with("bin", k)
+                .with("cycles_per_sample", cycles(k))
+                .with("db_over_median", 10.0 * (power[k] / median).log10()),
+        );
     }
     J::obj()
-        .with("read_as", if complex { "complex: even bytes I, odd bytes Q, unsigned" } else { "real: every byte one sample, unsigned" })
+        .with(
+            "read_as",
+            if complex {
+                "complex: even bytes I, odd bytes Q, unsigned"
+            } else {
+                "real: every byte one sample, unsigned"
+            },
+        )
         .with("fft_n", FFT_N)
         .with("segments", segs)
         .with("mean_removed", J::Arr(vec![J::from(mi), J::from(mq)]))
@@ -137,7 +164,11 @@ fn spectrum(data: &[u8], complex: bool) -> J {
 
 /// A bin's frequency in cycles per sample (−0.5..0.5).
 pub fn cycles(k: usize) -> f64 {
-    let signed = if k < FFT_N / 2 { k as f64 } else { k as f64 - FFT_N as f64 };
+    let signed = if k < FFT_N / 2 {
+        k as f64
+    } else {
+        k as f64 - FFT_N as f64
+    };
     signed / FFT_N as f64
 }
 
@@ -151,11 +182,18 @@ pub fn spectrum_power(data: &[u8], complex: bool) -> Option<(Vec<f64>, usize, f6
         return None;
     }
     let mean = |phase: usize| -> f64 {
-        let v: Vec<f64> = data[..segs * seg_bytes].iter().skip(phase).step_by(per).map(|b| *b as f64).collect();
+        let v: Vec<f64> = data[..segs * seg_bytes]
+            .iter()
+            .skip(phase)
+            .step_by(per)
+            .map(|b| *b as f64)
+            .collect();
         v.iter().sum::<f64>() / v.len() as f64
     };
     let (mi, mq) = (mean(0), if complex { mean(1) } else { 0.0 });
-    let win: Vec<f64> = (0..FFT_N).map(|k| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * k as f64 / FFT_N as f64).cos()).collect();
+    let win: Vec<f64> = (0..FFT_N)
+        .map(|k| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * k as f64 / FFT_N as f64).cos())
+        .collect();
     let mut power = vec![0f64; FFT_N];
     for s in 0..segs {
         let d = &data[s * seg_bytes..(s + 1) * seg_bytes];
@@ -202,32 +240,74 @@ pub fn tone_lines(states: &[(String, Option<f64>, Vec<u8>)]) -> J {
     );
     for complex in [true, false] {
         let key = if complex { "complex" } else { "real" };
-        let offs: Vec<&(String, Option<f64>, Vec<u8>)> = states.iter().filter(|s| s.1.is_none()).collect();
-        let Some(reference) = offs.first().and_then(|s| spectrum_power(&s.2, complex)).map(|p| p.0) else {
+        let offs: Vec<&(String, Option<f64>, Vec<u8>)> =
+            states.iter().filter(|s| s.1.is_none()).collect();
+        let Some(reference) = offs
+            .first()
+            .and_then(|s| spectrum_power(&s.2, complex))
+            .map(|p| p.0)
+        else {
             out.set(key, "no off state with enough bytes");
             continue;
         };
-        let bins: Vec<usize> = if complex { (0..FFT_N).collect() } else { (0..=FFT_N / 2).collect() };
+        let bins: Vec<usize> = if complex {
+            (0..FFT_N).collect()
+        } else {
+            (0..=FFT_N / 2).collect()
+        };
         let rise = |p: &[f64]| -> Vec<(usize, f64)> {
-            let mut r: Vec<(usize, f64)> = bins.iter().map(|&k| (k, 10.0 * (p[k].max(f64::MIN_POSITIVE) / reference[k].max(f64::MIN_POSITIVE)).log10())).collect();
+            let mut r: Vec<(usize, f64)> = bins
+                .iter()
+                .map(|&k| {
+                    (
+                        k,
+                        10.0 * (p[k].max(f64::MIN_POSITIVE) / reference[k].max(f64::MIN_POSITIVE))
+                            .log10(),
+                    )
+                })
+                .collect();
             r.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             r
         };
-        let null_max = offs.last().filter(|_| offs.len() > 1).and_then(|s| spectrum_power(&s.2, complex)).map(|p| rise(&p.0)[0].1);
+        let null_max = offs
+            .last()
+            .filter(|_| offs.len() > 1)
+            .and_then(|s| spectrum_power(&s.2, complex))
+            .map(|p| rise(&p.0)[0].1);
         let mut per = J::Arr(Vec::new());
         let mut carried: Vec<(f64, usize)> = Vec::new();
         for (name, hz, data) in states.iter().filter(|s| s.1.is_some()) {
             let Some((p, ..)) = spectrum_power(data, complex) else {
-                per.push(J::obj().with("state", name.as_str()).with("rf_hz", *hz).with("top", "too few bytes"));
+                per.push(
+                    J::obj()
+                        .with("state", name.as_str())
+                        .with("rf_hz", *hz)
+                        .with("top", "too few bytes"),
+                );
                 continue;
             };
             let r = rise(&p);
-            let top: Vec<J> = r.iter().take(TONE_LINE_TOP).map(|(k, db)| J::obj().with("bin", *k).with("cycles_per_sample", cycles(*k)).with("rise_db", *db)).collect();
+            let top: Vec<J> = r
+                .iter()
+                .take(TONE_LINE_TOP)
+                .map(|(k, db)| {
+                    J::obj()
+                        .with("bin", *k)
+                        .with("cycles_per_sample", cycles(*k))
+                        .with("rise_db", *db)
+                })
+                .collect();
             let beats = null_max.map(|n| r[0].1 > n + TONE_LINE_MARGIN_DB);
             if beats == Some(true) {
                 carried.push((hz.unwrap_or(0.0), r[0].0));
             }
-            per.push(J::obj().with("state", name.as_str()).with("rf_hz", *hz).with("top", J::Arr(top)).with("beats_null", beats));
+            per.push(
+                J::obj()
+                    .with("state", name.as_str())
+                    .with("rf_hz", *hz)
+                    .with("top", J::Arr(top))
+                    .with("beats_null", beats),
+            );
         }
         let distinct_bins = {
             let mut b: Vec<usize> = carried.iter().map(|c| c.1).collect();
@@ -241,7 +321,10 @@ pub fn tone_lines(states: &[(String, Option<f64>, Vec<u8>)]) -> J {
                 .with("null_max_rise_db", null_max)
                 .with("states", per)
                 .with("tone_states_beating_null", carried.len())
-                .with("line_moves_with_tone", carried.len() >= 2 && distinct_bins >= 2),
+                .with(
+                    "line_moves_with_tone",
+                    carried.len() >= 2 && distinct_bins >= 2,
+                ),
         );
     }
     out
@@ -261,7 +344,9 @@ fn periodicity(data: &[u8]) -> J {
     if data.len() < PERIOD_SPAN + PERIOD_MAX {
         return J::from("too few bytes");
     }
-    let frac = |p: usize, span: usize| -> f64 { (0..span).filter(|&i| data[i] == data[i + p]).count() as f64 / span as f64 };
+    let frac = |p: usize, span: usize| -> f64 {
+        (0..span).filter(|&i| data[i] == data[i + p]).count() as f64 / span as f64
+    };
     let mut best = (0usize, 0f64);
     let mut first = None;
     for p in 1..=PERIOD_MAX {
@@ -291,8 +376,14 @@ pub fn analyse(data: &[u8]) -> J {
         .with("periodicity", periodicity(data))
         .with("content_c_without_rate", Content::of(data, 0.0).compact())
         .with("content_legend", content::LEGEND)
-        .with("excerpt_first_bytes", hex_bytes(&data[..data.len().min(EXCERPT)]))
-        .with("block_structure", strip_columns(step3::block_structure(data)))
+        .with(
+            "excerpt_first_bytes",
+            hex_bytes(&data[..data.len().min(EXCERPT)]),
+        )
+        .with(
+            "block_structure",
+            strip_columns(step3::block_structure(data)),
+        )
         .with("iq_stats", step3::iq_stats(data))
         .with("spectrum_complex", spectrum(data, true))
         .with("spectrum_real", spectrum(data, false))
@@ -322,19 +413,30 @@ fn capture(rtl: &Rtl, bulk: &mut BulkCounter, n: usize, data: &mut Vec<u8>) -> (
                 .with("elapsed_s", w.elapsed.as_secs_f64())
                 .with("bytes_per_s", w.rate())
                 .with("completions", w.completions)
-                .with("sizes_first", J::Arr(w.sizes.iter().take(16).map(|s| J::from(*s)).collect()))
+                .with(
+                    "sizes_first",
+                    J::Arr(w.sizes.iter().take(16).map(|s| J::from(*s)).collect()),
+                )
                 .with("dropped_blocks_after", dropped(rtl))
                 .with("bulk_check", w.check.compact()),
         );
     }
-    (ws, total, if secs > 0.0 { total as f64 / secs } else { 0.0 })
+    (
+        ws,
+        total,
+        if secs > 0.0 { total as f64 / secs } else { 0.0 },
+    )
 }
 
 fn write_verify(rtl: &Rtl, page: u8, off: u8, val: u8) -> (J, Option<u8>) {
     let orig = rtl.demod_read8(page, off).ok();
     let r = rtl.demod_write8_verify(page, off, val);
     (
-        J::obj().with("original", orig.map(hex8)).with("written", hex8(val)).with("readback", r.as_ref().ok().map(|b| hex8(*b))).with("error", r.err().map(|e| e.to_string())),
+        J::obj()
+            .with("original", orig.map(hex8))
+            .with("written", hex8(val))
+            .with("readback", r.as_ref().ok().map(|b| hex8(*b)))
+            .with("error", r.err().map(|e| e.to_string())),
         orig,
     )
 }
@@ -352,13 +454,20 @@ pub struct Opts {
 
 impl std::default::Default for Opts {
     fn default() -> Opts {
-        Opts { windows: 10, buf: step3::BUF_LEN, minimise: true, out: None, dump: None }
+        Opts {
+            windows: 10,
+            buf: step3::BUF_LEN,
+            minimise: true,
+            out: None,
+            dump: None,
+        }
     }
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
     let d = Opts::default();
-    let (mut baseline, mut n_windows, mut buf, mut minimise, mut out) = (Baseline::LowIf, d.windows, d.buf, d.minimise, d.out);
+    let (mut baseline, mut n_windows, mut buf, mut minimise, mut out) =
+        (Baseline::LowIf, d.windows, d.buf, d.minimise, d.out);
     let mut dump_dir: Option<String> = None;
     let mut pos = Vec::new();
     let mut i = 0;
@@ -392,13 +501,31 @@ pub fn run(args: &[String]) -> Result<(), String> {
     if pos.len() != 3 {
         return Err(USAGE.into());
     }
-    let (page, off, val) = (num(&pos[0])? as u8, num(&pos[1])? as u8, num(&pos[2])? as u8);
-    confirm(baseline, page, off, val, &Opts { windows: n_windows, buf, minimise, out, dump: dump_dir }).map(|_| ())
+    let (page, off, val) = (
+        num(&pos[0])? as u8,
+        num(&pos[1])? as u8,
+        num(&pos[2])? as u8,
+    );
+    confirm(
+        baseline,
+        page,
+        off,
+        val,
+        &Opts {
+            windows: n_windows,
+            buf,
+            minimise,
+            out,
+            dump: dump_dir,
+        },
+    )
+    .map(|_| ())
 }
 
 /// Confirm one byte value on a baseline; returns the record's name.
 pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Result<String, String> {
-    let (n_windows, buf, minimise, out, dump_dir) = (o.windows, o.buf, o.minimise, o.out.clone(), o.dump.clone());
+    let (n_windows, buf, minimise, out, dump_dir) =
+        (o.windows, o.buf, o.minimise, o.out.clone(), o.dump.clone());
     usb::guard()?;
     let mut rec = crate::header_with_source("3-confirm-write", "one demodulator byte written on top of a baseline: bytes/s against the resampler rate, the FIFO's dropped blocks, the bytes' structure and spectrum, tone off/on, and the baseline minimised")
         .with("candidate", J::obj().with("page", page).with("offset", hex8(off)).with("value", hex8(val)))
@@ -421,7 +548,11 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
         dump(&dump_dir, &format!("rate-{rate}"), &data);
         let analysis = analyse(&data);
         let period = match &analysis {
-            J::Obj(f) => f.iter().find(|(k, _)| k == "periodicity").map(|(_, v)| v.render()).unwrap_or_default(),
+            J::Obj(f) => f
+                .iter()
+                .find(|(k, _)| k == "periodicity")
+                .map(|(_, v)| v.render())
+                .unwrap_or_default(),
             _ => String::new(),
         };
         println!(
@@ -436,7 +567,10 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
                 .with("rsamp_ratio", hex32(rsamp_ratio(rate)))
                 .with("setup", setup)
                 .with("dropped_blocks_before", drop0)
-                .with("control_window_before_write", step3::window_record(&control, rate))
+                .with(
+                    "control_window_before_write",
+                    step3::window_record(&control, rate),
+                )
                 .with("write", w)
                 .with("windows", ws)
                 .with("bytes_total", total)
@@ -451,7 +585,11 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
     }
     rec.set("rate_tracking", tracking);
     // (c)
-    if matches!(baseline, Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen) && source::command().is_some() {
+    if matches!(
+        baseline,
+        Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen
+    ) && source::command().is_some()
+    {
         let rate = baseline.rate_hz();
         let centre = baseline.ddc_centre_rf_hz();
         let mut src = Source::open()?;
@@ -467,14 +605,34 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
             };
             let mut data = Vec::new();
             let (ws, total, bps) = capture(&rtl, &mut bulk, n_windows, &mut data);
-            dump(&dump_dir, &format!("tone-{}", name.replace(' ', "_")), &data);
+            dump(
+                &dump_dir,
+                &format!("tone-{}", name.replace(' ', "_")),
+                &data,
+            );
             let a = analyse(&data);
             let top = |k: &str| match &a {
-                J::Obj(f) => f.iter().find(|(n, _)| n == k).map(|(_, v)| v.render()).unwrap_or_default(),
+                J::Obj(f) => f
+                    .iter()
+                    .find(|(n, _)| n == k)
+                    .map(|(_, v)| v.render())
+                    .unwrap_or_default(),
                 _ => String::new(),
             };
-            println!("{name}: {total} B, {bps:.0} B/s; periodicity {}", top("periodicity"));
-            states.push(J::obj().with("state", name.as_str()).with("rf_hz", hz).with("source", s).with("windows", ws).with("bytes_total", total).with("bytes_per_s", bps).with("analysis", a));
+            println!(
+                "{name}: {total} B, {bps:.0} B/s; periodicity {}",
+                top("periodicity")
+            );
+            states.push(
+                J::obj()
+                    .with("state", name.as_str())
+                    .with("rf_hz", hz)
+                    .with("source", s)
+                    .with("windows", ws)
+                    .with("bytes_total", total)
+                    .with("bytes_per_s", bps)
+                    .with("analysis", a),
+            );
             data.truncate(TONE_KEEP_BYTES);
             kept.push((name, hz, data));
         }
@@ -509,12 +667,16 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
         let rate = baseline.rate_hz();
         let mut mini = J::Arr(Vec::new());
         for item in baseline.item_names() {
-            let (rtl, mut bulk, setup) = baseline.fresh_at(rate, std::slice::from_ref(&item), buf)?;
+            let (rtl, mut bulk, setup) =
+                baseline.fresh_at(rate, std::slice::from_ref(&item), buf)?;
             let (w, _) = write_verify(&rtl, page, off, val);
             let mut data = Vec::new();
             let (ws, total, bps) = capture(&rtl, &mut bulk, 5, &mut data);
             let c = Content::of(&data, 0.0);
-            println!("without {item}: {total} B, {bps:.0} B/s, period score {:?}", c.period_score);
+            println!(
+                "without {item}: {total} B, {bps:.0} B/s, period score {:?}",
+                c.period_score
+            );
             mini.push(
                 J::obj()
                     .with("removed", item.as_str())
@@ -531,8 +693,15 @@ pub fn confirm(baseline: Baseline, page: u8, off: u8, val: u8, o: &Opts) -> Resu
         }
         rec.set("minimisation", mini);
     }
-    let step = if baseline == Baseline::ZeroIfOpen { "step8" } else { "step3" };
-    let name = format!("{step}-confirm-{}-p{page}-{off:02x}-{val:02x}.json", baseline.name().replace('-', ""));
+    let step = if baseline == Baseline::ZeroIfOpen {
+        "step8"
+    } else {
+        "step3"
+    };
+    let name = format!(
+        "{step}-confirm-{}-p{page}-{off:02x}-{val:02x}.json",
+        baseline.name().replace('-', "")
+    );
     match out {
         Some(p) => {
             std::fs::write(&p, rec.render() + "\n").map_err(|e| e.to_string())?;
@@ -558,7 +727,9 @@ mod tests {
                 ((x >> 16) & 0x1F) as f64 - 16.0
             };
             let (a, b) = (noise(), noise());
-            let (s, c) = f.map(|f| (std::f64::consts::TAU * f * n as f64).sin_cos()).unwrap_or((0.0, 0.0));
+            let (s, c) = f
+                .map(|f| (std::f64::consts::TAU * f * n as f64).sin_cos())
+                .unwrap_or((0.0, 0.0));
             out.push((128.0 + a + 40.0 * c).round() as u8);
             out.push((128.0 + b + 40.0 * s).round() as u8);
         }
@@ -578,7 +749,9 @@ mod tests {
             ("off again".to_string(), None, iq(4, None)),
         ];
         assert!(moves(&tone_lines(&live)));
-        let unit: Vec<u8> = (0..content::PERIOD).map(|i| (i * 7 + i / 13) as u8).collect();
+        let unit: Vec<u8> = (0..content::PERIOD)
+            .map(|i| (i * 7 + i / 13) as u8)
+            .collect();
         let replay: Vec<u8> = unit.iter().cycle().take(TONE_KEEP_BYTES).copied().collect();
         let dead = vec![
             ("off".to_string(), None, replay.clone()),

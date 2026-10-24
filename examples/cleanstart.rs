@@ -28,10 +28,10 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::gain::Stage;
 use sdr_core::Iq;
-use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE};
+use sdr_rtl::Stage;
 use sdr_rtl::blocking::Rtl;
+use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE};
 
 const MODES: [&str; 4] = ["plain", "clean_start", "clean_stop", "both"];
 const DRAIN: Duration = Duration::from_millis(5);
@@ -40,16 +40,25 @@ fn one(mode: &str, rate: f64, secs: f64) -> Result<String, String> {
     let cycle = power_cycle()?;
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
     for (stage, code) in [(Stage::Lna, 8), (Stage::Mixer, 8), (Stage::Vga, 2)] {
-        rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
+        rtl.set_stage_level(stage, code)
+            .map_err(|e| e.to_string())?;
     }
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
     let clean_start = mode == "clean_start" || mode == "both";
     let clean_stop = mode == "clean_stop" || mode == "both";
     let pause = |rtl: &Rtl, on: bool| {
-        let v = if on { PAGE1_0X01_POWER_ON | PAUSE_BIT } else { PAGE1_0X01_POWER_ON };
-        rtl.link().demod_write(PAUSE_PAGE, PAUSE_OFF, &[v]).map_err(|e| e.to_string())
+        let v = if on {
+            PAGE1_0X01_POWER_ON | PAUSE_BIT
+        } else {
+            PAGE1_0X01_POWER_ON
+        };
+        rtl.link()
+            .demod_write(PAUSE_PAGE, PAUSE_OFF, &[v])
+            .map_err(|e| e.to_string())
     };
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     if clean_start {
         pause(&rtl, true).map_err(|e| format!("pause before start: {e}"))?;
@@ -62,7 +71,9 @@ fn one(mode: &str, rate: f64, secs: f64) -> Result<String, String> {
     let mut n = 0u64;
     let mut first_ms = f64::NAN;
     while t.elapsed().as_secs_f64() < secs {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         if n == 0 && info.n_samples > 0 {
             first_ms = t.elapsed().as_secs_f64() * 1e3;
         }
@@ -73,17 +84,25 @@ fn one(mode: &str, rate: f64, secs: f64) -> Result<String, String> {
         pause(&rtl, true).map_err(|e| format!("pause before stop: {e}"))?;
         std::thread::sleep(DRAIN);
         if mode == "both" {
-            before_stop = Some(rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(|e| format!("counter read before stop: {e}"))?);
+            before_stop = Some(
+                rtl.link()
+                    .usb_read8(BLK_DROP_COUNTER)
+                    .map_err(|e| format!("counter read before stop: {e}"))?,
+            );
         }
     }
     s.stop().map_err(|e| format!("stop: {e}"))?;
-    let d = s.take_dropped_blocks().map_err(|e| format!("take after stop: {e}"))?;
+    let d = s
+        .take_dropped_blocks()
+        .map_err(|e| format!("take after stop: {e}"))?;
     if clean_stop {
         pause(&rtl, false).map_err(|e| format!("resume after stop: {e}"))?;
     }
     Ok(format!(
         "\"cycle\":\"{cycle}\",\"mode\":\"{mode}\",\"rate\":{rate},\"seconds\":{secs},\"samples\":{n},\"first_samples_ms\":{first_ms:.2},\"blocks_before_stop\":{},\"blocks_total\":{},\"saturated\":{}",
-        before_stop.map(|b| b.to_string()).unwrap_or_else(|| "null".into()),
+        before_stop
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "null".into()),
         d.blocks,
         d.saturated
     ))
@@ -91,11 +110,22 @@ fn one(mode: &str, rate: f64, secs: f64) -> Result<String, String> {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
-    let rates: Vec<f64> = get("--rates").unwrap_or_else(|| "1024000,1200000,1800000,2400000".into()).split(',').filter_map(|v| v.parse().ok()).collect();
+    let get = |k: &str| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    let rates: Vec<f64> = get("--rates")
+        .unwrap_or_else(|| "1024000,1200000,1800000,2400000".into())
+        .split(',')
+        .filter_map(|v| v.parse().ok())
+        .collect();
     let reps: u32 = get("--reps").and_then(|v| v.parse().ok()).unwrap_or(3);
     let secs: f64 = get("--seconds").and_then(|v| v.parse().ok()).unwrap_or(3.0);
-    let modes: Vec<String> = get("--modes").map(|m| m.split(',').map(String::from).collect()).unwrap_or_else(|| MODES.iter().map(|m| m.to_string()).collect());
+    let modes: Vec<String> = get("--modes")
+        .map(|m| m.split(',').map(String::from).collect())
+        .unwrap_or_else(|| MODES.iter().map(|m| m.to_string()).collect());
     for &rate in &rates {
         for mode in modes.iter().map(String::as_str) {
             for _ in 0..reps {

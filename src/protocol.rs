@@ -157,9 +157,20 @@ pub const SYSCTL_FULL_PACKET: u8 = 1 << 3;
 pub const USB_EPA_FIFO_CFG: u16 = 0x0160;
 /// USB_EPA_CTL (Table 32, p. 40; documents.md): 16-bit, bit 9 "FIFO
 /// reset", bit 5 flush, bit 4 stall, bit 0 FIFO valid. The vendor driver
-/// writes 0x0210 then 0 at its USB set-up (findings 9b).
+/// writes 0x0210 then 0 at its USB set-up (findings 9b). Linux's
+/// dvb_usb_rtl28xxu leaves it 0x0210 when it lets go (detached at our
+/// open, or unbound): the endpoint stalls every transfer until bits 9 and 4
+/// are cleared (findings 21).
 pub const USB_EPA_CTL: u16 = 0x0148;
 pub const EPA_CTL_FIFO_RESET: u16 = 1 << 9;
+pub const EPA_CTL_FLUSH: u16 = 1 << 5;
+pub const EPA_CTL_STALL: u16 = 1 << 4;
+pub const EPA_CTL_VALID: u16 = 1 << 0;
+/// Bits the release write of a FIFO reset clears: the reset and the stall
+/// (held states), and the write-1 actions flush and valid (never written
+/// back, or a block would be flushed or validated).
+pub const EPA_CTL_RELEASE_CLEARS: u16 =
+    EPA_CTL_FIFO_RESET | EPA_CTL_FLUSH | EPA_CTL_STALL | EPA_CTL_VALID;
 pub const BLK_DROP_COUNTER: u16 = USB_EPA_FIFO_CFG + 3;
 /// The counter stops here (findings 16: 255 after every stall).
 pub const BLK_DROP_COUNTER_SATURATED: u8 = 0xFF;
@@ -259,7 +270,8 @@ pub const TWO_POW_22: f64 = 4_194_304.0;
 /// reset released in one write, 0xE8 (Table 15's bits; findings 10.4:
 /// "DEMOD_CTL ← 0xE8 as one write equals 0xA8 then 0xE8"; without the
 /// ADC bits every byte is 0x80).
-pub const DEMOD_CTL_STREAM: u8 = DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_RESET_RELEASE | DEMOD_CTL_ADC_Q_EN;
+pub const DEMOD_CTL_STREAM: u8 =
+    DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_RESET_RELEASE | DEMOD_CTL_ADC_Q_EN;
 /// DEMOD_CTL's bit 2 never reads back (findings step 3's block scan):
 /// a read-back compares every other bit.
 pub const DEMOD_CTL_NOT_READ_BACK: u8 = 1 << 2;
@@ -285,11 +297,21 @@ pub const TAP_PAGE: u8 = 1;
 pub const TAP_FIRST: u8 = 0x1C;
 
 /// Page 0 0x19: bit 0 is the stream's enable (0x24: 0 bytes), bit 2
-/// changes the content (0x21: near-constant output); the stream writes
-/// 0x25, the observed value (findings 9b item 16; 10.4; power-on 0x20).
+/// changes the content (0x21: near-constant output), bit 5 multiplies the
+/// FIR's output by 8 (18 dB; findings 23). The value observed is 0x25
+/// (findings 9b item 16; 10.4; power-on 0x20); the stream writes 0x05:
+/// with bit 5 set the floor ahead of the FIR rides up with that gain, and
+/// the analogue gain that makes the level up instead reads 1.5–4.5 dB
+/// more carrier over the floor (findings 23).
 pub const STREAM_ENABLE_PAGE: u8 = 0;
 pub const STREAM_ENABLE_OFF: u8 = 0x19;
-pub const STREAM_ENABLE_VALUE: u8 = 0x25;
+/// Bit 0: the stream's enable.
+pub const STREAM_ENABLE_ON: u8 = 1 << 0;
+/// Bit 2: needed for content.
+pub const STREAM_ENABLE_CONTENT: u8 = 1 << 2;
+/// Bit 5: the FIR's output × 8 (findings 23); left clear.
+pub const STREAM_ENABLE_FIR_X8: u8 = 1 << 5;
+pub const STREAM_ENABLE_VALUE: u8 = STREAM_ENABLE_ON | STREAM_ENABLE_CONTENT;
 
 /// Page 1 0x93 ← 0xF0 (or 0x94 ← 0x0F, either alone) keeps the rate
 /// steady and the level full; without both the rate wandered 3.35-4.13
@@ -297,6 +319,19 @@ pub const STREAM_ENABLE_VALUE: u8 = 0x25;
 pub const RATE_STEADY_PAGE: u8 = 1;
 pub const RATE_STEADY_OFF: u8 = 0x93;
 pub const RATE_STEADY_VALUE: u8 = 0xF0;
+
+/// Page 1 0x3E-0x3F (no document names them; power-on 40 00) ← 00 00,
+/// one 2-byte write (findings 9b item 6): the demodulator's timing loop
+/// no longer steers the resampler. With the power-on 40 00 and a signal
+/// on the air, the loop's estimate (`sfreq_off`, page 3 0x18-0x19,
+/// ±2⁻¹¹ full scale) moved the delivered rate with it — up to ±488 ppm,
+/// pinned at the rail for minutes or swinging across it; with 00 00 the
+/// rate held within 3 ppm of the resampler's while the estimate went on
+/// moving (findings 29). 10.4's minimisation, on a bench with no air,
+/// had found it changed nothing.
+pub const TIMING_STEER_PAGE: u8 = 1;
+pub const TIMING_STEER_FIRST: u8 = 0x3E;
+pub const TIMING_STEER_OFF: [u8; 2] = [0x00, 0x00];
 
 /// Page 0 0x06 bit 7 starts the stream; cleared it stops it, set again
 /// it restarts it within one 16 KiB transfer, ≤ 3.1 ms, with no power
@@ -384,14 +419,40 @@ mod tests {
     #[test]
     fn stream_values_are_the_bench_sequences() {
         assert_eq!(DEMOD_CTL_STREAM, 0xE8);
-        assert_eq!(DEMOD_CTL_STREAM & DEMOD_CTL_NOT_READ_BACK, 0, "the bit that never reads back is written 0");
+        assert_eq!(
+            DEMOD_CTL_STREAM & DEMOD_CTL_NOT_READ_BACK,
+            0,
+            "the bit that never reads back is written 0"
+        );
         assert_eq!(SPEC_INV_STREAM, 0x01);
-        assert_eq!((STREAM_ENABLE_PAGE, STREAM_ENABLE_OFF, STREAM_ENABLE_VALUE), (0, 0x19, 0x25));
-        assert_eq!((RATE_STEADY_PAGE, RATE_STEADY_OFF, RATE_STEADY_VALUE), (1, 0x93, 0xF0));
+        assert_eq!(
+            (STREAM_ENABLE_PAGE, STREAM_ENABLE_OFF, STREAM_ENABLE_VALUE),
+            (0, 0x19, 0x05)
+        );
+        assert_eq!(
+            STREAM_ENABLE_VALUE | STREAM_ENABLE_FIR_X8,
+            0x25,
+            "the observed value less the FIR's ×8"
+        );
+        assert_eq!(
+            (RATE_STEADY_PAGE, RATE_STEADY_OFF, RATE_STEADY_VALUE),
+            (1, 0x93, 0xF0)
+        );
         assert_eq!((START_PAGE, START_OFF, START_VALUE), (0, 0x06, 0x80));
-        assert_eq!((PAUSE_PAGE, PAUSE_OFF, PAGE1_0X01_POWER_ON | PAUSE_BIT), (1, 0x01, 0x14));
-        assert_eq!(PAGE1_0X01_POWER_ON & IIC_REPEAT_BIT, 0, "the repeater is closed at power-on");
-        assert_eq!((PAUSE_PAGE, PAUSE_OFF), (IIC_REPEAT_PAGE, IIC_REPEAT_OFF), "one register, two roles");
+        assert_eq!(
+            (PAUSE_PAGE, PAUSE_OFF, PAGE1_0X01_POWER_ON | PAUSE_BIT),
+            (1, 0x01, 0x14)
+        );
+        assert_eq!(
+            PAGE1_0X01_POWER_ON & IIC_REPEAT_BIT,
+            0,
+            "the repeater is closed at power-on"
+        );
+        assert_eq!(
+            (PAUSE_PAGE, PAUSE_OFF),
+            (IIC_REPEAT_PAGE, IIC_REPEAT_OFF),
+            "one register, two roles"
+        );
         assert_eq!(FREQ_OFFSET_LAST - FREQ_OFFSET_FIRST + 1, 3);
     }
 

@@ -38,8 +38,8 @@ use alloc::vec::Vec;
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
-use crate::math::{floor, round};
 use crate::image::{CAPX_NONE, NI2C_MASK, R16_FIXED, REF_DIV2_BIT, SEL_DIV_SHIFT, SI2C_SHIFT};
+use crate::math::{floor, round};
 use crate::tables::pll::{F_REF_HZ, NINT_RANGE, R2_BY_LOCK_STATE, REF_DIV2, SEL_DIV, VCO_RANGE_HZ};
 use crate::tables::types::DividerStatus;
 
@@ -56,8 +56,20 @@ pub const NINT_OFFSET: u16 = 13;
 /// VCO_INDICATOR is [6:0].
 pub const VCO_INDICATOR_MASK: u8 = 0x7F;
 
+/// What the synthesizer runs at against its words, at the VCO: a quarter
+/// of an SDM count above them, 2·f_ref / 2^16 / 4 = 109.86 Hz (findings
+/// 26). Measured by tuning one RF under two dividers back to back (the
+/// crystal cannot move between them), where the two errors differ by the
+/// offset × (1/d₁ − 1/d₂): 110.03 ± 0.69 Hz on dongle A and 109.66 ±
+/// 0.49 Hz on dongle B, 32 pairs each, at 105-890 MHz across every pair of
+/// neighbouring dividers /2-/32. (A sweep fit of crystal and offset
+/// together had read 123 Hz: the crystal drifts during a sweep and the
+/// fit trades one for the other.)
+pub const VCO_OFFSET_HZ: f64 = 2.0 * F_REF_HZ / SDM_SCALE / 4.0;
+
 /// The LO step one SDM count makes under a divider: 2·f_ref / 2^16 / div
-/// (439.45 Hz / div).
+/// (439.45 Hz / div). Tests only: the tolerance they hold tunings to.
+#[cfg(test)]
 pub fn sdm_step_hz(divider: u32) -> f64 {
     2.0 * F_REF_HZ / SDM_SCALE / divider as f64
 }
@@ -88,7 +100,9 @@ pub fn usable_codes() -> Vec<(u8, u32)> {
         .iter()
         .filter(|e| e.code != SEL_DIV_BY_16)
         .filter_map(|e| match e.status {
-            DividerStatus::DocumentedConfirmed { .. } | DividerStatus::Measured { .. } => e.divider.map(|d| (e.code, d)),
+            DividerStatus::DocumentedConfirmed { .. } | DividerStatus::Measured { .. } => {
+                e.divider.map(|d| (e.code, d))
+            }
             DividerStatus::DocumentedUntested { .. } | DividerStatus::Unusable { .. } => None,
         })
         .collect();
@@ -104,7 +118,10 @@ pub fn divider_of(sel_div: u8) -> Option<u32> {
     if sel_div == SEL_DIV_BY_16 {
         return Some(BY_16);
     }
-    SEL_DIV.iter().find(|e| e.code == sel_div).and_then(|e| e.divider)
+    SEL_DIV
+        .iter()
+        .find(|e| e.code == sel_div)
+        .and_then(|e| e.divider)
 }
 
 /// The LO span one usable code reaches with the VCO inside
@@ -112,7 +129,10 @@ pub fn divider_of(sel_div: u8) -> Option<u32> {
 /// Computed here rather than read from `tables::pll::LO_REACH`, which
 /// predates /16.
 pub fn lo_reach() -> Vec<(u8, u32, f64, f64)> {
-    let mut v: Vec<_> = usable_codes().into_iter().map(|(c, d)| (c, d, VCO_RANGE_HZ.0 / d as f64, VCO_RANGE_HZ.1 / d as f64)).collect();
+    let mut v: Vec<_> = usable_codes()
+        .into_iter()
+        .map(|(c, d)| (c, d, VCO_RANGE_HZ.0 / d as f64, VCO_RANGE_HZ.1 / d as f64))
+        .collect();
     v.sort_by(|a, b| a.2.total_cmp(&b.2));
     v
 }
@@ -132,7 +152,10 @@ pub fn lo_gaps() -> Vec<(f64, f64)> {
 }
 
 fn unsupported(what: String) -> Error {
-    Error::Unsupported { backend: BACKEND, what }
+    Error::Unsupported {
+        backend: BACKEND,
+        what,
+    }
 }
 
 /// Why an LO cannot be programmed: inside a gap between the codes'
@@ -167,24 +190,42 @@ impl Pll {
     /// The words for an LO: the smallest usable divider whose VCO lands
     /// inside `VCO_RANGE_HZ`, then Nint + Nfra = f_LO · div / (2 f_ref).
     pub fn program(lo_hz: f64) -> Result<Pll> {
+        Pll::candidates(lo_hz)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| unreachable(lo_hz))
+    }
+
+    /// The words for an LO under every usable divider whose VCO lands inside
+    /// `VCO_RANGE_HZ`, smallest divider first: the order a tuning tries them
+    /// until one locks. The range is the documented one; where a unit's
+    /// VCO actually starts varies (findings 21: two dongles did not lock
+    /// below 1.72 GHz at /2, one locked down to 1.709), so the first may
+    /// not lock and the next is the fallback.
+    pub fn candidates(lo_hz: f64) -> Result<Vec<Pll>> {
         if !lo_hz.is_finite() || lo_hz <= 0.0 {
             return Err(unsupported(format!("LO {lo_hz} Hz is not a frequency")));
         }
-        for (code, div) in usable_codes() {
-            let vco = lo_hz * div as f64;
-            if vco >= VCO_RANGE_HZ.0 && vco <= VCO_RANGE_HZ.1 {
-                return Pll::with_divider(lo_hz, code);
-            }
+        let v = usable_codes()
+            .into_iter()
+            .filter(|&(_, div)| (VCO_RANGE_HZ.0..=VCO_RANGE_HZ.1).contains(&(lo_hz * div as f64)))
+            .map(|(code, _)| Pll::with_divider(lo_hz, code))
+            .collect::<Result<Vec<Pll>>>()?;
+        if v.is_empty() {
+            return Err(unreachable(lo_hz));
         }
-        Err(unreachable(lo_hz))
+        Ok(v)
     }
 
     /// The words for an LO under a given code (no VCO-range check: the
     /// caller's choice). Nint is floor(n), the SDM word the rounded
     /// fraction, carried into Nint when it rounds to 2^16.
     pub fn with_divider(lo_hz: f64, sel_div: u8) -> Result<Pll> {
-        let divider = divider_of(sel_div)
-            .ok_or_else(|| unsupported(format!("SEL_DIV {sel_div:03b} is not a usable divider (tables::pll::SEL_DIV)")))?;
+        let divider = divider_of(sel_div).ok_or_else(|| {
+            unsupported(format!(
+                "SEL_DIV {sel_div:03b} is not a usable divider (tables::pll::SEL_DIV)"
+            ))
+        })?;
         let n = lo_hz * divider as f64 / (2.0 * F_REF_HZ);
         let mut nint = floor(n) as i64;
         let mut sdm = round((n - nint as f64) * SDM_SCALE) as i64;
@@ -198,7 +239,29 @@ impl Pll {
                 NINT_RANGE.0, NINT_RANGE.1
             )));
         }
-        Ok(Pll { sel_div, divider, nint: nint as u16, sdm: sdm as u16 })
+        Ok(Pll {
+            sel_div,
+            divider,
+            nint: nint as u16,
+            sdm: sdm as u16,
+        })
+    }
+
+    /// The words under every candidate divider ([`Pll::candidates`]) for
+    /// the synthesizer to deliver `lo_hz`: each divider's words for lo −
+    /// [`VCO_OFFSET_HZ`] / divider, the offset the synthesizer runs at
+    /// from its words (findings 26).
+    pub fn candidates_delivering(lo_hz: f64) -> Result<Vec<Pll>> {
+        Pll::candidates(lo_hz)?
+            .into_iter()
+            .map(|p| Pll::with_divider(lo_hz - VCO_OFFSET_HZ / p.divider as f64, p.sel_div))
+            .collect()
+    }
+
+    /// The LO the words deliver: (f_VCO + [`VCO_OFFSET_HZ`]) / divider
+    /// (findings 26).
+    pub fn lo_delivered_hz(&self) -> f64 {
+        (self.vco_hz() + VCO_OFFSET_HZ) / self.divider as f64
     }
 
     /// f_LO = f_ref · 2 · (Nint + Nfra) / divider, from the words.
@@ -215,7 +278,10 @@ impl Pll {
     /// R16: SEL_DIV [7:5], REF_DIV2 [4] (1: the sweep's setting, which
     /// every table holds for), the fixed 0 1 at [3:2], CAPX [1:0] = 00.
     pub fn r16(&self) -> u8 {
-        (self.sel_div & 0b111) << SEL_DIV_SHIFT | if REF_DIV2 { REF_DIV2_BIT } else { 0 } | R16_FIXED | CAPX_NONE
+        (self.sel_div & 0b111) << SEL_DIV_SHIFT
+            | if REF_DIV2 { REF_DIV2_BIT } else { 0 }
+            | R16_FIXED
+            | CAPX_NONE
     }
 
     /// R20: SI2C [7:6], NI2C [5:0] with Nint − 13 = 4·Ni2c + Si2c.
@@ -236,6 +302,8 @@ impl Pll {
 
     /// The words back from the four register bytes (R16, R20, R21, R22):
     /// None when REF_DIV2 is not the sweep's 1 or the code is unusable.
+    /// Tests only: the round trip of the words.
+    #[cfg(test)]
     pub fn from_registers(r16: u8, r20: u8, r21: u8, r22: u8) -> Option<Pll> {
         if (r16 & REF_DIV2_BIT != 0) != REF_DIV2 {
             return None;
@@ -246,7 +314,12 @@ impl Pll {
         let ni2c = (r20 & NI2C_MASK) as u16;
         let nint = 4 * ni2c + si2c + NINT_OFFSET;
         let sdm = (r22 as u16) << 8 | r21 as u16;
-        Some(Pll { sel_div, divider, nint, sdm })
+        Some(Pll {
+            sel_div,
+            divider,
+            nint,
+            sdm,
+        })
     }
 }
 
@@ -257,7 +330,10 @@ impl Pll {
 /// 14's bottom 90 MHz of the VCO; step 4e's 93 (between step 4c's steps,
 /// the tone received) lies inside.
 pub fn r2_locked_span() -> (u8, u8) {
-    let inside = R2_BY_LOCK_STATE.iter().filter(|c| c.full_strength > c.not_received).map(|c| c.r2);
+    let inside = R2_BY_LOCK_STATE
+        .iter()
+        .filter(|c| c.full_strength > c.not_received)
+        .map(|c| c.r2);
     let lo = inside.clone().min().unwrap_or(u8::MAX);
     let hi = inside.max().unwrap_or(0);
     (lo, hi)
@@ -304,12 +380,27 @@ impl PllState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::band::IF_HZ;
+    use crate::tables::band_paths::IF_HZ;
+    use alloc::vec;
 
     #[test]
     fn usable_codes_are_the_confirmed_and_measured_dividers_ascending() {
-        assert_eq!(usable_codes(), vec![(0b000, 2), (0b001, 4), (0b010, 8), (0b011, 16), (0b100, 32), (0b101, 64)]);
-        assert_eq!(divider_of(0b011), Some(16), "findings 10.5, not the printed /1");
+        assert_eq!(
+            usable_codes(),
+            vec![
+                (0b000, 2),
+                (0b001, 4),
+                (0b010, 8),
+                (0b011, 16),
+                (0b100, 32),
+                (0b101, 64)
+            ]
+        );
+        assert_eq!(
+            divider_of(0b011),
+            Some(16),
+            "findings 10.5, not the printed /1"
+        );
         assert_eq!(divider_of(0b110), None);
         assert_eq!(divider_of(0b111), None);
     }
@@ -337,7 +428,12 @@ mod tests {
     #[test]
     fn sel_div_011_divides_by_16_as_benched() {
         use crate::demod::ddc_if_hz;
-        let bench = Pll { sel_div: 0b011, divider: 16, nint: 100, sdm: 7646 };
+        let bench = Pll {
+            sel_div: 0b011,
+            divider: 16,
+            nint: 100,
+            sdm: 7646,
+        };
         let regs = (bench.r16(), bench.r20(), bench.r21(), bench.r22());
         assert_eq!(regs.0 >> SEL_DIV_SHIFT, 0b011);
         assert_ne!(regs.0 & REF_DIV2_BIT, 0);
@@ -347,13 +443,27 @@ mod tests {
         let lo = back.lo_hz();
         assert!((lo - 14.4e6 * 2.0 * (100.0 + 7646.0 / 65536.0) / 16.0).abs() < 1e-3);
         assert!((lo - 180.21e6).abs() < 1e3, "{lo}");
-        assert!((lo - ddc_if_hz() - 176.64e6).abs() < 2e3, "{}", lo - ddc_if_hz());
-        assert!((back.vco_hz() - 2883.36e6).abs() < 0.1e6, "inside the VCO range: {}", back.vco_hz());
+        assert!(
+            (lo - ddc_if_hz() - 176.64e6).abs() < 2e3,
+            "{}",
+            lo - ddc_if_hz()
+        );
+        assert!(
+            (back.vco_hz() - 2883.36e6).abs() < 0.1e6,
+            "inside the VCO range: {}",
+            back.vco_hz()
+        );
         let p = Pll::program(176.64e6 + ddc_if_hz()).unwrap();
         assert_eq!(p, bench);
         // The control of findings 10.5: SEL_DIV 010 at the same words is
         // /8, twice the LO.
-        let control = Pll::from_registers((0b010 << SEL_DIV_SHIFT) | (regs.0 & !(0b111 << SEL_DIV_SHIFT)), regs.1, regs.2, regs.3).unwrap();
+        let control = Pll::from_registers(
+            (0b010 << SEL_DIV_SHIFT) | (regs.0 & !(0b111 << SEL_DIV_SHIFT)),
+            regs.1,
+            regs.2,
+            regs.3,
+        )
+        .unwrap();
         assert_eq!(control.divider, 8);
         assert!((control.lo_hz() - 2.0 * lo).abs() < 1e-3);
     }
@@ -364,8 +474,19 @@ mod tests {
     #[test]
     fn the_300_mhz_tune_matches_the_record() {
         let p = Pll::program(300e6 + IF_HZ).unwrap();
-        assert_eq!(p, Pll { sel_div: 0b010, divider: 8, nint: 84, sdm: 39504 });
-        assert_eq!((p.r16(), p.r20(), p.r21(), p.r22()), (0x54, 0xD1, 0x50, 0x9A));
+        assert_eq!(
+            p,
+            Pll {
+                sel_div: 0b010,
+                divider: 8,
+                nint: 84,
+                sdm: 39504
+            }
+        );
+        assert_eq!(
+            (p.r16(), p.r20(), p.r21(), p.r22()),
+            (0x54, 0xD1, 0x50, 0x9A)
+        );
         assert!((p.lo_hz() - 304570019.53125).abs() < 1e-3, "{}", p.lo_hz());
         assert!((p.vco_hz() - 2436560156.25).abs() < 1e-3);
         assert_eq!(Pll::from_registers(0x54, 0xD1, 0x50, 0x9A), Some(p));
@@ -375,12 +496,30 @@ mod tests {
     /// step 4d: Nint 88 is f_VCO 2.534 GHz.
     #[test]
     fn nint_to_vco_follows_the_sweep() {
-        let p = Pll { sel_div: 0b010, divider: 8, nint: 88, sdm: 0 };
+        let p = Pll {
+            sel_div: 0b010,
+            divider: 8,
+            nint: 88,
+            sdm: 0,
+        };
         assert!((p.vco_hz() - 2534.4e6).abs() < 1.0);
         assert!((p.lo_hz() - 316.8e6).abs() < 1.0);
-        let r = Pll { sel_div: 0b100, divider: 32, nint: 88, sdm: 0 };
-        assert!((r.lo_hz() - 79.2e6).abs() < 1.0, "step 4d: code 100 at Nint 88 is an LO near 79 MHz");
-        let s = Pll { sel_div: 0b101, divider: 64, nint: 88, sdm: 0 };
+        let r = Pll {
+            sel_div: 0b100,
+            divider: 32,
+            nint: 88,
+            sdm: 0,
+        };
+        assert!(
+            (r.lo_hz() - 79.2e6).abs() < 1.0,
+            "step 4d: code 100 at Nint 88 is an LO near 79 MHz"
+        );
+        let s = Pll {
+            sel_div: 0b101,
+            divider: 64,
+            nint: 88,
+            sdm: 0,
+        };
         assert!((s.lo_hz() - 39.6e6).abs() < 1.0);
     }
 
@@ -402,21 +541,61 @@ mod tests {
                     by16 += 1;
                 }
                 let vco = p.vco_hz();
-                assert!(vco >= VCO_RANGE_HZ.0 - 1.0 && vco <= VCO_RANGE_HZ.1 + 1.0, "{rf}: VCO {vco}");
-                assert!((p.lo_hz() - lo).abs() <= sdm_step_hz(p.divider) / 2.0 + 1e-6, "{rf}: LO {} vs {lo}", p.lo_hz());
+                assert!(
+                    vco >= VCO_RANGE_HZ.0 - 1.0 && vco <= VCO_RANGE_HZ.1 + 1.0,
+                    "{rf}: VCO {vco}"
+                );
+                assert!(
+                    (p.lo_hz() - lo).abs() <= sdm_step_hz(p.divider) / 2.0 + 1e-6,
+                    "{rf}: LO {} vs {lo}",
+                    p.lo_hz()
+                );
                 for (code, div) in usable_codes() {
                     if div < p.divider {
                         let v = lo * div as f64;
-                        assert!(v < VCO_RANGE_HZ.0 || v > VCO_RANGE_HZ.1, "{rf}: code {code:03b} (/{div}) was in range but not chosen");
+                        assert!(
+                            v < VCO_RANGE_HZ.0 || v > VCO_RANGE_HZ.1,
+                            "{rf}: code {code:03b} (/{div}) was in range but not chosen"
+                        );
                     }
                 }
-                assert_eq!(Pll::from_registers(p.r16(), p.r20(), p.r21(), p.r22()), Some(p));
+                assert_eq!(
+                    Pll::from_registers(p.r16(), p.r20(), p.r21(), p.r22()),
+                    Some(p)
+                );
                 assert!(p.nint >= NINT_RANGE.0 && p.nint <= NINT_RANGE.1);
                 rf += 0.25e6;
             }
             assert_eq!(programmed, 3841);
             // LO 106.875-213.75 MHz: about 107 MHz of RF in 0.25 MHz steps.
             assert!((420..=430).contains(&by16), "{by16}");
+        }
+    }
+
+    /// Words for a delivered LO: the same dividers as for the words' LO,
+    /// each moved by the offset over its divider, and the LO they deliver
+    /// within half an SDM step of the request.
+    #[test]
+    fn the_delivered_lo_takes_the_synthesizers_offset() {
+        for lo in [30e6, 110e6, 304.57e6, 500e6, 1093.57e6, 1723.57e6] {
+            let plain = Pll::candidates(lo).unwrap();
+            let delivering = Pll::candidates_delivering(lo).unwrap();
+            assert_eq!(
+                plain.iter().map(|p| p.divider).collect::<Vec<_>>(),
+                delivering.iter().map(|p| p.divider).collect::<Vec<_>>()
+            );
+            for p in delivering {
+                assert!(
+                    (p.lo_delivered_hz() - lo).abs() <= sdm_step_hz(p.divider) / 2.0 + 1e-6,
+                    "{lo}: /{} {}",
+                    p.divider,
+                    p.lo_delivered_hz() - lo
+                );
+                assert!(
+                    (p.lo_delivered_hz() - p.lo_hz() - VCO_OFFSET_HZ / p.divider as f64).abs()
+                        < 1e-6
+                );
+            }
         }
     }
 
@@ -435,7 +614,9 @@ mod tests {
         // Below /64's reach and above /2's.
         for lo in [20.0e6, 1.9e9] {
             match Pll::program(lo) {
-                Err(Error::Unsupported { what, .. }) => assert!(what.contains("26.7188 MHz to 1825.0000 MHz"), "{what}"),
+                Err(Error::Unsupported { what, .. }) => {
+                    assert!(what.contains("26.7188 MHz to 1825.0000 MHz"), "{what}")
+                }
                 other => panic!("{lo}: {other:?}"),
             }
         }
@@ -448,9 +629,17 @@ mod tests {
     fn divider_choice_follows_the_reach_table() {
         assert_eq!(Pll::program(40.0e6).unwrap().divider, 64);
         assert_eq!(Pll::program(80.0e6).unwrap().divider, 32);
-        assert_eq!(Pll::program(55.0e6).unwrap().divider, 32, "the smaller divider wins an overlap");
+        assert_eq!(
+            Pll::program(55.0e6).unwrap().divider,
+            32,
+            "the smaller divider wins an overlap"
+        );
         assert_eq!(Pll::program(300.0e6).unwrap().divider, 8);
-        assert_eq!(Pll::program(440.0e6).unwrap().divider, 4, "/4 at 1.76 GHz beats /8 at 3.52 GHz");
+        assert_eq!(
+            Pll::program(440.0e6).unwrap().divider,
+            4,
+            "/4 at 1.76 GHz beats /8 at 3.52 GHz"
+        );
         assert_eq!(Pll::program(900.0e6).unwrap().divider, 2);
         assert_eq!(Pll::program(1006.57e6).unwrap().divider, 2);
     }
@@ -458,17 +647,33 @@ mod tests {
     #[test]
     fn r20_packs_nint_as_the_document_says() {
         // Nint 21: m = 8 = 4·2 + 0 → SI2C 0, NI2C 2.
-        let p = Pll { sel_div: 0, divider: 2, nint: 21, sdm: 0 };
+        let p = Pll {
+            sel_div: 0,
+            divider: 2,
+            nint: 21,
+            sdm: 0,
+        };
         assert_eq!(p.r20(), 0x02);
         // Nint 268 = 13 + 4·63 + 3 → SI2C 3, NI2C 63.
-        let q = Pll { sel_div: 0, divider: 2, nint: 268, sdm: 0xFFFF };
+        let q = Pll {
+            sel_div: 0,
+            divider: 2,
+            nint: 268,
+            sdm: 0xFFFF,
+        };
         assert_eq!(q.r20(), 0xFF);
         assert_eq!((q.r21(), q.r22()), (0xFF, 0xFF));
-        assert_eq!(Pll::from_registers(q.r16(), q.r20(), q.r21(), q.r22()), Some(q));
+        assert_eq!(
+            Pll::from_registers(q.r16(), q.r20(), q.r21(), q.r22()),
+            Some(q)
+        );
         // REF_DIV2 = 0 is not a setting the tables hold for.
         assert_eq!(Pll::from_registers(0x44, 0xD1, 0x50, 0x9A), None);
         // An unusable code decodes to nothing.
-        assert_eq!(Pll::from_registers(0b110 << 5 | 0x14, 0xD1, 0x50, 0x9A), None);
+        assert_eq!(
+            Pll::from_registers(0b110 << 5 | 0x14, 0xD1, 0x50, 0x9A),
+            None
+        );
     }
 
     /// Findings steps 4c and 14: 0 and 63 are the range's ends, 64-127
@@ -482,7 +687,10 @@ mod tests {
         assert!(!r2_says_locked(63));
         assert!(!r2_says_locked(0x80 | 63));
         assert!(!r2_says_locked(1));
-        for v in [64u8, 65, 66, 67, 68, 69, 70, 77, 83, 87, 91, 93, 95, 103, 108, 112, 116, 120, 122, 125, 127] {
+        for v in [
+            64u8, 65, 66, 67, 68, 69, 70, 77, 83, 87, 91, 93, 95, 103, 108, 112, 116, 120, 122,
+            125, 127,
+        ] {
             assert!(r2_says_locked(v), "{v}");
             assert!(r2_says_locked(0x80 | v), "{v} with bit 7");
         }

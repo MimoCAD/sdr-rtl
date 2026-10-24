@@ -9,7 +9,7 @@
 //! IIC_repeat (Table 3, or the "7th bit" of Note2 under Table 27). They are
 //! applied cumulatively from a fresh power-on, then removed one at a time.
 
-use crate::json::{J, hex8, hex16, hex_bytes};
+use crate::json::{J, hex_bytes, hex8, hex16};
 use crate::regs::*;
 use crate::usb::{self, Rtl};
 
@@ -29,8 +29,14 @@ enum Prep {
     RepeatBit6,
 }
 
-const ORDER: [Prep; 6] =
-    [Prep::DemodPll, Prep::DemodResetRelease, Prep::DemodAdcs, Prep::I2cFd10, Prep::TunerPower, Prep::RepeatBit3];
+const ORDER: [Prep; 6] = [
+    Prep::DemodPll,
+    Prep::DemodResetRelease,
+    Prep::DemodAdcs,
+    Prep::I2cFd10,
+    Prep::TunerPower,
+    Prep::RepeatBit3,
+];
 
 fn apply(rtl: &Rtl, p: Prep) -> J {
     let rec = J::obj().with("prep", format!("{p:?}"));
@@ -46,14 +52,20 @@ fn apply(rtl: &Rtl, p: Prep) -> J {
                 let old = rtl.sys_read8(DEMOD_CTL).map_err(e)?;
                 rtl.sys_write8(DEMOD_CTL, old | bits).map_err(e)?;
                 let back = rtl.sys_read8(DEMOD_CTL).map_err(e)?;
-                Ok(J::obj().with("register", "DEMOD_CTL").with("before", hex8(old)).with("after", hex8(back)))
+                Ok(J::obj()
+                    .with("register", "DEMOD_CTL")
+                    .with("before", hex8(old))
+                    .with("after", hex8(back)))
             }
             Prep::I2cFd10 => {
                 let old = rtl.sys_read(I2CCR, 1).map_err(e)?[0];
                 let new = (old & !(I2CCR_FD10_MASK as u8)) | I2CCR_RESET as u8;
                 rtl.sys_write8(I2CCR, new).map_err(e)?;
                 let back = rtl.sys_read8(I2CCR).map_err(e)?;
-                Ok(J::obj().with("register", "I2CCR").with("before", hex8(old)).with("after", hex8(back)))
+                Ok(J::obj()
+                    .with("register", "I2CCR")
+                    .with("before", hex8(old))
+                    .with("after", hex8(back)))
             }
             Prep::TunerPower => {
                 // GPD bit 3 = 0 (output, Table 19), GPOE bit 3 = 1 (Table 18),
@@ -66,9 +78,24 @@ fn apply(rtl: &Rtl, p: Prep) -> J {
                 rtl.sys_write8(GPO, gpo & !GPIO_TUNER_POWER).map_err(e)?;
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 Ok(J::obj()
-                    .with("GPD", J::obj().with("before", hex8(gpd)).with("after", rtl.sys_read8(GPD).ok().map(hex8)))
-                    .with("GPOE", J::obj().with("before", hex8(gpoe)).with("after", rtl.sys_read8(GPOE).ok().map(hex8)))
-                    .with("GPO", J::obj().with("before", hex8(gpo)).with("after", rtl.sys_read8(GPO).ok().map(hex8))))
+                    .with(
+                        "GPD",
+                        J::obj()
+                            .with("before", hex8(gpd))
+                            .with("after", rtl.sys_read8(GPD).ok().map(hex8)),
+                    )
+                    .with(
+                        "GPOE",
+                        J::obj()
+                            .with("before", hex8(gpoe))
+                            .with("after", rtl.sys_read8(GPOE).ok().map(hex8)),
+                    )
+                    .with(
+                        "GPO",
+                        J::obj()
+                            .with("before", hex8(gpo))
+                            .with("after", rtl.sys_read8(GPO).ok().map(hex8)),
+                    ))
             }
             Prep::RepeatBit3 | Prep::RepeatBit7 | Prep::RepeatBit6 => {
                 let bit = match p {
@@ -76,8 +103,13 @@ fn apply(rtl: &Rtl, p: Prep) -> J {
                     Prep::RepeatBit7 => IIC_REPEAT_BIT_NOTE2,
                     _ => IIC_REPEAT_BIT_NOTE2_FROM1,
                 };
-                let (old, back) = rtl.demod_rmw(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, bit, bit).map_err(e)?;
-                Ok(J::obj().with("register", "page 1 0x01").with("before", hex8(old)).with("after", hex8(back)))
+                let (old, back) = rtl
+                    .demod_rmw(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, bit, bit)
+                    .map_err(e)?;
+                Ok(J::obj()
+                    .with("register", "page 1 0x01")
+                    .with("before", hex8(old))
+                    .with("after", hex8(back)))
             }
         }
     })();
@@ -119,7 +151,10 @@ fn probe(rtl: &Rtl) -> (J, Option<u16>) {
                     .with("wValue", hex16(v))
                     .with("len", len)
                     .with("read_raw", raw)
-                    .with("first_byte_bit_reversed", first.map(|b| hex8(b.reverse_bits())))
+                    .with(
+                        "first_byte_bit_reversed",
+                        first.map(|b| hex8(b.reverse_bits())),
+                    )
                     .with("r0_check_0x96", ok),
             );
         }
@@ -139,7 +174,10 @@ fn address_sweep(rtl: &Rtl) -> (J, Vec<u8>) {
     for addr7 in 0..0x80u8 {
         let mut forms = J::Arr(Vec::new());
         let mut any = false;
-        for (name, v) in [("addr<<1", (addr7 as u16) << 1), ("addr<<1|1", (addr7 as u16) << 1 | 1)] {
+        for (name, v) in [
+            ("addr<<1", (addr7 as u16) << 1),
+            ("addr<<1|1", (addr7 as u16) << 1 | 1),
+        ] {
             let redact = eeprom_addressed(v);
             let show = |b: &[u8]| if redact { J::from("RR") } else { hex_bytes(b) };
             let r1 = rtl.tuner_get(v, 1);
@@ -153,10 +191,13 @@ fn address_sweep(rtl: &Rtl) -> (J, Vec<u8>) {
                         f.set("r0_check_0x96", b[0].reverse_bits() == TUNER_R0_CHECK);
                     }
                     let r5 = rtl.tuner_get(v, 5);
-                    f.set("read5", match &r5 {
-                        Ok(b) => show(b),
-                        Err(e) => J::from(format!("error: {e}")),
-                    });
+                    f.set(
+                        "read5",
+                        match &r5 {
+                            Ok(b) => show(b),
+                            Err(e) => J::from(format!("error: {e}")),
+                        },
+                    );
                 }
                 Err(e) => {
                     f.set("read1", format!("error: {e}"));
@@ -167,7 +208,12 @@ fn address_sweep(rtl: &Rtl) -> (J, Vec<u8>) {
         if any {
             answered.push(addr7);
         }
-        out.push(J::obj().with("address_7bit", hex8(addr7)).with("answered", any).with("forms", forms));
+        out.push(
+            J::obj()
+                .with("address_7bit", hex8(addr7))
+                .with("answered", any)
+                .with("forms", forms),
+        );
     }
     (out, answered)
 }
@@ -179,7 +225,10 @@ fn fresh() -> Result<(Rtl, J), String> {
 
 pub fn run() -> Result<(), String> {
     usb::guard()?;
-    let mut rec = crate::header("2", "tuner access: register 0 read through the RTL2832U's I2C repeater");
+    let mut rec = crate::header(
+        "2",
+        "tuner access: register 0 read through the RTL2832U's I2C repeater",
+    );
     rec.set(
         "candidate_space",
         J::obj()
@@ -188,20 +237,32 @@ pub fn run() -> Result<(), String> {
             .with("read_wvalues", J::Arr(READ_WVALUES.iter().map(|v| hex16(*v)).collect()))
             .with("read_lengths", "1, 5"),
     );
-    rec.set("oracle", "first byte read, bit-reversed, equals 0x96 ([R820T] p. 17)");
+    rec.set(
+        "oracle",
+        "first byte read, bit-reversed, equals 0x96 ([R820T] p. 17)",
+    );
 
     // Phase 1: cumulative from power-on.
     let (rtl, cyc) = fresh()?;
     let mut cumulative = J::Arr(Vec::new());
     let (p0, h0) = probe(&rtl);
-    cumulative.push(J::obj().with("applied", J::Arr(vec![])).with("probe", p0).with("hit", h0.map(hex16)));
+    cumulative.push(
+        J::obj()
+            .with("applied", J::Arr(vec![]))
+            .with("probe", p0)
+            .with("hit", h0.map(hex16)),
+    );
     let mut applied = Vec::new();
     for p in ORDER {
         let a = apply(&rtl, p);
         applied.push(J::from(format!("{p:?}")));
         let (pr, h) = probe(&rtl);
         cumulative.push(
-            J::obj().with("applied", J::Arr(applied.clone())).with("this_step", a).with("probe", pr).with("hit", h.map(hex16)),
+            J::obj()
+                .with("applied", J::Arr(applied.clone()))
+                .with("this_step", a)
+                .with("probe", pr)
+                .with("hit", h.map(hex16)),
         );
     }
     rec.set("power_cycle", cyc);
@@ -210,7 +271,10 @@ pub fn run() -> Result<(), String> {
 
     // Every 7-bit address with the full preparation (repeater open).
     let (sweep_open, answered_open) = address_sweep(&rtl);
-    println!("address sweep, repeater open: answered {:02X?}", answered_open);
+    println!(
+        "address sweep, repeater open: answered {:02X?}",
+        answered_open
+    );
     rec.set(
         "address_sweep_repeater_open",
         J::obj()
@@ -224,24 +288,51 @@ pub fn run() -> Result<(), String> {
     let mut writes = J::Arr(Vec::new());
     let tv = ((TUNER_R19 as u16) << 8) | TUNER_I2C_WRITE as u16;
     let r = rtl.tuner_set(tv, &[TUNER_R19_FIXED]);
-    writes.push(J::obj().with("form", "Table 27: wValue (19<<8)|0x34, data [0x00]").with("wValue", hex16(tv)).with("result", r.err().map(|e| e.to_string())));
+    writes.push(
+        J::obj()
+            .with("form", "Table 27: wValue (19<<8)|0x34, data [0x00]")
+            .with("wValue", hex16(tv))
+            .with("result", r.err().map(|e| e.to_string())),
+    );
     let r = rtl.tuner_set(0, &[TUNER_R19, TUNER_R19_FIXED]);
-    writes.push(J::obj().with("form", "Table 28 note: wValue 0, data [19, 0x00]").with("wValue", hex16(0)).with("result", r.err().map(|e| e.to_string())));
+    writes.push(
+        J::obj()
+            .with("form", "Table 28 note: wValue 0, data [19, 0x00]")
+            .with("wValue", hex16(0))
+            .with("result", r.err().map(|e| e.to_string())),
+    );
     // The same writes with the repeater closed: a NAK would show as an error.
-    let closed = rtl.demod_rmw(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT_TABLE3, 0).map(|(a, b)| (hex8(a), hex8(b)));
+    let closed = rtl
+        .demod_rmw(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT_TABLE3, 0)
+        .map(|(a, b)| (hex8(a), hex8(b)));
     let r = rtl.tuner_set(tv, &[TUNER_R19_FIXED]);
-    writes.push(J::obj().with("form", "Table 27 form, repeater bit 3 cleared").with("repeater_clear", format!("{closed:?}")).with("result", r.err().map(|e| e.to_string())));
+    writes.push(
+        J::obj()
+            .with("form", "Table 27 form, repeater bit 3 cleared")
+            .with("repeater_clear", format!("{closed:?}"))
+            .with("result", r.err().map(|e| e.to_string())),
+    );
     let (pc, hc) = probe(&rtl);
-    writes.push(J::obj().with("read_probe_with_repeater_cleared", pc).with("hit", hc.map(hex16)));
+    writes.push(
+        J::obj()
+            .with("read_probe_with_repeater_cleared", pc)
+            .with("hit", hc.map(hex16)),
+    );
     rec.set("write_path", writes);
     // Control: the same sweep with the repeater bit cleared, so devices on
     // the host bus are told apart from devices behind the repeater.
     let (sweep_closed, answered_closed) = address_sweep(&rtl);
-    println!("address sweep, repeater cleared: answered {:02X?}", answered_closed);
+    println!(
+        "address sweep, repeater cleared: answered {:02X?}",
+        answered_closed
+    );
     rec.set(
         "address_sweep_repeater_cleared",
         J::obj()
-            .with("answered_7bit", J::Arr(answered_closed.iter().map(|a| hex8(*a)).collect()))
+            .with(
+                "answered_7bit",
+                J::Arr(answered_closed.iter().map(|a| hex8(*a)).collect()),
+            )
             .with("results", sweep_closed),
     );
     drop(rtl);
@@ -276,11 +367,21 @@ pub fn run() -> Result<(), String> {
     ] {
         let (rtl, _) = fresh()?;
         let mut steps = J::Arr(Vec::new());
-        for p in ORDER.into_iter().filter(|p| *p != Prep::RepeatBit3).chain(reps) {
+        for p in ORDER
+            .into_iter()
+            .filter(|p| *p != Prep::RepeatBit3)
+            .chain(reps)
+        {
             steps.push(apply(&rtl, p));
         }
         let (pr, h) = probe(&rtl);
-        variants.push(J::obj().with("repeater", name).with("steps", steps).with("probe", pr).with("hit", h.map(hex16)));
+        variants.push(
+            J::obj()
+                .with("repeater", name)
+                .with("steps", steps)
+                .with("probe", pr)
+                .with("hit", h.map(hex16)),
+        );
     }
     rec.set("repeater_variants", variants);
     crate::write_record("step2-tuner-access.json", &rec);

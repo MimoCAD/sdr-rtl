@@ -25,7 +25,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::json::{J, hex8, hex_bytes};
+use crate::json::{J, hex_bytes, hex8};
 use crate::source::{self, Level, Source};
 use crate::tuner;
 use crate::usb::Rtl;
@@ -59,7 +59,11 @@ pub struct Snapshot {
 pub fn signed(v: u32, bits: u32) -> i32 {
     let m = 1u32 << bits;
     let v = v & (m - 1);
-    if v >= m / 2 { v as i32 - m as i32 } else { v as i32 }
+    if v >= m / 2 {
+        v as i32 - m as i32
+    } else {
+        v as i32
+    }
 }
 
 /// A 14-bit two's-complement AGC value from its two bytes in a given order.
@@ -69,7 +73,10 @@ pub fn agc14(lsb: u8, msb: u8) -> i32 {
 
 impl Snapshot {
     pub fn read(rtl: &Rtl, start: Instant, page3: bool, p3_off: Option<u8>) -> Snapshot {
-        let mut s = Snapshot { t_ms: start.elapsed().as_secs_f64() * 1e3, ..Snapshot::default() };
+        let mut s = Snapshot {
+            t_ms: start.elapsed().as_secs_f64() * 1e3,
+            ..Snapshot::default()
+        };
         let mut rd = |page: u8, off: u8, len: u16, name: &str| -> Option<Vec<u8>> {
             match rtl.demod_read(page, off, len) {
                 Ok(v) => Some(v),
@@ -144,11 +151,17 @@ impl Snapshot {
         j.set("aagc_lock_byte", self.lock.map(hex8));
         if let Some(b) = self.sfreq {
             j.set("sfreq_off_bytes", hex_bytes(&b));
-            j.set("sfreq_off_msb_first", signed((b[0] as u32) << 8 | b[1] as u32, 14));
+            j.set(
+                "sfreq_off_msb_first",
+                signed((b[0] as u32) << 8 | b[1] as u32, 14),
+            );
         }
         if let Some(b) = self.cfreq {
             j.set("cfreq_off_bytes", hex_bytes(&b));
-            j.set("cfreq_off_msb_first", signed((b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32, 18));
+            j.set(
+                "cfreq_off_msb_first",
+                signed((b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32, 18),
+            );
         }
         if let Some(b) = self.inc {
             j.set("inc_det_cnt", (b[0] as u32 & 1) << 8 | b[1] as u32);
@@ -162,13 +175,19 @@ impl Snapshot {
             j.set("tuner", tuner::status_record(&t));
         }
         if let Some((o, v)) = self.p3_byte {
-            j.set("p3_meter_byte", J::obj().with("offset", hex8(o)).with("value", v));
+            j.set(
+                "p3_meter_byte",
+                J::obj().with("offset", hex8(o)).with("value", v),
+            );
         }
         if let Some(p) = &self.page3 {
             j.set("page3", hex_bytes(p));
         }
         if !self.errors.is_empty() {
-            j.set("errors", J::Arr(self.errors.iter().map(|e| J::from(e.as_str())).collect()));
+            j.set(
+                "errors",
+                J::Arr(self.errors.iter().map(|e| J::from(e.as_str())).collect()),
+            );
         }
         j
     }
@@ -179,14 +198,25 @@ impl Snapshot {
     pub fn compact(&self) -> J {
         let mut j = J::obj();
         j.set("d", self.dagc);
-        j.set("a", self.agc.map(|a| J::Arr(a.iter().map(|b| J::from(*b)).collect())));
+        j.set(
+            "a",
+            self.agc
+                .map(|a| J::Arr(a.iter().map(|b| J::from(*b)).collect())),
+        );
         j.set("l", self.lock);
-        j.set("t", self.tuner.map(|t| J::Arr(t.iter().map(|b| J::from(*b)).collect())));
+        j.set(
+            "t",
+            self.tuner
+                .map(|t| J::Arr(t.iter().map(|b| J::from(*b)).collect())),
+        );
         if let Some((_, v)) = self.p3_byte {
             j.set("p", v);
         }
         if !self.errors.is_empty() {
-            j.set("e", J::Arr(self.errors.iter().map(|e| J::from(e.as_str())).collect()));
+            j.set(
+                "e",
+                J::Arr(self.errors.iter().map(|e| J::from(e.as_str())).collect()),
+            );
         }
         j
     }
@@ -199,7 +229,13 @@ impl Snapshot {
             Meter::IfAgcMsbFirst => self.agc.map(|a| agc14(a[1], a[0]) as f64),
             Meter::RfAgcLsbFirst => self.agc.map(|a| agc14(a[2], a[3]) as f64),
             Meter::RfAgcMsbFirst => self.agc.map(|a| agc14(a[3], a[2]) as f64),
-            Meter::Tuner(i) => self.tuner.map(|t| if i == 2 { (t[2] & 0x7F) as f64 } else { t[i as usize] as f64 }),
+            Meter::Tuner(i) => self.tuner.map(|t| {
+                if i == 2 {
+                    (t[2] & 0x7F) as f64
+                } else {
+                    t[i as usize] as f64
+                }
+            }),
             Meter::Page3(_) => self.p3_byte.map(|(_, v)| v as f64),
         }
     }
@@ -238,15 +274,24 @@ impl Meter {
             return Ok(*m);
         }
         if let Some(h) = s.strip_prefix("p3:0x") {
-            return u8::from_str_radix(h, 16).map(Meter::Page3).map_err(|e| format!("{s}: {e}"));
+            return u8::from_str_radix(h, 16)
+                .map(Meter::Page3)
+                .map_err(|e| format!("{s}: {e}"));
         }
-        Err(format!("meter {s}: one of {} or p3:0xNN", ALL.iter().map(|(_, n)| *n).collect::<Vec<_>>().join(" | ")))
+        Err(format!(
+            "meter {s}: one of {} or p3:0xNN",
+            ALL.iter().map(|(_, n)| *n).collect::<Vec<_>>().join(" | ")
+        ))
     }
 
     pub fn name(self) -> String {
         match self {
             Meter::Page3(o) => format!("p3:0x{o:02X}"),
-            m => ALL.iter().find(|(x, _)| *x == m).map(|(_, n)| n.to_string()).unwrap_or_default(),
+            m => ALL
+                .iter()
+                .find(|(x, _)| *x == m)
+                .map(|(_, n)| n.to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -273,7 +318,12 @@ impl Spec {
     pub fn parse(args: &[String]) -> Result<Spec, String> {
         const USAGE: &str = "--meter NAME LO HI up|down (up = the reading rises with signal)";
         let meter = Meter::parse(args.first().ok_or(USAGE)?)?;
-        let num = |i: usize| -> Result<f64, String> { args.get(i).ok_or(USAGE)?.parse().map_err(|e| format!("{USAGE}: {e}")) };
+        let num = |i: usize| -> Result<f64, String> {
+            args.get(i)
+                .ok_or(USAGE)?
+                .parse()
+                .map_err(|e| format!("{USAGE}: {e}"))
+        };
         let lo = num(1)?;
         let hi = num(2)?;
         let rises = match args.get(3).map(String::as_str) {
@@ -284,11 +334,20 @@ impl Spec {
         if lo >= hi {
             return Err(format!("{USAGE}: LO must be below HI"));
         }
-        Ok(Spec { meter, lo, hi, rises_with_signal: rises })
+        Ok(Spec {
+            meter,
+            lo,
+            hi,
+            rises_with_signal: rises,
+        })
     }
 
     pub fn record(&self) -> J {
-        J::obj().with("meter", self.meter.name()).with("window_lo", self.lo).with("window_hi", self.hi).with("rises_with_signal", self.rises_with_signal)
+        J::obj()
+            .with("meter", self.meter.name())
+            .with("window_lo", self.lo)
+            .with("window_hi", self.hi)
+            .with("rises_with_signal", self.rises_with_signal)
     }
 }
 
@@ -304,7 +363,13 @@ impl Reading {
 
     /// `count` snapshots [`SNAPSHOT_GAP`] apart; the page-3 dump, if
     /// asked for, only in the first.
-    pub fn take_n(rtl: &Rtl, start: Instant, page3: bool, p3_off: Option<u8>, count: usize) -> Reading {
+    pub fn take_n(
+        rtl: &Rtl,
+        start: Instant,
+        page3: bool,
+        p3_off: Option<u8>,
+        count: usize,
+    ) -> Reading {
         let count = count.max(1);
         let mut snapshots = Vec::with_capacity(count);
         for n in 0..count {
@@ -367,26 +432,49 @@ pub const RELEVEL_TRIES: usize = 12;
 /// prompted it. Returns the final reading and the adjustments made; Err
 /// only if the source cannot be commanded. A source at its limit ends the
 /// loop with the reading as it is (recorded).
-pub fn relevel(src: &mut Source, rtl: &Rtl, start: Instant, spec: &Spec, hz: f64, level: &mut Level, page3: bool) -> Result<(Reading, J), String> {
+pub fn relevel(
+    src: &mut Source,
+    rtl: &Rtl,
+    start: Instant,
+    spec: &Spec,
+    hz: f64,
+    level: &mut Level,
+    page3: bool,
+) -> Result<(Reading, J), String> {
     let mut log = J::Arr(Vec::new());
     let p3 = spec.meter.page3_offset();
     let mut reading = Reading::take(rtl, start, page3, p3);
     for _ in 0..RELEVEL_TRIES {
         source::check()?;
         let Some(v) = reading.median(spec.meter) else {
-            log.push(J::obj().with("stop", "the meter could not be read").with("reading", reading.compact()));
+            log.push(
+                J::obj()
+                    .with("stop", "the meter could not be read")
+                    .with("reading", reading.compact()),
+            );
             break;
         };
         if v >= spec.lo && v <= spec.hi {
             break;
         }
         let too_much = (v > spec.hi) == spec.rises_with_signal;
-        let delta = if too_much { -RELEVEL_STEP_DB } else { RELEVEL_STEP_DB };
+        let delta = if too_much {
+            -RELEVEL_STEP_DB
+        } else {
+            RELEVEL_STEP_DB
+        };
         let before = *level;
         match level.step(delta) {
             Ok(knob) => {
                 let t = src.level(hz, *level)?;
-                log.push(J::obj().with("meter_value", v).with("source_before", before.tone(hz).record()).with("moved_db", delta).with("knob", knob).with("source", t));
+                log.push(
+                    J::obj()
+                        .with("meter_value", v)
+                        .with("source_before", before.tone(hz).record())
+                        .with("moved_db", delta)
+                        .with("knob", knob)
+                        .with("source", t),
+                );
             }
             Err(e) => {
                 log.push(J::obj().with("meter_value", v).with("stop", e));
@@ -419,8 +507,11 @@ mod tests {
         assert_eq!(Meter::parse("r3").unwrap(), Meter::Tuner(3));
         assert_eq!(Meter::parse("p3:0x5A").unwrap(), Meter::Page3(0x5A));
         assert!(Meter::parse("nope").is_err());
-        let s = Spec::parse(&["dagc_val".into(), "40".into(), "200".into(), "down".into()]).unwrap();
+        let s =
+            Spec::parse(&["dagc_val".into(), "40".into(), "200".into(), "down".into()]).unwrap();
         assert!(!s.rises_with_signal);
-        assert!(Spec::parse(&["dagc_val".into(), "200".into(), "40".into(), "down".into()]).is_err());
+        assert!(
+            Spec::parse(&["dagc_val".into(), "200".into(), "40".into(), "down".into()]).is_err()
+        );
     }
 }

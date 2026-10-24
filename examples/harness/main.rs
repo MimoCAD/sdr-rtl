@@ -80,6 +80,10 @@
 //!   tune HZ     one frequency: PLL words, status, readbacks off and on
 //!   gain-ladder LNA_GAIN, MIX_GAIN, VGA_CODE 0..=15, the meter re-levelled
 //!   band-table  a frequency grid x RFFILT x RFMUX x TF_NCH x TF_LP
+//!   path-settle the meter read back-to-back for 1 s after a path change,
+//!               every ordered pair of four paths, at four frequencies
+//!   band-paths  a frequency grid x every RFFILT x RFMUX at TF 0000/0000,
+//!               each path settled 300 ms and averaged over 700 ms
 //!   filter      FILT_CODE, FILT_BW, HPF: the tone stepped across the IF
 //!   if-choice   the DDC IF x Spec_inv x tone side: which readback finds it
 //!
@@ -169,7 +173,10 @@ pub fn version() -> J {
 }
 
 pub fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// A record header every data file starts with.
@@ -196,7 +203,12 @@ pub fn header_with_source(step: &str, what: &str) -> J {
 pub fn write_record(name: &str, rec: &J) {
     let path = data_dir().join(name);
     std::fs::write(&path, rec.render() + "\n").expect("write record");
-    println!("wrote {}", path.strip_prefix(env!("CARGO_MANIFEST_DIR")).unwrap_or(&path).display());
+    println!(
+        "wrote {}",
+        path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(&path)
+            .display()
+    );
 }
 
 fn main() {
@@ -236,12 +248,14 @@ fn main() {
         Some("tune") => step4::tune(&args[1..]),
         Some("gain-ladder") => step4::gain_ladder(&args[1..]),
         Some("band-table") => step4::band_table(&args[1..]),
+        Some("path-settle") => step4::path_settle(&args[1..]),
+        Some("band-paths") => step4::band_paths(&args[1..]),
         Some("filter") => step4::filter(&args[1..]),
         Some("if-choice") => step4::if_choice(&args[1..]),
         Some("rom-dump") => rom_dump::run(&args[1..]),
         Some("stream-confirm") => stream_confirm::run(&args[1..]),
         _ => Err(format!(
-            "usage: harness recovery | protocol | tuner | baseline | rom-dump [--probe ADDR:LEN...|--xdata-check] | scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] | confirm-write P O VALUE | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
+            "usage: harness recovery | protocol | tuner | baseline | rom-dump [--probe ADDR:LEN...|--xdata-check] | scan [--baseline zero-if|low-if|low-if-open|power-on] [--limit N] | confirm-write P O VALUE | confirm PAGE OFFSET BIT | bytescan [--restart] [--limit N] [--out PATH] [--from P OFF [VAL]] | blockscan --block sys|usb|p3|p4 [--limit N] [--out PATH] [--from OFF [VAL]] | restart-probe | detector-check | meter | pll-sweep | tune HZ | gain-ladder | band-table | path-settle | band-paths | filter | if-choice; any step: --no-cycle; step 4: --source-cmd \"<command line>\" and {}",
             step4::USAGE
         )),
     };

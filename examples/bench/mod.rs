@@ -53,7 +53,13 @@ impl Source {
             .map_err(|e| format!("spawn {cmd}: {e}"))?;
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
-        let mut s = Source { child, stdin, stdout, txvga, backoff };
+        let mut s = Source {
+            child,
+            stdin,
+            stdout,
+            txvga,
+            backoff,
+        };
         let ready = s.line()?;
         if !ready.starts_with("ready") {
             return Err(format!("source: {ready}"));
@@ -111,7 +117,18 @@ pub const ENUMERATE_DEADLINE: Duration = Duration::from_secs(5);
 /// The analyzer's TARGET A power (`cynthion-witness vbus on|off`).
 pub fn witness(arg: &str) -> Result<String, String> {
     let out = Command::new("cargo")
-        .args(["run", "--release", "--quiet", "--manifest-path", "tools/Cargo.toml", "--bin", "cynthion-witness", "--", "vbus", arg])
+        .args([
+            "run",
+            "--release",
+            "--quiet",
+            "--manifest-path",
+            "tools/Cargo.toml",
+            "--bin",
+            "cynthion-witness",
+            "--",
+            "vbus",
+            arg,
+        ])
         .current_dir(workspace_root())
         .output()
         .map_err(|e| e.to_string())?;
@@ -139,25 +156,47 @@ fn cycle_once(off_time: Duration) -> Result<(String, bool, u128), String> {
 
 /// The dongle power-cycled through the analyzer, back and enumerated;
 /// once more with the longer off time if the first leaves it absent.
+/// The dongle a bench program opens: `SDR_BENCH_RTL` (an `Rtl::open`
+/// spec, `serial=…` or an index) on a host with more than one, else the
+/// first.
+pub fn rtl_spec() -> String {
+    std::env::var("SDR_BENCH_RTL").unwrap_or_default()
+}
+
 pub fn power_cycle() -> Result<String, String> {
+    // `SDR_BENCH_NO_CYCLE=1`: a host without the analyzer (the Pi): the
+    // dongle is opened as found, not power-cycled.
+    if std::env::var_os("SDR_BENCH_NO_CYCLE").is_some() {
+        return Ok("no power cycle (SDR_BENCH_NO_CYCLE): the dongle as found".into());
+    }
     let (said, back, ms) = cycle_once(VBUS_OFF)?;
     let report = if back {
         format!("{said}; back after {ms} ms")
     } else {
         let (said2, back2, ms2) = cycle_once(VBUS_OFF_RETRY)?;
         if !back2 {
-            return Err(format!("the dongle did not return within {ENUMERATE_DEADLINE:?}, twice ({said}; {said2})"));
+            return Err(format!(
+                "the dongle did not return within {ENUMERATE_DEADLINE:?}, twice ({said}; {said2})"
+            ));
         }
-        format!("{said}; absent after {ms} ms; retried with {VBUS_OFF_RETRY:?} off: {said2}; back after {ms2} ms")
+        format!(
+            "{said}; absent after {ms} ms; retried with {VBUS_OFF_RETRY:?} off: {said2}; back after {ms2} ms"
+        )
     };
     // Let enumeration finish before the first request.
     std::thread::sleep(Duration::from_millis(500));
     Ok(report)
 }
 
-/// rtl → crates → the workspace.
+/// rtl → crates → the workspace; on a host the program was copied to (the
+/// build's path is not there), the current directory.
 pub fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    let built = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if built.is_dir() {
+        built
+    } else {
+        PathBuf::from(".")
+    }
 }
 
 /// Received samples and what the engine flagged while they came.
@@ -172,17 +211,30 @@ pub struct Capture {
 pub fn discard(s: &mut impl RxSource, buf: &mut [Iq], d: Duration) -> Result<(), String> {
     let t = Instant::now();
     while t.elapsed() < d {
-        s.recv_into(buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        s.recv_into(buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 /// At least `n` samples, or whatever arrives by `deadline`.
-pub fn capture(s: &mut impl RxSource, buf: &mut [Iq], n: usize, deadline: Duration) -> Result<Capture, String> {
-    let mut c = Capture { samples: Vec::with_capacity(n.min(FFT_N * SEGMENTS)), secs: 0.0, overflows: 0, timeouts: 0 };
+pub fn capture(
+    s: &mut impl RxSource,
+    buf: &mut [Iq],
+    n: usize,
+    deadline: Duration,
+) -> Result<Capture, String> {
+    let mut c = Capture {
+        samples: Vec::with_capacity(n.min(FFT_N * SEGMENTS)),
+        secs: 0.0,
+        overflows: 0,
+        timeouts: 0,
+    };
     let t = Instant::now();
     while c.samples.len() < n && t.elapsed() < deadline {
-        let info = s.recv_into(buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         c.overflows += info.overflow as usize;
         c.timeouts += info.timed_out as usize;
         c.samples.extend_from_slice(&buf[..info.n_samples]);
@@ -242,7 +294,9 @@ pub fn spectrum(x: &[Iq]) -> Option<Vec<f64>> {
     if segs == 0 {
         return None;
     }
-    let win: Vec<f64> = (0..FFT_N).map(|k| 0.5 - 0.5 * (TAU * k as f64 / FFT_N as f64).cos()).collect();
+    let win: Vec<f64> = (0..FFT_N)
+        .map(|k| 0.5 - 0.5 * (TAU * k as f64 / FFT_N as f64).cos())
+        .collect();
     let coherent = FULL_SCALE * win.iter().sum::<f64>();
     let scale = 1.0 / (coherent * coherent * segs as f64);
     let mut p = vec![0.0; FFT_N];
@@ -250,8 +304,16 @@ pub fn spectrum(x: &[Iq]) -> Option<Vec<f64>> {
         let seg = &x[s * FFT_N..(s + 1) * FFT_N];
         let mi = seg.iter().map(|v| v.i as f64).sum::<f64>() / FFT_N as f64;
         let mq = seg.iter().map(|v| v.q as f64).sum::<f64>() / FFT_N as f64;
-        let mut re: Vec<f64> = seg.iter().zip(&win).map(|(v, w)| (v.i as f64 - mi) * w).collect();
-        let mut im: Vec<f64> = seg.iter().zip(&win).map(|(v, w)| (v.q as f64 - mq) * w).collect();
+        let mut re: Vec<f64> = seg
+            .iter()
+            .zip(&win)
+            .map(|(v, w)| (v.i as f64 - mi) * w)
+            .collect();
+        let mut im: Vec<f64> = seg
+            .iter()
+            .zip(&win)
+            .map(|(v, w)| (v.q as f64 - mq) * w)
+            .collect();
         fft(&mut re, &mut im);
         for k in 0..FFT_N {
             p[k] += (re[k] * re[k] + im[k] * im[k]) * scale;
@@ -269,7 +331,11 @@ pub fn is_dc(k: usize) -> bool {
 }
 
 pub fn signed_bin(k: usize) -> f64 {
-    if k < FFT_N / 2 { k as f64 } else { k as f64 - FFT_N as f64 }
+    if k < FFT_N / 2 {
+        k as f64
+    } else {
+        k as f64 - FFT_N as f64
+    }
 }
 
 /// The bin a frequency falls in at `rate` (aliased into the output).
@@ -286,14 +352,21 @@ pub fn median(p: &[f64]) -> f64 {
 
 /// The strongest bin within ± `tol` bins of `k`.
 pub fn near(p: &[f64], k: usize, tol: usize) -> usize {
-    (0..=2 * tol).map(|d| (k + FFT_N + d - tol) % FFT_N).max_by(|a, b| p[*a].total_cmp(&p[*b])).unwrap_or(k)
+    (0..=2 * tol)
+        .map(|d| (k + FFT_N + d - tol) % FFT_N)
+        .max_by(|a, b| p[*a].total_cmp(&p[*b]))
+        .unwrap_or(k)
 }
 
 /// A peak's frequency by parabolic interpolation in log power.
 pub fn peak_hz(p: &[f64], k: usize, rate: f64) -> f64 {
     let l = |k: usize| p[k % FFT_N].max(f64::MIN_POSITIVE).ln();
     let (a, b, c) = (l(k + FFT_N - 1), l(k), l(k + 1));
-    let frac = if a - 2.0 * b + c != 0.0 { 0.5 * (a - c) / (a - 2.0 * b + c) } else { 0.0 };
+    let frac = if a - 2.0 * b + c != 0.0 {
+        0.5 * (a - c) / (a - 2.0 * b + c)
+    } else {
+        0.0
+    };
     (signed_bin(k) + frac) / FFT_N as f64 * rate
 }
 

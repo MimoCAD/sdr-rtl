@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::TuneRequest;
-use sdr_core::gain::Stage;
 use sdr_rtl::OPEN_RF_HZ;
+use sdr_rtl::Stage;
 use sdr_rtl::blocking::{ReadHalf, Rtl, Stream};
 
 const READ_BYTES: usize = 4095;
@@ -28,20 +28,30 @@ const RETUNE_STEP_HZ: f64 = 100e3;
 
 fn run() -> Result<String, String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let get = |k: &str| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let rate: f64 = get("--rate").and_then(|v| v.parse().ok()).unwrap_or(2.4e6);
     let secs: f64 = get("--seconds").and_then(|v| v.parse().ok()).unwrap_or(5.0);
     let retunes: u32 = get("--retunes").and_then(|v| v.parse().ok()).unwrap_or(6);
     let out = get("--out");
 
     power_cycle()?;
-    let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
+    let mut rtl = Rtl::open(&rtl_spec()).map_err(|e| e.to_string())?;
     for (stage, code) in [(Stage::Lna, 8), (Stage::Mixer, 8), (Stage::Vga, 2)] {
-        rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
+        rtl.set_stage_level(stage, code)
+            .map_err(|e| e.to_string())?;
     }
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
-    rtl.set_freq(&TuneRequest::auto(OPEN_RF_HZ)).map_err(|e| e.to_string())?;
-    let (mut reader, control) = rtl.into_stream(0, 0).map_err(|e| e.error.to_string())?.split();
+    rtl.set_freq(&TuneRequest::auto(OPEN_RF_HZ))
+        .map_err(|e| e.to_string())?;
+    let (mut reader, control) = rtl
+        .into_stream(0, 0)
+        .map_err(|e| e.error.to_string())?
+        .split();
 
     let t = Instant::now();
     let reading = std::thread::spawn(move || -> Result<(ReadHalf, u64), String> {
@@ -65,12 +75,17 @@ fn run() -> Result<String, String> {
             std::thread::sleep(wait);
         }
         let rf = OPEN_RF_HZ + RETUNE_STEP_HZ * ((k + 1) % 2) as f64;
-        control.retune(&TuneRequest::auto(rf)).map_err(|e| e.to_string())?;
+        control
+            .retune(&TuneRequest::auto(rf))
+            .map_err(|e| e.to_string())?;
     }
-    let (reader, bytes) = reading.join().map_err(|_| "the reading thread panicked".to_string())??;
+    let (reader, bytes) = reading
+        .join()
+        .map_err(|_| "the reading thread panicked".to_string())??;
     let elapsed = t.elapsed().as_secs_f64();
     let breaks = control.breaks();
-    let stream = Stream::reunite(reader, control).map_err(|_| "the halves did not reunite".to_string())?;
+    let stream =
+        Stream::reunite(reader, control).map_err(|_| "the halves did not reunite".to_string())?;
     let fin = stream.finish().map_err(|e| e.to_string())?;
     let r = &fin.report;
     power_cycle()?;
@@ -84,8 +99,14 @@ fn run() -> Result<String, String> {
         r.stall_retries,
         breaks.len(),
         breaks.iter().map(|b| b.at_sample).collect::<Vec<_>>(),
-        breaks.iter().map(|b| b.dropped_before.blocks).collect::<Vec<_>>(),
-        breaks.iter().map(|b| (b.quiet.as_secs_f64() * 1e3).round() as u64).collect::<Vec<_>>()
+        breaks
+            .iter()
+            .map(|b| b.dropped_before.blocks)
+            .collect::<Vec<_>>(),
+        breaks
+            .iter()
+            .map(|b| (b.quiet.as_secs_f64() * 1e3).round() as u64)
+            .collect::<Vec<_>>()
     ))
 }
 

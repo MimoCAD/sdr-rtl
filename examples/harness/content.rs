@@ -71,17 +71,37 @@ impl Content {
             hist[*b as usize] += 1;
         }
         let n = data.len().max(1) as f64;
-        let entropy_bits = -hist.iter().filter(|c| **c > 0).map(|c| *c as f64 / n).map(|p| p * p.log2()).sum::<f64>();
-        let mut c = Content { bytes: data.len(), secs, period_score, entropy_bits, mean_u: [0.0; 2], var_u: [0.0; 2], mean_s: [0.0; 2], var_s: [0.0; 2] };
+        let entropy_bits = -hist
+            .iter()
+            .filter(|c| **c > 0)
+            .map(|c| *c as f64 / n)
+            .map(|p| p * p.log2())
+            .sum::<f64>();
+        let mut c = Content {
+            bytes: data.len(),
+            secs,
+            period_score,
+            entropy_bits,
+            mean_u: [0.0; 2],
+            var_u: [0.0; 2],
+            mean_s: [0.0; 2],
+            var_s: [0.0; 2],
+        };
         for ph in 0..2 {
-            (c.mean_u[ph], c.var_u[ph]) = mean_var(data.iter().skip(ph).step_by(2).map(|b| *b as f64));
-            (c.mean_s[ph], c.var_s[ph]) = mean_var(data.iter().skip(ph).step_by(2).map(|b| *b as i8 as f64));
+            (c.mean_u[ph], c.var_u[ph]) =
+                mean_var(data.iter().skip(ph).step_by(2).map(|b| *b as f64));
+            (c.mean_s[ph], c.var_s[ph]) =
+                mean_var(data.iter().skip(ph).step_by(2).map(|b| *b as i8 as f64));
         }
         c
     }
 
     pub fn rate(&self) -> f64 {
-        if self.secs > 0.0 { self.bytes as f64 / self.secs } else { 0.0 }
+        if self.secs > 0.0 {
+            self.bytes as f64 / self.secs
+        } else {
+            0.0
+        }
     }
 
     /// Compact line form: [bytes/s, period score, entropy, mean_u I, Q,
@@ -126,12 +146,16 @@ impl Thresholds {
     /// From the held state's solo windows.
     pub fn from_solo(solo: &[Content], rate_hz: f64, targets: &[f64]) -> Thresholds {
         let min = |f: &dyn Fn(&Content) -> f64| solo.iter().map(f).fold(f64::INFINITY, f64::min);
-        let max = |f: &dyn Fn(&Content) -> f64| solo.iter().map(f).fold(f64::NEG_INFINITY, f64::max);
+        let max =
+            |f: &dyn Fn(&Content) -> f64| solo.iter().map(f).fold(f64::NEG_INFINITY, f64::max);
         let two = step3::expected_bytes_per_s(rate_hz);
         // A held state with no scorable window (no flow alone) judges a
         // candidate's bytes against the replay's own score, 1.0: anything
         // else that arrives is content.
-        let scored = solo.iter().filter_map(|c| c.period_score).fold(f64::INFINITY, f64::min);
+        let scored = solo
+            .iter()
+            .filter_map(|c| c.period_score)
+            .fold(f64::INFINITY, f64::min);
         let period_ref = if scored.is_finite() { scored } else { 1.0 };
         Thresholds {
             period_min: period_ref - PERIOD_MARGIN,
@@ -171,7 +195,11 @@ impl Thresholds {
     pub fn from_header(line: &str) -> Option<Thresholds> {
         let get = |k: &str| -> Option<f64> {
             let i = line.find(&format!("\"{k}\":"))? + k.len() + 3;
-            line[i..].split(|c: char| !(c.is_ascii_digit() || "+-.eE".contains(c))).next()?.parse().ok()
+            line[i..]
+                .split(|c: char| !(c.is_ascii_digit() || "+-.eE".contains(c)))
+                .next()?
+                .parse()
+                .ok()
         };
         Some(Thresholds {
             period_min: get("period_min")?,
@@ -186,7 +214,10 @@ impl Thresholds {
                 .find("\"rate_targets\":[")
                 .map(|i| {
                     let rest = &line[i + "\"rate_targets\":[".len()..];
-                    rest[..rest.find(']').unwrap_or(0)].split(',').filter_map(|s| s.trim().parse().ok()).collect()
+                    rest[..rest.find(']').unwrap_or(0)]
+                        .split(',')
+                        .filter_map(|s| s.trim().parse().ok())
+                        .collect()
                 })
                 .unwrap_or_default(),
         })
@@ -203,7 +234,11 @@ impl Thresholds {
         if r >= self.stream_lo && r <= self.stream_hi {
             why.push("rate toward 2 x sample rate");
         }
-        if self.targets.iter().any(|t| (r / t - 1.0).abs() <= TARGET_TOLERANCE) {
+        if self
+            .targets
+            .iter()
+            .any(|t| (r / t - 1.0).abs() <= TARGET_TOLERANCE)
+        {
             why.push("rate near a target");
         }
         if r < self.rate_lo || r > self.rate_hi {
@@ -234,11 +269,19 @@ mod tests {
             .collect();
         assert!(Content::of(&noise, 1.0).period_score.unwrap() < 0.02);
         let t = Thresholds::from_solo(&[Content::of(&replay, 0.1)], 2.4e6, &[4.096e6, 32.768e6]);
-        let back = Thresholds::from_header(&J::obj().with("detector_thresholds", t.record()).render()).unwrap();
-        assert!((back.period_min - t.period_min).abs() < 1e-12 && (back.stream_hi - t.stream_hi).abs() < 1e-6);
+        let back =
+            Thresholds::from_header(&J::obj().with("detector_thresholds", t.record()).render())
+                .unwrap();
+        assert!(
+            (back.period_min - t.period_min).abs() < 1e-12
+                && (back.stream_hi - t.stream_hi).abs() < 1e-6
+        );
         assert_eq!(back.targets, vec![4.096e6, 32.768e6]);
         assert_eq!(t.judge(&Content::of(&noise, 0.1)).0, vec!["period broken"]);
         // 32 x 3760 bytes in 0.004 s = 30.08 MB/s: within 20 % of 32.768 MB/s.
-        assert_eq!(t.judge(&Content::of(&replay[..PERIOD * 32], 0.004)).0, vec!["rate near a target"]);
+        assert_eq!(
+            t.judge(&Content::of(&replay[..PERIOD * 32], 0.004)).0,
+            vec!["rate near a target"]
+        );
     }
 }

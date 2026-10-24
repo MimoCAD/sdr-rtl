@@ -35,6 +35,8 @@ pub const READBACK_REGS: u8 = 16;
 pub const R5: u8 = 5;
 pub const R6: u8 = 6;
 pub const R7: u8 = 7;
+pub const R8: u8 = 8;
+pub const R9: u8 = 9;
 pub const R10: u8 = 10;
 pub const R11: u8 = 11;
 pub const R12: u8 = 12;
@@ -155,6 +157,8 @@ pub const FIXED: [(u8, u8, u8); 19] = [
 /// image-rejection calibration is an open search (findings step 4h:
 /// 10-20 dB uncalibrated).
 pub const IMR_MIDDLE: u8 = 32;
+/// IMR_G and IMR_P are six bits each ([R820T2] Table 1-3: R8[5:0], R9[5:0]).
+pub const IMR_FIELD: u8 = 0x3F;
 /// R13 / R14: LNA_VTH_H = MIX_VTH_H = 1010 (about 1.34 V), the low
 /// thresholds 0101 (about 0.84 V) — a window symmetric about the middle
 /// of the documented 0.34-1.94 V range (Table 1-3); used only in auto
@@ -183,6 +187,70 @@ pub const PDET_CLK_MIN: u8 = 0;
 /// above 0.1 MHz (findings step 4g, `tables::if_filter::HPF_EFFECT`),
 /// and the lowest corner passes the most of the IF band.
 pub const HPF_LOWEST: u8 = 0b1111;
+
+/// One point of a dongle's image-rejection calibration: at `rf_hz`, IMR_G
+/// `g` and IMR_P `p` (each 0..=63).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImrPoint {
+    pub rf_hz: f64,
+    pub g: u8,
+    pub p: u8,
+}
+
+/// The IMR_G / IMR_P a dongle's calibration gives at `rf_hz`: the nearest
+/// point's (ties to the lower frequency); [`IMR_MIDDLE`] for both when the
+/// table is empty. Findings 28: the best settings move smoothly with
+/// frequency and differ from unit to unit, so a table is measured per
+/// dongle; the nearest point is the measured value where one was taken.
+pub fn imr_for(table: &[ImrPoint], rf_hz: f64) -> (u8, u8) {
+    table
+        .iter()
+        .min_by(|a, b| {
+            (a.rf_hz - rf_hz)
+                .abs()
+                .total_cmp(&(b.rf_hz - rf_hz).abs())
+                .then(a.rf_hz.total_cmp(&b.rf_hz))
+        })
+        .map_or((IMR_MIDDLE, IMR_MIDDLE), |pt| (pt.g, pt.p))
+}
+
+/// A calibration as a spec carries it: `MHz:G:P` points joined by `+`
+/// (`805:7:33+420:33:0`). Every point's frequency a number of MHz, G and
+/// P whole numbers 0..=63; at least one point.
+pub fn parse_imr_table(s: &str) -> Result<Vec<ImrPoint>, String> {
+    let mut out = Vec::new();
+    for part in s.split('+') {
+        let f: Vec<&str> = part.split(':').collect();
+        let [mhz, g, p] = f.as_slice() else {
+            return Err(format!("imr point \"{part}\" is not MHz:G:P"));
+        };
+        let mhz: f64 = mhz
+            .trim()
+            .parse()
+            .map_err(|_| format!("imr point \"{part}\": {mhz} is not a frequency in MHz"))?;
+        let field = |v: &str, name: &str| -> Result<u8, String> {
+            v.trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|x| *x <= IMR_FIELD)
+                .ok_or_else(|| format!("imr point \"{part}\": {name} {v} is not 0..=63"))
+        };
+        if !mhz.is_finite() || mhz <= 0.0 {
+            return Err(format!(
+                "imr point \"{part}\": {mhz} MHz is not a frequency"
+            ));
+        }
+        out.push(ImrPoint {
+            rf_hz: mhz * 1e6,
+            g: field(g, "G")?,
+            p: field(p, "P")?,
+        });
+    }
+    if out.is_empty() {
+        return Err("imr= names no point".into());
+    }
+    Ok(out)
+}
 
 /// The fields the driver varies. Everything else in the image is a
 /// fixed cell or a constant choice above.
@@ -218,6 +286,12 @@ pub struct Front {
     /// (low-pass corner, 0000 highest).
     pub tf_nch: u8,
     pub tf_lp: u8,
+    /// R8 IMR_G [5:0] and R9 IMR_P [5:0]: the image-rejection gain and
+    /// phase. [`IMR_MIDDLE`] unless the dongle's own calibration says
+    /// otherwise (`Rtl::set_imr_table`; findings 28: the best settings
+    /// differ from unit to unit).
+    pub imr_g: u8,
+    pub imr_p: u8,
 }
 
 impl Front {
@@ -225,7 +299,7 @@ impl Front {
     /// three gain stages manual at code 8 (the middle of 0..=15), the
     /// detectors off, the IF filter at its widest codes, the tracking
     /// filter bypassed with band code 00 (the `BYPASS` path of
-    /// `tables::band`, which every band reading is relative to).
+    /// `tables::band_paths`, which every band reading is relative to).
     pub const BRING_UP: Front = Front {
         lna_manual: true,
         lna_gain: 8,
@@ -241,6 +315,8 @@ impl Front {
         rffilt: 0b00,
         tf_nch: 0,
         tf_lp: 0,
+        imr_g: IMR_MIDDLE,
+        imr_p: IMR_MIDDLE,
     };
 
     /// R5: loop-through off (PWD_LT = 1: the board has no loop-through
@@ -254,13 +330,26 @@ impl Front {
     /// (no extra filter gain), PW_LNA = 000 max current (the 3.5 dB noise
     /// figure is specified at max gain, [R820T] Table 1-2).
     pub fn r6(&self) -> u8 {
-        (if self.pdet1_on { 0 } else { PWD_PDET1 }) | (if self.pdet3_on { PWD_PDET3 } else { 0 }) | R6_FIXED
+        (if self.pdet1_on { 0 } else { PWD_PDET1 })
+            | (if self.pdet3_on { PWD_PDET3 } else { 0 })
+            | R6_FIXED
     }
 
     /// R7: mixer on (PWD_MIX = 1), PW0_MIX = 1 "normal current", the gain
     /// mode (0 manual) and code.
     pub fn r7(&self) -> u8 {
         PWD_MIX | PW0_MIX | if self.mix_manual { 0 } else { MIXGAIN_MODE } | (self.mix_gain & 0x0F)
+    }
+
+    /// R8: mixer buffer on, high current (PWD_AMP), IMR_G [5:0].
+    pub fn r8(&self) -> u8 {
+        PWD_AMP | (self.imr_g & IMR_FIELD)
+    }
+
+    /// R9: IF filter on (PWD_IFFILT = 0), high current (PW1_IFFILT = 0),
+    /// IMR_P [5:0].
+    pub fn r9(&self) -> u8 {
+        self.imr_p & IMR_FIELD
     }
 
     /// R10: channel filter on (PWD_FILT = 1), PW_FILT = 00 highest power,
@@ -281,7 +370,10 @@ impl Front {
 
     /// R26: RFMUX, the fixed bits, PLL_AUTO_CLK 128 kHz, RFFILT.
     pub fn r26(&self) -> u8 {
-        (self.rfmux & 0b11) << RFMUX_SHIFT | R26_FIXED | PLL_AUTO_CLK_128K << PLL_AUTO_CLK_SHIFT | (self.rffilt & 0b11)
+        (self.rfmux & 0b11) << RFMUX_SHIFT
+            | R26_FIXED
+            | PLL_AUTO_CLK_128K << PLL_AUTO_CLK_SHIFT
+            | (self.rffilt & 0b11)
     }
 
     /// R27: the tracking filter's notch and low-pass corner codes.
@@ -297,9 +389,9 @@ impl Front {
         r[6] = self.r6();
         r[7] = self.r7();
         // Mixer buffer on, high current (it drives the IF filter), IMR_G.
-        r[8] = PWD_AMP | IMR_MIDDLE;
+        r[8] = self.r8();
         // IF filter on (PWD_IFFILT = 0), high current (PW1_IFFILT = 0), IMR_P.
-        r[9] = IMR_MIDDLE;
+        r[9] = self.r9();
         r[10] = self.r10();
         r[11] = self.r11();
         r[12] = self.r12();
@@ -336,14 +428,19 @@ pub fn fixed_violations(img: &[u8; 32]) -> Vec<String> {
     FIXED
         .iter()
         .filter(|&&(reg, mask, value)| img[reg as usize] & mask != value)
-        .map(|&(reg, mask, value)| format!("R{reg}: 0x{:02X} & 0x{mask:02X} != 0x{value:02X}", img[reg as usize]))
+        .map(|&(reg, mask, value)| {
+            format!(
+                "R{reg}: 0x{:02X} & 0x{mask:02X} != 0x{value:02X}",
+                img[reg as usize]
+            )
+        })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tables::band::IF_HZ;
+    use crate::tables::band_paths::IF_HZ;
     use crate::tables::tuner_image::TUNER_IMAGE;
 
     /// The builder reproduces the bench's recorded image byte for byte:
@@ -352,7 +449,10 @@ mod tests {
     #[test]
     fn builder_reproduces_the_recorded_image() {
         let pll = Pll::with_divider(300e6 + IF_HZ, 0b010).unwrap();
-        let front = Front { vga_from_pin: true, ..Front::BRING_UP };
+        let front = Front {
+            vga_from_pin: true,
+            ..Front::BRING_UP
+        };
         let img = front.image(&pll);
         for choice in TUNER_IMAGE {
             assert_eq!(
@@ -378,7 +478,12 @@ mod tests {
     fn manual_image_matches_the_clkout_check_readback() {
         let pll = Pll::with_divider(300e6 + IF_HZ, 0b010).unwrap();
         let img = Front::BRING_UP.image(&pll);
-        assert_eq!(&img[5..16], &[0x98, 0x90, 0x68, 0xA0, 0x20, 0x90, 0x0F, 0xE8, 0xA5, 0xA5, 0x28]);
+        assert_eq!(
+            &img[5..16],
+            &[
+                0x98, 0x90, 0x68, 0xA0, 0x20, 0x90, 0x0F, 0xE8, 0xA5, 0xA5, 0x28
+            ]
+        );
     }
 
     #[test]
@@ -386,15 +491,48 @@ mod tests {
         let pll = Pll::with_divider(300e6 + IF_HZ, 0b010).unwrap();
         let fronts = [
             Front::BRING_UP,
-            Front { lna_manual: false, mix_manual: false, pdet1_on: true, pdet3_on: true, ..Front::BRING_UP },
-            Front { vga_from_pin: true, filt_code: 15, filt_bw: 3, rfmux: 0, rffilt: 2, tf_nch: 15, tf_lp: 15, ..Front::BRING_UP },
-            Front { lna_gain: 15, mix_gain: 15, vga_code: 15, ..Front::BRING_UP },
-            Front { lna_gain: 0, mix_gain: 0, vga_code: 0, ..Front::BRING_UP },
+            Front {
+                lna_manual: false,
+                mix_manual: false,
+                pdet1_on: true,
+                pdet3_on: true,
+                ..Front::BRING_UP
+            },
+            Front {
+                vga_from_pin: true,
+                filt_code: 15,
+                filt_bw: 3,
+                rfmux: 0,
+                rffilt: 2,
+                tf_nch: 15,
+                tf_lp: 15,
+                ..Front::BRING_UP
+            },
+            Front {
+                lna_gain: 15,
+                mix_gain: 15,
+                vga_code: 15,
+                ..Front::BRING_UP
+            },
+            Front {
+                lna_gain: 0,
+                mix_gain: 0,
+                vga_code: 0,
+                ..Front::BRING_UP
+            },
         ];
         for f in fronts {
             let img = f.image(&pll);
-            assert!(fixed_violations(&img).is_empty(), "{:?}", fixed_violations(&img));
-            assert_eq!(img[R15 as usize] & CLK_OUT_ENB, 0, "the clock output must stay on (step 4a)");
+            assert!(
+                fixed_violations(&img).is_empty(),
+                "{:?}",
+                fixed_violations(&img)
+            );
+            assert_eq!(
+                img[R15 as usize] & CLK_OUT_ENB,
+                0,
+                "the clock output must stay on (step 4a)"
+            );
             assert_eq!(img[R15 as usize] & CLK_AGC_ENB, 0);
         }
     }
@@ -403,13 +541,31 @@ mod tests {
     /// manual, mixer 0 = manual; VGA_MODE 1 = pin.
     #[test]
     fn gain_mode_bits_follow_table_1_3() {
-        let auto = Front { lna_manual: false, mix_manual: false, pdet1_on: true, pdet3_on: true, ..Front::BRING_UP };
+        let auto = Front {
+            lna_manual: false,
+            mix_manual: false,
+            pdet1_on: true,
+            pdet3_on: true,
+            ..Front::BRING_UP
+        };
         assert_eq!(Front::BRING_UP.r5() & LNA_GAIN_MODE, LNA_GAIN_MODE);
         assert_eq!(auto.r5() & LNA_GAIN_MODE, 0);
         assert_eq!(Front::BRING_UP.r7() & MIXGAIN_MODE, 0);
         assert_eq!(auto.r7() & MIXGAIN_MODE, MIXGAIN_MODE);
-        assert_eq!(auto.r6() & (PWD_PDET1 | PWD_PDET3), PWD_PDET3, "PDET1 on = 0, PDET3 on = 1");
+        assert_eq!(
+            auto.r6() & (PWD_PDET1 | PWD_PDET3),
+            PWD_PDET3,
+            "PDET1 on = 0, PDET3 on = 1"
+        );
         assert_eq!(Front::BRING_UP.r6() & (PWD_PDET1 | PWD_PDET3), PWD_PDET1);
-        assert_eq!(Front { vga_from_pin: true, ..Front::BRING_UP }.r12() & VGA_MODE, VGA_MODE);
+        assert_eq!(
+            Front {
+                vga_from_pin: true,
+                ..Front::BRING_UP
+            }
+            .r12()
+                & VGA_MODE,
+            VGA_MODE
+        );
     }
 }

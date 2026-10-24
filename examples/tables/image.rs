@@ -9,16 +9,29 @@ use crate::records::TuneRecord;
 
 pub fn emit(rec: &TuneRecord) -> Result<String, String> {
     if rec.fixed_cell_violations != 0 {
-        return Err(format!("{}: the image violates {} fixed cells", rec.provenance.file, rec.fixed_cell_violations));
+        return Err(format!(
+            "{}: the image violates {} fixed cells",
+            rec.provenance.file, rec.fixed_cell_violations
+        ));
     }
     if rec.write_errors != 0 {
-        return Err(format!("{}: {} write errors", rec.provenance.file, rec.write_errors));
+        return Err(format!(
+            "{}: {} write errors",
+            rec.provenance.file, rec.write_errors
+        ));
     }
     if !rec.readback_differs_at.is_empty() {
-        return Err(format!("{}: R5-R15 read back differently at {:?}", rec.provenance.file, rec.readback_differs_at));
+        return Err(format!(
+            "{}: R5-R15 read back differently at {:?}",
+            rec.provenance.file, rec.readback_differs_at
+        ));
     }
     let mut s = Src::new(&[&rec.provenance]);
-    let front: Vec<String> = rec.front.iter().map(|(k, v)| format!("{k} = {v}")).collect();
+    let front: Vec<String> = rec
+        .front
+        .iter()
+        .map(|(k, v)| format!("{k} = {v}"))
+        .collect();
     let pll: Vec<String> = rec.pll.iter().map(|(k, v)| format!("{k} = {v}")).collect();
     s.module_doc(&format!(
         "The tuner's bring-up register image, R5-R31, as written for the
@@ -48,11 +61,22 @@ The PLL words (the fields marked \"per Pll\"): {}.",
     s.line("use super::types::*;");
     s.blank();
     s.doc("The first register of the image (R0-R4 are read-only).");
-    s.line(&format!("pub const IMAGE_FIRST_REG: u8 = {};", rec.registers[0].reg));
+    s.line(&format!(
+        "pub const IMAGE_FIRST_REG: u8 = {};",
+        rec.registers[0].reg
+    ));
     s.doc("R5..=R31: value and reason.");
-    s.line(&format!("pub const TUNER_IMAGE: [RegisterChoice; {}] = [", rec.registers.len()));
+    s.line(&format!(
+        "pub const TUNER_IMAGE: [RegisterChoice; {}] = [",
+        rec.registers.len()
+    ));
     for r in &rec.registers {
-        s.line(&format!("    RegisterChoice {{ reg: {}, value: 0x{:02X}, why: {} }},", r.reg, r.value, emit::s(&r.why)));
+        s.line(&format!(
+            "    RegisterChoice {{ reg: {}, value: 0x{:02X}, why: {} }},",
+            r.reg,
+            r.value,
+            emit::s(&r.why)
+        ));
     }
     s.line("];");
     Ok(s.finish())

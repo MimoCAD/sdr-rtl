@@ -1,0 +1,14 @@
+{"kind":"driver","rf":153999997.5,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-3.98,"image_dbfs":-71.95,"median_dbfs":-83.49,"rejection_db":67.97,"floor_limited":false}
+{"kind":"driver","rf":419999984.3,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-5.12,"image_dbfs":-65.77,"median_dbfs":-84.19,"rejection_db":60.65,"floor_limited":false}
+{"kind":"driver","rf":459999991.3,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-5.04,"image_dbfs":-66.23,"median_dbfs":-84.28,"rejection_db":61.19,"floor_limited":false}
+{"kind":"driver","rf":500000039.5,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-5.26,"image_dbfs":-67.52,"median_dbfs":-84.40,"rejection_db":62.26,"floor_limited":false}
+{"kind":"driver","rf":759999968.4,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-10.66,"image_dbfs":-57.13,"median_dbfs":-83.33,"rejection_db":46.47,"floor_limited":false}
+{"kind":"driver","rf":773999968.8,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-10.62,"image_dbfs":-56.52,"median_dbfs":-83.36,"rejection_db":45.90,"floor_limited":false}
+{"kind":"driver","rf":805000008.9,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-10.38,"image_dbfs":-54.73,"median_dbfs":-83.30,"rejection_db":44.35,"floor_limited":false}
+{"kind":"driver","rf":851000025.8,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-9.79,"image_dbfs":-51.87,"median_dbfs":-83.14,"rejection_db":42.08,"floor_limited":false}
+{"kind":"driver","rf":861999904.5,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-9.58,"image_dbfs":-47.34,"median_dbfs":-85.87,"rejection_db":37.76,"floor_limited":false}
+{"kind":"driver","rf":868999959.7,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-9.45,"image_dbfs":-47.24,"median_dbfs":-86.04,"rejection_db":37.79,"floor_limited":false}
+{"kind":"driver","rf":999999955.5,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-8.80,"image_dbfs":-46.80,"median_dbfs":-87.13,"rejection_db":38.01,"floor_limited":false}
+{"kind":"driver","rf":1090000036.5,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-9.92,"image_dbfs":-46.91,"median_dbfs":-86.99,"rejection_db":36.99,"floor_limited":false}
+{"kind":"driver","rf":1200000086.7,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-12.94,"image_dbfs":-48.28,"median_dbfs":-84.73,"rejection_db":35.33,"floor_limited":false}
+{"kind":"driver","rf":1500000063.7,"g":32,"p":32,"boost_db":20,"wanted_dbfs":-14.61,"image_dbfs":-82.79,"median_dbfs":-85.02,"rejection_db":68.18,"floor_limited":true}

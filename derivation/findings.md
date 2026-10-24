@@ -10,6 +10,34 @@ Status (2026-10-09): **the single-write hypothesis is exhausted.** From the docu
 
 Step 16.7 (the transfer queue), 2026-10-10: **the refused request is the finish's pause write, and it, like most of step 16's losses, comes from the host running out of transfers in flight** — after a pause each waiting transfer ends with one block. 128 transfers in flight: 0 refusals in 38 finishes, 600 mid-stream counter reads at 2.4 Msps lose 1 block, and paused retunes lose nothing at 1.2-2.88 Msps (16 deep at 2.4: 369 blocks).
 
+Step 29 (aarch64, on the air), 2026-10-19: **with an antenna, the demodulator's own timing loop steered the resampler: both dongles delivered up to 2⁻¹¹ (488 ppm) more or fewer samples than the rate, pinned at that rail for minutes or swinging across it, and nothing counted it. Page 1 0x3E-0x3F ← 00 00 (the vendor's item 6, which 10.4's minimisation had dropped on a bench with no air) cuts the loop from the resampler; the stream now writes it, and both dongles hold the rate within 3 ppm while the loop's estimate keeps moving.** Broadcast FM pilots confirm it from outside the host: 18,990.9-18,991.9 Hz before, 19,000.30 Hz on both dongles after. On the Pi 5 the decimator cost about 9-10 % of a core per Msps it takes in (1.0 Msps out of a 2.0 Msps chip: 18.6 %); rewritten around a NEON dot product, two outputs per pass, it is 4.9-6.5× faster, and 1.0 Msps costs 5.1 %; native 2.4 Msps, 1.7 %. Two dongles at 2.88 Msps lose there too.
+
+Step 28 (each dongle's own calibration), 2026-10-18/19: **one crystal correction per dongle holds from 154 MHz to 1 GHz (the six bands within 0.003 ppm), and it moves under 0.02 ppm in an hour. Image rejection, by contrast, has to be calibrated per dongle**: the best IMR settings differ from unit to unit and with frequency. A shared setting costs a unit up to 18 dB; each dongle's own, carried in its spec (`imr=MHz:G:P+…`), is never worse than 0.3 dB and gives up to +27 dB from 700 MHz up (the 800 MHz band: 38-42 → 60-63 dB on A, 40 → 55 on B; ADS-B's 1090 MHz: 37-40 → 61-64 dB).
+
+Step 27 (long runs), 2026-10-18: **a chip running above 2.4 Msps with another dongle streaming on the same hub loses single 94-sample blocks that the chip's counter does not count — in bursts beside a stream at the same rate, about 1,400 a minute beside one at another rate; a chip at 2.4 or under lost nothing in any combination tried, and decimated rates behave as their chip rate (1.3 and 1.44 Msps lose, 1.2 does not).** At 2.88 Msps it was 1,100-1,900 blocks a dongle in every 20-minute run; at 2.72 about 440; at 2.56 about 15; at 2.4 none in four runs. One dongle alone at 2.88 stayed clean. The driver now watches the sample clock against the host's (`clockwatch`). It counts 99.2-99.5 % of that loss in `StreamReport::clock_lost_samples` and flags each receive where it happens, with no false counts on clean runs. The trigger is not identified. (On the air, before step 29's fix, the timing loop's steering of the rate was also counted as loss.)
+
+Step 26 (range, crystal, clean span), 2026-10-17: **the driver tunes 42–1700 MHz, ADS-B's 1090 included; its frequencies are right to under a hertz once the crystal is corrected; and it reports how much of each rate's window is clean.**
+- **The range.** Above 1002 MHz both dongles lock and receive at full strength to 1720 MHz on the band table's own path. The top is a cliff at the /2 LO near 1.73 GHz (A 1725 MHz, B past 1735) that R2 does not see, so the range stops at 1700.
+- **The synthesizer** runs a quarter of an SDM count (109.86 Hz at the VCO) above its words, measured 110.0 and 109.7 Hz on the two dongles. The driver corrects it always.
+- **The crystal.** One crystal clocks everything, so `set_ppm` is one scale. With it set, a tone from 70 to 1720 MHz lands within 0.5 Hz (A).
+- **The clean span.** Native rates fold their edges in past 0.38 of the rate; decimated rates hold to 0.42. Every rate also carries the chip's own fold of signals one chip rate away, 27–41 dB, across the whole window. That corrects step 25's "60.6–68.2 dB", which was the adjacent fold only.
+- **Found on the way.** Image rejection is 34–45 dB at 860–1300 MHz. A line at 990.0 MHz shows on both dongles with the transmitter off; its source is not identified.
+
+Step 25 (rates under 1.024 Msps), 2026-10-17: **every rate from 0.24 to 2.88 Msps now works.**
+- **The chip used directly.** It is used at 0.24–0.30 and 0.905–2.88 Msps. Both deliver the rate, the tone lands where predicted, there are no phase steps, and retunes during a stream are placed with the signal whole.
+- **Why the gap exists.** The resampler register's top bit adds 2^26 to the ratio. That rule predicts 24 of the 26 measured rates within 0.03 %, and the low span is reached through it.
+- **Between the spans** the stream runs the chip at 2, 3 or 4 times the rate and decimates. Measured on both dongles: the rate exact, no phase steps, alias rejection 60.6–68.2 dB at the floor, and breaks placed within the filter's delay. (The 60.6–68.2 dB is one fold, a tone one rate out; the chip folds a signal two rates out before the decimator, 27–37 dB at ÷2: step 26.4.)
+- **Lines that were the source.** Lines that seemed the chip's (at 0.905–0.93 and 1.22–1.24 Msps), and the low alias readings at 0.305, 0.31, 0.4 and 0.8 Msps, all followed the tone source's LO offset.
+- **Pre-break glitches.** Single glitched samples in the last ~40 before a break exist at the native rates too.
+
+Step 24 (the FIR bit by bit), 2026-10-16: **the 160 tap bits are 16 shapes.** Field k alone is cos(2πf(15.5 − k)/28.8 MHz) within 0.05–0.41 dB rms over ±1.1 MHz, and each bit from 2^5 up scales its field's shape by 2^b. The driver's whole design matched the sum of its fields within 0.02 dB (0.05 rms). Bits 0–3 alone are under the 8-bit output's floor. All of this is the same at 491, 772 and 856 MHz. Outside the window, only the band 1.2–3.6 MHz below the centre leaks linearly, and it passes the FIR as if it were 12.00 MHz higher (1.1–1.6 dB rms over all 16 fields).
+
+Step 23 (the floor), 2026-10-12: **the decode deficit against the earlier driver was the digital gain after the ADC. With the fix, the ten-bed A/B at matched level read +1.91 points (channels 53 better / 43 equal / 12 worse, sign test p < 0.0001; 800 MHz +1.90, 700 MHz +2.00, T-Band +1.90). Found later the same night: live air reaches the bench dongles on the beds' own channels, so every decode score here is contaminated and has to be repeated on an isolated bench. The tone measurements (the floor gain) stand. The fix also leaves this driver's alias rejection short of the earlier one's (aliases of the bed's channels 1.2–1.8 MHz above the window show in its recordings), which is not production-ready.** The floor ahead of the FIR (the ADC's) rides up with the gain from the ADC to the output: taps.rs's DC gain of 4,096 ("of the design's choosing", never measured) and page 0 0x19 bit 5, which this driver copied from the vendor trace and which is an 18 dB ×8 after the FIR. At one output level, ¼ of that gain with the analogue gain making up the level reads 1.5–4.5 dB more carrier over the floor (both dongles; 501.7, 772, 852 MHz); ⅛ buys no more floor and costs linearity (third-order copies of the channels off the bed's centre carrier). The driver now writes 0x19 ← 0x05 and its design at DC gain 8,192 with a 1.5 MHz cutoff (the window at ±1 MHz −2.7 dB, not −3.9; at 1.2 MHz the T-Band bed lost 4 points on its edge channels). Configured gains want ~12 dB more for the same output. Step 22's search held the DC gain fixed and its model held the ADC's floor at a fixed ratio to the signal, so it could not see this. Section "Step 23" below.
+
+Step 21 (Linux), 2026-10-12: **a dongle Linux's kernel driver let go of holds USB_EPA_CTL's FIFO reset and stall (0x0210), which our FIFO reset wrote back — no samples until the release cleared them; and on that host a demodulator write is refused unless a control read was accepted within ~300 ms before it, so every finish failed — the request layer now reads first (as the vendor driver reads after every demodulator write).** Both fixed and in the simulated dongle; the refusals persist on a power-cycled dongle the kernel never touched, so they come with the host, not the kernel driver's leftovers. A second open is refused before it sends anything; `hwcheck`, 700 breaks across the rates, 100 opens with the kernel driver loaded, 30 SIGKILLs mid-change, an unplug and a usbfs memory limit all pass on aarch64 Linux, and the same set (1,400 breaks, 60 opens, 20 SIGKILLs) on x86_64 with two dongles. The refusal threshold is the same on both hosts. **Two units would not lock at /2 below a VCO of 1.72 GHz (851.5-857.75 MHz, in the 800 MHz band): tuning now falls back to the next divider that locks.** The phase jumps of step 19's open run and of a first x86_64 matrix were the harness's: two breaks a few ms apart defeated its break estimate.
+
+Step 19 (breaks, per rate), 2026-10-11: **the "pause" bit (page 1 0x01 bit 2) also resets the demodulator's signal state — after every change the tone fell ~30× and took hundreds of ms to climb back — so changes now quiesce with the start bit, which leaves the signal whole and puts the new configuration at `at_sample` itself; every phase step of findings 16.5 (2.88 Msps, the start transient, after breaks) was the HackRF source's, so 1.024-2.88 Msps stays accepted; a change's gap added to the sample clock leaves it within ~2 ms a change, not ~69.**
+
 Step 18 (full-packet mode), 2026-10-10: **without USB_SYSCTL bit 3 every USB transfer carried one 188-byte block** (the chip sends each block as a short packet), so the queue held ~13 ms at 2.4 Msps — the root of 16.7's depth effect, 16.10's split-finish loss and the browser's early loss. With it every transfer comes back full: 0 blocks lost natively (40 breaks, 8 finishes, 8 split finishes) and in a browser (4 runs).
 
 Step 16.9 (one `Stream`), 2026-10-10: the three kinds became one `Stream` — any rate, ≥ 128 transfers in flight, changes held until 1 s after the start — readable as `std::io::Read` and split into a reading half and a control for two threads: 24 retunes across 2.4 and 1.2 Msps from another thread while reading, 0 blocks lost.
@@ -61,6 +89,565 @@ band table over 87 frequencies (4f); IF filter corners per FILT_CODE
 and FILT_BW, HPF without effect (4g); the meter is pre-DDC, the wanted
 sideband is below the LO, image rejection 10–20 dB uncalibrated (4h);
 gain per code for LNA, mixer and VGA at 1 dB resolution (4i, 4j).
+
+## Step 29 — on an aarch64 host with an antenna: the timing loop that steered the rate, its cut, and the cost per rate (2026-10-19) — `data/step29-pi-*` — `examples/soak.rs`, `examples/sfreqwatch.rs`, `examples/fmpilot.rs`, `examples/record.rs`
+
+**The bench.** A Raspberry Pi 5 (aarch64 Linux, Rust 1.99), dongles A and B on separate xHCI (USB 3 host) controllers, each with an antenna, no USRP. The kernel's DVB (digital video broadcasting) driver bound to both at plug-in. Each dongle under its step-28 crystal correction.
+
+### 29.1 The rate was off by up to 2⁻¹¹, on both dongles (`step29-pi-cpu-*`, `step29-pi-soak-AB-2400000`, `step29-pi-dup-*`, `step29-pi-xfer-*`)
+
+Every run delivered more samples than the rate: the host ledger gained 486-490 ppm a minute on A at every rate tried (0.24, 0.5, 1.0, 1.2 Msps decimated; 2.4 native) and on B in most runs, with no loss counted anywhere. Ruled out, each by a measurement:
+- **The host clock.** Over 113 s the Pi's wall clock held +0.074 → +0.072 s against the Mac's, and its uptime advanced 113.25 s; a clock 488 ppm slow would have lost 55 ms.
+- **Repeated data.** `soak --dupcheck` (FNV-1a hashes of 256-sample chunks, a 16,384-chunk window) found no repeat in 4.5 M chunks a dongle except the 32 it injected as its own test.
+- **The transfer size.** 4, 16 and 64 KiB transfers: +489 ppm each (`step29-pi-xfer-*`). An insertion per transfer would have scaled with it.
+- **A crystal.** Two crystals measured 1 ppm apart (step 28) both read it, and four FM carriers landed within 30-250 Hz of their channels; a crystal 488 ppm fast puts them 45-52 kHz off.
+
+**From outside the host** (`step29-pi-pilot.jsonl`; `examples/fmpilot.rs`): a broadcast FM station's stereo pilot is 19 kHz at the station, so read at the rate a capture claims it shows the true rate's error. Four stations, 2 s on A: 18,990.9-18,991.9 Hz, 429-481 ppm fast. `fmpilot`'s own test reads a synthetic station at 0 and 488 ppm back to within 5 ppm.
+
+**The cause** (`step29-pi-sfreq-*`, `step29-pi-sfreqfix-*`; `examples/sfreqwatch.rs`). `sfreq_off` (page 3 0x18-0x19, s(14,24f), full scale ±8192 = ±2⁻¹¹ = ±488.28 ppm; Table 12) read +8,182 to +8,191 on A for a whole minute, and +8,019 to +8,191 on B; the delivered rate followed it (+485 and +480 ppm over the minute). Figure 1 draws a Timing Error loop from Synchronizations into the Resampler: this is that loop, running on whatever the antenna brings in. It runs while idle as well (A read 7,571 before any stream). A DEMOD_CTL reset pulse sets it to 4,128, after which it wandered over most of its range within 45 s (−5,612 to +8,191), and the rate, read each second, went with it (−289 to +485 ppm). B's swing from +285 to −488 ppm in the 20-minute run, which `clockwatch` counted as 1.12 M lost samples, was this loop, not loss.
+
+**The cut.** Each variant 45 s on A, the writes added to the start sequence. `sfreq_off` is its range over the readings after the first second; "delivered" is the whole run's, with each second's in brackets (one-second windows scatter by about ±30 ppm):
+
+| writes | `sfreq_off` | delivered, ppm |
+|---|---|---|
+| none (the driver as it was) | +8,187 to +8,191 | +483 (+451 to +515) |
+| page 1 0x94 ← 0x0F | +8,188 to +8,191 | +486 (+460 to +522) |
+| reset pulse | −5,612 to +8,191 | +276 (−289 to +485) |
+| reset pulse, 0x94, page 0 0x17/0x18/0x20, page 1 0x92 (the vendor's other late items) | −8,191 to +6,855 | −180 (−481 to +469) |
+| **page 1 0x3E-0x3F ← 00 00** | −8,130 to −1,057 | **−3 (−28 to +28)** |
+| 0x3E-0x3F ← 40 00 (power-on) again | −8,192 to −561 | −375 (−503 to −13) |
+| 0x3E-0x3F ← 40 00, page 0 0x61 ← 0x60 | −8,192 to −1,082 | −368 (−496 to −60) |
+| 0x3E-0x3F ← 00 00 again | −8,192 to −3,784 | −3 (−26 to +30) |
+| B: none | +8,044 to +8,189 | +483 (+464 to +519) |
+| B: 0x3E-0x3F ← 00 00 | +302 to +7,661 | −2 (−30 to +36) |
+
+With 00 00 the loop goes on estimating but no longer moves the rate; 40 00 puts the steering back. The vendor writes 0x3E-0x3F ← 00 00 as its item 6 (9b); 10.4's minimisation dropped it as "streams unchanged", which on a bench with no air it was. The register stays as written across opens, so a run that does not write it inherits it (the first 0x61 run did).
+
+**In the driver.** The start sequence writes page 1 0x3E-0x3F ← 00 00 as one 2-byte write, right after DEMOD_CTL (`protocol::TIMING_STEER_*`, `stream::Item::TimingSteerOff`). Checked through the driver's own sequence (`step29-pi-drv-*`):
+- A and B, 45 s each: −2 ppm on both, with the loop between −8,127 and −4,689 on A and between −8,191 and −69 on B. The control, 40 00 written back after the driver's write: −436 ppm.
+- A and B together, 10 minutes at 2.4 Msps: the ledger flat (0 ppm) in every minute on both, 0 clock-lost, 0 dropped, 0 overflows.
+- One station, 10 s on each dongle: the pilot at 19,000.30 Hz on both, the same to 0.01 Hz in each half (before: 18,991.43). The 0.30 Hz is the station's: two dongles 1 ppm apart agree on it.
+
+**Not measured.** Whether the loop's steering also moved the rate on step 27's bench (no antenna; that bench's rates read exact against the host); and what else 0x3E-0x3F holds.
+
+**An hour on the air, and the x86-64 host** (`step29-pi-hour-AB-{1,2,3}.jsonl`, `step29-x86-*.jsonl`). On the Pi, both dongles at 2.4 Msps for three 20-minute runs with the cut in place: the ledger within 2 ppm in every one of 57 minutes on both, 0 clock-lost, 0 dropped, 0 overflows. On the x86-64 host (AVX-512 decimator), cabled to the bench USRP's tone through the 20 dB pad, the phase witness on: one dongle at 1.0 and 1.2 Msps and both at 1.0 Msps, 3 minutes each, 2.5 %, 2.6 % and 5.1 % of a core including the witness, 0 jumps, 0 loss; both dongles at 2.4 Msps for 10 minutes, twice. In the first, B logged 5,881 phase steps, all inside its first minute from 24.9 s on (the first 200 within 0.09 s), each 0.2-0.4 rad, in pairs of opposite sign in neighbouring windows, the tone's level unchanged, with no sample lost (B's count trailed A's by the same 49,152 samples, its start, from the first minute to the last; both ledgers flat); A, on the same splitter, logged none. In the repeat, 0 on both, in 22.5 M windows each. What disturbed B is not measured.
+
+### 29.2 Loss at 2.88 Msps (`step29-pi-soak-AB-2880000`)
+
+Both dongles at 2.88 Msps, 20 minutes, the steering still on: the host ledger fell by about 1,960 ppm a minute on each throughout. 803 and 818 receives were flagged; `clock_lost` was 6.28 M and 6.42 M, and the host's own count 5.94 M and 6.12 M. The chip's counter read 0. That is the same kind of loss as step 27's beside another stream above 2.4 Msps, here with the dongles on separate controllers. 2.4 Msps, both dongles, lost nothing (29.1).
+
+### 29.3 The cost per rate on the Pi 5 (`step29-pi-cpu-*`)
+
+Process CPU (user + system) over 180 s, one dongle, `soak --no-source`:
+
+| rate | chip | CPU, % of one core |
+|---|---|---|
+| 0.24 Msps | 0.96 Msps ÷4 | 9.5 |
+| 0.5 Msps | 1.0 Msps ÷2 | 9.8 |
+| 1.0 Msps | 2.0 Msps ÷2 | 18.6 |
+| 1.2 Msps | 2.4 Msps ÷2 | 22.2 |
+| 2.4 Msps | native | 1.7 |
+
+Two dongles at 1.0 Msps: 36.5 % (both threads of one process). The decimator's filter was the cost (about 9 % of a core per Msps of chip input); a native rate costs only the copy.
+
+**The decimator rewritten** (`src/decim.rs`; `step29-pi-decimbench-{before,after}.jsonl`, `step29-pi-cpu2-*`; `examples/decimbench.rs`). Before, each output walked a ring buffer tap by tap, with a branch at every tap and one running sum each for I and Q, which no compiler can vectorize. Now the inputs are held as interleaved I/Q in one linear buffer, so each output's reach is one contiguous slice, and the taps (zero-padded at the oldest end to a whole number of 8 samples, each written twice for the I and Q lanes) meet it in a NEON dot product: four independent fused multiply-adds of four lanes per 16-lane block (`core::arch::aarch64`, in every aarch64 target). Elsewhere a portable version with sixteen independent lane sums, which the compiler vectorizes. Each output stays within one step of the filter's f64 sum (only the order of the additions changed), and NEON and portable sums agree (tests).
+
+| | ÷2 (61 taps) | ÷3 (89) | ÷4 (119) |
+|---|---|---|---|
+| the decimator alone, Pi 5, ns per input sample: before → after | 61.2 → 14.5 | 58.1 → 12.6 | 61.4 → 11.7 |
+| the same, this Mac (M5 Max) | 20.2 → 3.8 | 21.2 → 3.3 | 20.8 → 3.1 |
+
+The two aarch64 hosts' checksums agree bit for bit. With the dongles on the Pi (180 s each, `soak --no-source`, no loss, no overflow): 1.0 Msps 18.6 → 5.9 % of a core; 1.2 Msps 22.2 → 6.8 %; two dongles at 1.0 Msps 36.5 → 11.3 %. The portable path builds for x86-64 and 32-bit ARM; its speed there is not measured.
+
+**Three more kernels, held to the output** (`src/decim/kernels.rs`, `decim::Kernel`; `step29-{pi,m5}-decimbench-kernels.jsonl`). Each is tested against an exact sum before its speed counts:
+- **Two outputs per pass** (`F32Pairs`): each tap vector loaded once for two outputs k samples apart, each output summed in the same lanes and order as one per pass. Test: bit-identical to `F32` at every factor, fed in pieces of any size.
+- **Folded** (`F32Folded`): the taps are exactly symmetric (tested bit for bit), so h·(x[s] + x[n − 1 − s]) halves the multiplies. Test: within one step of the f64 sum, as `F32`.
+- **16-bit integer** (`I16`, `I16Pairs`): the samples as they come, the taps × 2¹⁵ rounded (the centre tap moved so they sum to 2¹⁵ exactly), 32-bit sums. Test: every output equals the exact sum with those taps, rounded half up; no sum can overflow. But the rounded taps are a different filter: unity at DC and the ripple hold, the stopband does not — 72.7, 67.6 and 65.0 dB at ÷2, ÷3, ÷4 against the design's 70. A longer design does not buy it back: across 5-15 dB of extra margin the 16-bit stopband scattered between 65 and 78 dB, the taps' rounding setting the floor.
+
+Against the f32 taps' f64 sum, 200,000 outputs (I and Q) each — the same values, bit for bit, on both hosts — and the time per input sample:
+
+| kernel | values off / worst | Pi 5, ÷2 / ÷3 / ÷4, ns | M5 Max, ns |
+|---|---|---|---|
+| F32 | 243-307 of 400,000 / 1 step | 15.2 / 13.3 / 12.1 | 3.9 / 3.4 / 3.2 |
+| F32Pairs | the same values as F32 | **12.5 / 10.4 / 9.4** | 3.1 / 2.6 / 2.5 |
+| F32Folded | 177-281 / 1 step | 23.3 / 19.3 / 18.4 | 4.6 / 4.1 / 4.0 |
+| I16 | 256,001-374,371 / 5, 11, 14 steps | 13.3 / 11.3 / 9.7 | 2.3 / 2.0 / 1.8 |
+| I16Pairs | as I16 | 12.2 / 10.4 / 9.1 | 2.0 / 1.7 / 1.6 |
+
+On the Pi 5 the 16-bit multiply-accumulates gain at most 3 % over `F32Pairs` while changing the output and missing the stopband; folding costs more in loads and lane shuffles than it saves in multiplies. **Per instruction set** (2026-10-20; `src/decim/kernels/{aarch64,x86_64,avx2,avx512,portable}.rs`, `decim::Isa`, the widest the CPU reports chosen at run time; `step29-x86-decimbench-kernels{,-1,-2}.jsonl`). On an x86-64 host with AVX-512 (Zen 5), the driver's tests pass on every set (pairs bit-identical to singles, every output within one step of the f64 sum), and `decimbench`, three runs at the lowest priority beside a production receiver (load 0.3-1.3), agreeing within 3 %, gives for `F32Pairs`, ns per input sample at ÷2 / ÷3 / ÷4: portable 8.7 / 7.9 / 7.1, SSE2 5.3 / 4.3 / 3.9, AVX2 5.9 / 4.9 / 4.4, AVX-512 5.6 / 4.4 / 3.5. The wider sets did not pay. Four causes, each found by a measurement and its fix checked by the next (same host, three runs each; ns per input sample, `F32Pairs` at ÷2 / ÷3 / ÷4):
+
+1. **The final sum through memory** (`step29-x86-decimbench-insum.jsonl`): the lanes were stored and added one by one. Summed in the registers instead (NEON and SSE2 in the same order as before, so their outputs did not change), the times did not move: SSE2 5.3 / 4.2 / 3.8, AVX-512 5.6 / 4.4 / 3.5. Not the cause.
+2. **`f32::round` is a library call on x86-64** (no rounding instruction before SSE4.1): the x86 assembly called `roundf` twice per output. The rounding is now done in f64, where adding ±0.5 is exact, then truncated; a test holds it to `f32::round` bit for bit over the halves, both sides of every power of two to 2³⁹, the specials and four million random f32. Every set gained about 1 ns (`step29-x86-decimbench-round.jsonl`): SSE2 4.1 / 3.4 / 3.2, AVX-512 4.9 / 3.9 / 3.2. NEON (one instruction for `round`) was unchanged in output and time.
+3. **A call per output**: a product compiled for AVX cannot inline into a loop compiled without it, so each output was a call. The whole output loop (`kernels::outputs`, one definition expanded per set) now runs under its set, chosen once per `process` call; the products inline (`step29-x86-decimbench-inlined.jsonl`): SSE2 3.6 / 3.1 / 2.9, AVX-512 4.1 / 3.9 / 3.3, still behind. With the loop alone timed (`--parts`, `step29-x86-decimbench-parts.jsonl`), the shared i16 → f32 conversion is 0.25 ns: the output loops were the cost. Over taps of 64 to 2,048 samples (`--spans`, `step29-x86-decimbench-spans-before.jsonl`), AVX-512 fell per tap with length (125 → 70 ps) but AVX2 stayed at 113 ps against SSE2's 87 at every length: a fault in the products.
+4. **The accumulators on the stack**: AVX2 chose its accumulator by block parity and AVX-512 by block mod 4, at run time; the assembly kept them in a 768-byte stack frame, 18-19 vector stores in the loop. Taken two or four blocks at a time into named accumulators (each block into the same one as before, so the outputs did not change), they stay in registers: 3-4 vector stores left outside the loop. Per tap (`step29-x86-decimbench-spans.jsonl`): AVX-512 63 → 38 ps from 64 to 2,048 samples, AVX2 61 → 55, SSE2 105 → 87.
+
+**Now** (`step29-x86-decimbench-registers.jsonl`): portable 7.5 / 7.1 / 6.5, SSE2 3.6 / 3.1 / 2.9, AVX2 2.1 / 1.8 / 1.7, AVX-512 2.3 / 1.9 / 1.7; AVX2 and AVX-512 1.6-1.7× SSE2, within 8 % of each other at the decimator's 61-119 taps, AVX-512 ahead from longer taps on. `Isa::best` takes AVX-512. Every output of every f32 run within one step of the f64 sum; SSE2, AVX2 and AVX-512 outputs bit-identical across steps 1, 3 and 4.
+
+**`Decimator::new` uses `F32Pairs`.** The others stay selectable (`Decimator::with_kernel`) for this comparison. With the dongles on the Pi (`step29-pi-cpu3-*`, 180 s each, no loss, no overflow): 1.0 Msps 5.9 → 5.4 % of a core, 1.2 Msps 6.8 → 6.2 %, two dongles at 1.0 Msps 11.3 → 10.3 %. After the per-set rework below (the same outputs, bit for bit; `step29-pi-cpu4-*`, `step29-pi-decimbench-final*`): 5.1 %, 6.0 % and 10.1 %, NEON `F32Pairs` 11.9 / 9.8 / 9.0 ns per input sample (the i16 → f32 conversion 0.9 of it).
+
+## Step 28 — each dongle's own calibration: its crystal over an hour, and its image rejection (2026-10-18/19) — `data/step28-*` — `examples/rangecheck.rs --ppm 0`, `examples/imrsearch.rs`
+
+### 28.1 The crystal over an hour (`data/step28-ppm-{A,B}.jsonl`)
+
+**The method.** Both dongles in turn, about every 13 s for 60 minutes (276 passes each). Each pass opens the dongle and reads a tone 300 kHz above 154, 420, 500, 760, 805 and 1000 MHz with no crystal correction. Each reading's ppm is its error over the tone's frequency, the synthesizer's quarter-count offset already taken off by the driver (26.2). The USRP is the reference.
+
+| dongle | first pass | range over the hour | last pass | worst spread across the six RFs in one pass |
+|---|---|---|---|---|
+| A | +0.915 | +0.895 (41 min) to +0.915 — 0.020 ppm | +0.897 | 0.0012 ppm |
+| B | −0.131 | −0.133 to −0.124 (6 min) — 0.009 ppm | −0.129 | 0.0031 ppm |
+
+- **One crystal, one number.** In every pass the six frequencies, VHF to 1 GHz, agree within 0.003 ppm (under 3 Hz at 1 GHz). So one correction per dongle holds for every band.
+- **Small drift.** It is at most 0.020 ppm in the hour: 16 Hz at 805 MHz, 3 Hz at 154 MHz.
+- **Not the reference.** A fell, then rose; B rose, then fell. So the hour's movement is not the USRP's crystal or the room moving both together.
+- **Not measured.** The USRP's own error, against anything better. These are ppm against the bench USRP.
+
+**For production:** A `ppm=0.90`, B `ppm=-0.13` (their specs: `serial=…,ppm=0.90`).
+
+### 28.2 Image rejection is each dongle's own (`data/step28-imr-*`; `examples/imrsearch.rs`)
+
+**The method** (step 15's): the wanted tone at RF + 300 kHz, then the tone moved to the image (RF + 2·IF − 300 kHz) 20 dB stronger, the rejection the difference corrected for the boost; IMR_G (R8[5:0]) and IMR_P (R9[5:0]) written and read back for each setting.
+
+**The coarse grid** (`step28-imr-grid-{A,B}.jsonl`): G, P in steps of 4 (256 settings) at 420, 770, 860 and 1090 MHz. At 420 MHz the driver's 32/32 is the best on both. Higher up, a small G is: A wants G 4 at 770 MHz and G 8 at 860 and 1090; B wants G 4 at 860 and 1090, and 32/32 already at 770.
+
+**The map** (`step28-imr-map-{A,B}.jsonl`): every 20 MHz from 70 to 1690 MHz on both dongles, G 0-15 and 32-47 against P 0-2 and 32-34 (192 settings per RF). Each dongle's own best is 55-78 dB almost everywhere (990 MHz aside: the dongles' own line, 26.5). That is up to +28 dB over 32/32 from 700 MHz up. The best settings move smoothly with frequency, and they **differ from unit to unit**, in direction as well as size:
+
+| RF | 32/32, A / B | own best, A | own best, B | best single setting for both, A / B |
+|---|---|---|---|---|
+| 150 MHz | 67.7 / 53.1 | 77.4 (33:32) | 57.8 (2:0) | 76.1 / 53.6 |
+| 670 MHz | 49.8 / 70.9 | 61.3 (3:0) | 71.0 (0:0) | 57.4 / 52.4 |
+| 870 MHz | 37.7 / 40.5 | 63.5 (7:33) | 55.0 (6:32) | 49.4 / 49.4 |
+| 1090 MHz | 37.2 / 39.8 | 64.2 (9:33) | 61.1 (6:32) | 48.6 / 46.9 |
+| 1590 MHz | 46.2 / 37.0 | 59.1 (35:1) | 64.2 (38:1) | 48.2 / 48.7 |
+
+A setting shared by both reaches only 45-50 dB from 700 MHz up, and costs one dongle up to 18 dB where 32/32 already served it (B at 670 MHz). So there is no table for every dongle: each dongle's is measured.
+
+**Repeatable** (`step28-imr-repeat-{A,B}.jsonl`): ten opens a minute apart at 1090 MHz. 32/32 reads 37.0 ± 0.0 dB on A and 39.9 ± 0.1 on B. A at its best (9:33) reads 63.9 ± 1.2, B at its best (6:0) 60.6 ± 0.4, as the map read.
+
+**In the driver.**
+- **Where the calibration lives.** `Front` carries IMR_G / IMR_P. `Rtl::set_imr_table` takes a dongle's calibration, usually from its spec: `imr=MHz:G:P+…`.
+- **At each tuning** the nearest point's setting is used, and R8 / R9 are written and read back when it changes.
+- **Without a table**, 32/32 as before.
+- **The two bench dongles' tables** are in `step28-imr-spec-{A,B}.txt`: their best at every map point but 990 MHz.
+
+**Checked with the driver applying them** (`step28-imr-check-{A,B}-{plain,calib}.jsonl`; `imrsearch --driver`, the map's method at whatever the driver set; 14 RFs, 774, 851, 862 and 869 MHz among them, off the 20 MHz grid):
+
+| RF | A: 32/32 → table | B: 32/32 → table |
+|---|---|---|
+| 154 MHz | 68.0 → ≥ 77.9 | 53.1 → 57.5 |
+| 420-500 MHz | 60.6-62.3 → 60.4-62.0 | 55.0-65.1 → 59.1-67.7 |
+| 760-805 MHz | 44.4-46.5 → 55.0-58.1 | 60.0-60.8 → 61.1-61.7 |
+| 851 MHz | 42.1 → 60.5 | 62.2 → 62.3 |
+| 862-869 MHz | 37.8 → 62.8-63.4 | 40.2-40.4 → 55.0-55.3 |
+| 1000-1200 MHz | 35.3-38.0 → 57.9-63.6 | 39.8-42.1 → 58.7-≥ 64.9 |
+| 1500 MHz | ≥ 68.2 → ≥ 68.2 | 39.8 → 63.4 |
+
+Nowhere worse than 0.3 dB (noise). From 700 MHz up, up to +27 dB. B's weak region begins sharply inside the 800 MHz band (62.2 dB at 851 MHz, 40.4 at 862), and the table covers it.
+
+**A first check misread** (`step28-imr-unboosted-*.jsonl`, `rangecheck --image`). It moved the tone to the image at the wanted tone's own level, so every rejection over ~55 dB sat at the floor (the image 3-5 dB over the median bin). Read as values, it showed B "worse" with its table at 154-851 MHz. The boosted check above replaces it. Where it was not floor-limited, 26.5's image figures (34-45 dB) stand.
+
+**For production**: measure each dongle (`imrsearch` over the bands it will serve), and carry the points in its spec beside `ppm=`.
+
+## Step 27 — is a rate lossless over a long run? Two dongles above 2.4 Msps shed blocks the chip does not count; the driver now sees them (2026-10-18) — `data/step27-*.jsonl` — `examples/soak.rs`
+
+**The bench.** Dongles A and B on one 2-port hub (both on one root port of the host's controller), each its own `Stream` at the driver's defaults, read without pause; one USRP tone reaching both through the splitter, each dongle under its crystal correction. 20-minute runs.
+
+**The witnesses** (`soak`):
+- the chip's dropped-block counter and the host ledger, from the finish, and every receive's `overflow`;
+- the tone's phase in 64-sample windows. The tone sits where one 94-sample block's gap steps it by 0.382 of a turn (2.40 rad), so any gap of 1-12 blocks steps it by 0.35 rad or more. Steps over 0.2 rad are counted and logged;
+- the samples handed out against the time.
+
+**The witness tested first** (`step27-inject*.jsonl`). Gaps cut from what the phase reader sees: one block at 30 s, two at 40 s, 4,096 samples at 50 s. On both dongles each gap was found, one jump for the single block (2.40 rad), two for the others split across a window boundary, and nothing else in 72 s.
+
+**The runs** (both dongles at once unless named):
+
+| rate (Msps) | runs | phase jumps per run, A / B | chip counter | host ledger |
+|---|---|---|---|---|
+| 2.4 | 4 (`s240-1`, `rate-2400000-{0,1}`, `watch-2400000`) | 0 / 0 every run | 0 | 0 |
+| 2.56 | 1 | 14 / 17 | 0 | 0 |
+| 2.72 | 1 | 449 / 434 | 0 | 0 |
+| 2.88 | 5 (`s288-{1,2,3}`, `rate-2880000-0`, `watch-2880000`) | 1,163-1,637 / 1,199-1,872 | 0 | 0 |
+| 2.88, A alone | 1 | 0 | 0 | 0 |
+| 2.88, B alone | 1 | 0 | 0 | 0 |
+
+**What the jumps are.**
+- **Lost blocks.** Each event steps the phase by 2.40 rad, the step of one 94-sample block, or by two parts that sum to 2.39-2.41 rad when the gap falls inside a window. The window's amplitude falls to 0.36-0.54 there, as a 2.40 rad step mid-window makes it.
+- **The count agrees.** In the burst minutes each dongle delivered 14,000-39,000 samples a minute fewer than the time allows, in step with the jumps.
+- **In bursts.** One to four minutes long, minutes apart, starting within ~0.2 s of each other on the two dongles, with clean stretches of 8-12 minutes between. One run at 2.88 Msps also had a slow trickle before its burst.
+- **Not the host falling behind.** The host was 99 % idle during a burst; the reader's longest gap stayed at 3-4 ms; and a forced 2 s reader stall (`step27-stall.jsonl`) is counted by every witness: the counter saturated (255), 4.70 M samples in the ledger, the receive's overflow set. The trigger is not identified. What is shared is the hub and the host's controller.
+- **Rate-dependent.** None in four runs at 2.4 Msps with both dongles. At the faster rates the chip's FIFO (21 blocks) covers 0.77 ms at 2.56 Msps and 0.69 ms at 2.88, against 0.82 at 2.4 — a hypothesis that fits, not a measurement.
+
+**Unseen by the driver until now.**
+- The chip's counter does not count these blocks.
+- The engine's ledger takes a deficit that grows a few hundred samples a second for clock drift: its floor creeps toward a margin under half a transfer.
+
+**Earlier steps.** Findings 10.2a and 19 called 2.88 Msps clean from runs of seconds; bursts minutes apart cannot show there. With one dongle, 2.88 Msps stayed clean for 20 minutes per dongle (`single-{A,B}`).
+
+**In the driver: the sample clock watched** (`clockwatch`, `RtlStream`):
+- **What it watches.** The engine's raw deficit at each completion (elapsed × rate − samples taken off the wire, `LinkStats::ledger_deficit_samples`). Its floor, the least of each second, follows a straight line while nothing is lost: the dongle's crystal against the host clock.
+- **The baseline.** The line is fitted over ten seconds after a start or a break, then followed slowly while the floor stays within 300 samples of it.
+- **The judgement.** A floor that stays above the band (at once past 1,000 samples, three seconds running; else after ten) is loss: counted, the line moved up to it, and that receive's `overflow` set. A floor that stays below the band moves the line down without counting.
+- **Reported** as `StreamReport::clock_lost_samples`; MimoSDR's stream report prints it.
+
+**Validated on the bench** (`step27-watch-*.jsonl`):
+
+| run | jumps A / B | `clock_lost_samples` A / B | the ledger's rise past drift A / B | flagged receives |
+|---|---|---|---|---|
+| 2.88 Msps | 1,637 / 1,621 | 92,818 / 92,198 | 93,238 / 92,965 | 49 / 49 |
+| 2.4 Msps | 0 / 0 | 0 / 0 | — | 0 / 0 |
+
+So 99.2-99.5 % of the loss is counted, with nothing counted where nothing was lost. In the 2.88 Msps run the first flag came in the minute the burst began, and none in the 12 clean minutes before it.
+
+**Not seen.**
+- Loss under the band (≤ 300 samples, 3 blocks, in all).
+- A loss rate steady from the start, which the warm-up would fit as drift.
+- A host clock slewed forward, which would read as loss.
+
+**The chip's rate or the shared bus?** (`data/step27-mix-*.jsonl`; per-dongle rates, one tone placed so a block's gap steps it ≥ 0.077 turn at every chip rate in the run; the watcher's line held to the 100 ppm drift bound.)
+
+| A | B | chip rates | jumps A / B | `clock_lost_samples` A / B |
+|---|---|---|---|---|
+| 1.2 ÷2 | 1.2 ÷2 | 2.4 + 2.4 | 0 / 0 | 0 / 0 |
+| 1.3 ÷2 | 1.3 ÷2 | 2.6 + 2.6 | 46 / 38 | 1,362 / 981 |
+| 1.44 ÷2 | 1.44 ÷2 | 2.88 + 2.88 | 1,518 / 1,561 | 115,431 / 114,821 |
+| 2.88 | 1.0 ÷2 | 2.88 + 2.0 | 27,493 / 0 | 1,238,088 / 0 |
+| 2.88 | 2.4 | 2.88 + 2.4 | 29,870 / 0 | 1,327,498 / 0 |
+| 2.4 | 1.0 ÷2 | 2.4 + 2.0 | 0 / 0 | 0 / 0 |
+
+- **A decimated rate behaves as its chip rate.** 1.2 Msps (chip 2.4) is clean; 1.3 and 1.44 (chip 2.6, 2.88) shed blocks as the native 2.56 and 2.88 Msps runs did. Under the decimator one lost block shows as two or three phase jumps.
+- **It takes both.** A chip above 2.4 Msps sheds blocks only with another stream on the bus (alone at 2.88: none). Beside a stream at another rate it loses every minute from the start, about 1,400 blocks a minute (~360 ppm), where two streams at the same rate lose in bursts minutes apart.
+- **Not total traffic.** 2.88 beside 2.0 (4.88 M samples/s in all) lost about 15 times what 2.88 beside 2.88 (5.76 M/s) did.
+- **Only the faster stream loses.** The stream at 2.4 Msps or under beside it lost nothing. At 2.4 and under, every combination tried was clean: equal rates (five runs) and different rates (one run).
+- **A hypothesis, not measured:** at equal rates the two streams' timing stays nearly locked, slipping only by the crystals' difference (~1 ppm), so the bad overlap comes round only now and then — the bursts; at different rates it comes round constantly.
+- **The watcher** flagged every lossy run and no clean one. Where the loss ran from the start (2.88 beside 2.0 or 2.4), its count is the lower bound its drift bound allows.
+
+**So.** On this host, with two dongles on one hub, a chip rate of 2.4 Msps or under is the only one shown lossless, alone or beside the other at any rate tried. Above it the driver now says when it loses samples.
+
+**In the driver (2026-10-18).**
+- **The decimation plan keeps the chip at 2.4 Msps or under** (`demod::CHIP_RATE_SHARED_BUS_SAFE_SPS`). Oversampling now stops at 1.2 Msps (`OVERSAMPLE_UP_TO_SPS`), and 1.2-1.44 Msps run the chip at the rate itself. That gives up step 26's decimated edge for those rates: their clean span is the native ±0.38 of the rate.
+- **Native rates above 2.4 Msps stay accepted.** Their loss, when it comes, is reported.
+
+## Step 26 — the tuning range to 1700 MHz, the synthesizer's quarter-count offset, the crystal correction, and the clean span per rate (2026-10-17) — `data/step26-*` — `examples/rangecheck.rs`, `examples/edgecheck.rs`, `examples/vcoedge.rs --divs`
+
+**The bench.** Dongles A and B, the USRP's tone through the pad and the splitter, no antenna. The USRP's LO sits 137 kHz from its tone (`usrp_tone_source --offset 137000`), and every line a reading might owe to the source was read again with 211 kHz (step 25's rule). Gains LNA 8, mixer 8, VGA 2; 2.4 Msps; the tone 300 kHz above the RF. The bench-only `set_bench_rf_range` lets `set_freq` take RFs outside the range for these runs.
+
+### 26.1 The range above 1002 MHz (`data/step26-sweep-{A,B}.jsonl`, `step26-top-{A,B}.jsonl`, `step26-vco4-A.jsonl`)
+
+Every 10 MHz from 70 to 1830 MHz, both dongles (`rangecheck --paths --image`):
+- **Lock and placement.** The driver's tuning locks at every RF to 1820 MHz (R2 64-127), and from 70 to 1720 MHz the tone lands where the words put it, 51-65 dB over the median bin. ADS-B's 1090 MHz: /2, VCO 2.187 GHz, 58.8 dB (A).
+- **The band path.** All 16 (RFFILT, RFMUX) at each RF: above 1002 MHz (10, 01) — the band table's last segment, which `band::path_for` gives beyond the grid — is the strongest at every step on both dongles, by 1.1-1.8 dB. Below 1002 MHz only 250 and 270 MHz preferred another, (10, 00), which the table already holds there.
+- **The level** falls about 9 dB from 1010 to 1720 MHz (A: −23.9 to −33.0 dBFS). How much of that is the source's own output is not measured.
+- **The top is a cliff, not a roll-off** (1 MHz steps, 1700-1735 MHz): A reads 51.3-51.7 dB through 1724 MHz and nothing at 1725 (LO 1728.6 MHz); B reads 51.0-51.8 dB through 1735 and 7 dB at 1740. R2 reads 123-127, "locked", on both sides of the cliff, so the driver cannot see it.
+- **Not the VCO.** Forced to /4 at the same VCO frequencies, 3.454-3.674 GHz (`vcoedge --divs 4`, RF 860-915), the tone reads 56.6-59.2 dB. The limit is the /2 path near an LO of 1.73 GHz, and no other divider reaches those LOs.
+
+**In the driver.** `RF_RANGE_HZ` = 42-1700 MHz: the documented bottom, and a top 24 MHz under the lower cliff, a margin chosen against units not measured. Below 42 MHz is not measured: the bench source starts at 70 MHz.
+
+### 26.2 The synthesizer runs a quarter count above its words (`data/step26-pairs-{A,B}.jsonl`)
+
+**The sweep showed it first.** The tone's error (where it landed less where the words put it) was, on A, −0.904 ppm of its frequency plus a constant over the divider: 1.08 Hz rms over 165 RFs with those two terms. The residuals followed the dongle's divider changes and not the USRP's (750 and 1500 MHz). But a sweep takes ten minutes, B's crystal drifted through it (its slope ran +0.143 ppm in the first band to +0.094 in the last), and a joint fit trades crystal against offset: A's fit read 123 Hz at the VCO, B's 82.
+
+**Measured without the crystal** (`rangecheck --divs a,b --repeat 4`): one RF tuned under two neighbouring dividers back to back, four rounds. The crystal cannot move between them, so the two errors differ by the offset × (1/d₁ − 1/d₂) alone.
+
+| | pairs | RFs (MHz) | offset at the VCO |
+|---|---|---|---|
+| A | 32 | 870, 890 (/2-/4), 430, 450 (/4-/8), 215, 222 (/8-/16), 105, 109 (/16-/32) | 110.03 ± 0.69 Hz (108.70-111.45) |
+| B | 32 | the same | 109.66 ± 0.49 Hz (108.53-111.18) |
+
+A quarter of an SDM count is 2 · 14.4 MHz / 2^16 / 4 = **109.86 Hz**. Both dongles sit on it. The VCO runs that far above f_ref · 2 · (Nint + Nfra) at every divider and on both units.
+
+**In the driver.** `pll::VCO_OFFSET_HZ` = a quarter count; `Pll::candidates_delivering` programs the words for the LO less it, and `lo_delivered_hz` reports the LO with it. It applies always, for every dongle.
+
+### 26.3 The crystal correction (`data/step26-v0-{A,B}.jsonl`, `step26-v1-{A,B}.jsonl`)
+
+One crystal clocks the tuner's synthesizer, the DDC and the resampler (the board shares it, [R820T] 6.3), so the correction is one scale. With the offset taken off and no correction (v0, every 50 MHz, 70-1720 MHz), A's error is a straight line through zero: −63.7 Hz at 70 MHz, −1547.2 Hz at 1720 MHz, −0.90 ppm against the USRP, with no step at any divider change. With `set_ppm(0.9003)`, fitted from that run and set (v1), every point from 70 to 1720 MHz reads within −0.5 to +0.2 Hz. B's v0 is the same kind of line, +9.7 Hz at 70 MHz to +229.0 Hz at 1720 (−0.133 ppm), through zero within 0.4 Hz and with no divider step; with `set_ppm(-0.1343)` the residual is a slope of −0.0065 ppm, −11.2 Hz at 1720 MHz, 95 % of the error removed. The rest is B's crystal moving between the two runs, minutes apart, as it moved during its first sweep; A's held.
+
+The ppm here is against the bench USRP's reference, whose own error is not measured.
+
+**In the driver.** `Rtl::set_ppm` (also on the stream's control, and as `ppm=` in the spec: `serial=…,ppm=0.9`): the synthesizer is programmed for RF / scale and the resampler for rate / scale, and the RF and rates reported are the words' × scale. Idle, the RF and rate last asked for are set again; while streaming, the RF is tuned again and the rate keeps its ratio (a live ratio change did not dependably take, 10.2a), reported under the new correction. Refused beyond ±1000 ppm.
+
+### 26.4 How much of each rate's window is clean (`data/step26-edge-{A,B}.jsonl`)
+
+**The method** (`edgecheck`, through the public `Stream`, so decimated where the plan decimates; each dongle under its crystal correction so the tone lands on its bin). For each position g of the window, every 0.01 of the rate from ±0.20 to ±0.50: the tone at g, its level there; then the same tone at g + m × rate for m = ±1 and ±2, where it would fold onto g, and the level that lands on g. The rejection at g is the first less the second: what a signal outside the window puts on a channel at g, against what the same signal inside it would. Ten rates: 0.24 (÷4), 0.5, 1.0, 1.2, 1.44 (÷2), and 1.5, 1.8, 2.048, 2.4, 2.88 Msps (native).
+
+**Native rates** — the same profile at every rate in fractions of the rate, on both dongles within 1-2 dB (the worst of the four folds, both signs of g):
+
+| g | 0.20 | 0.25 | 0.30-0.34 | 0.36-0.37 | 0.38 | 0.39 | 0.40 | 0.42 | 0.45 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1.5-2.4 Msps | 30-39 | 51-57 | 27-36 | 39-45 | 30-32 | 26-28 | 23-25 | 17-20 | 10-12 |
+| 2.88 Msps | 44-53 | 41-48 | 35-44 | 39-46 | 34-38 | 27-29 | 22-25 | 16 | 13 |
+
+The window's interior is itself at 27-36 dB (0.30-0.34); the edge stays no worse than that out to 0.38 and falls away past it, on both dongles at every rate. Step 25's edge table (19-23 dB at 0.42, 27-29 at 0.39) agrees. With the USRP's LO 211 kHz from its tone instead of 137 (`data/step26-edge211-B.jsonl`, `step26-edge211d-B.jsonl`; every rate but 1.8 Msps), B's readings repeat within 1-3 dB at the native rates and within 3 dB of the table below at the decimated ones (0.24 ÷4 two rates out: 54.8 against 59.1): the chip's, not the source's.
+
+**Decimated rates** — the folds split two ways (`|g|` ≤ 0.42):
+
+| rate | one rate out (m = ±1), A / B | two rates out (m = ±2), A / B |
+|---|---|---|
+| 0.24 Msps ÷4 | 63.4 / 62.8 | 48.1 / 59.1 |
+| 0.5 ÷2 | 54.2 / 56.4 | 27.4 / 27.6 |
+| 1.0 ÷2 | 54.0 / 59.1 | 32.6 / 32.8 |
+| 1.2 ÷2 | 54.8 / 56.6 | 37.0 / 36.6 |
+| 1.44 ÷2 | 36.6 / 44.1 | 45.1 / 42.1 |
+
+- **One rate out**: the decimator's work. 54-63 dB to 0.42 of the rate (1.44 Msps aside: one point mid-window, g = +0.25, reads 36.6 dB on A and 44.1 on B, and 42.0 on B with the source's LO at 211 kHz — the chip's, at that rate's interior level, 36-45 dB). At 0.45, the decimator's transition, 28-29 dB; at 0.50, 0.
+- **Two rates out at ÷2**: the chip's own fold. Two output rates is one chip rate: the chip folds that signal onto g itself, before the decimator, at its own fraction g/2 — the native interior above, 27-37 dB at 0.5-1.2 Msps. The decimator cannot remove what is already in its passband. **Correction to step 25:** its "alias rejection 60.6-68.2 dB" was the one fold it measured (a tone at +0.7 of the rate, one rate out); the chip's own fold was not measured there.
+
+**The centre too** (`data/step26-edgein-{A,B}.jsonl`, every 0.01 from ±0.02 to ±0.19, eight rates). The worst of the four folds there, A / B: 1.5 Msps 28.8 / 29.1 dB, 2.048 33.3 / 33.4, 2.4 36.6 / 36.4, 2.88 41.8 / 40.2; 0.5 ÷2 29.8 / 30.0 (at g = 0.02, beside the centre), 1.2 ÷2 48.0 / 47.4, 1.44 ÷2 36.4 / 43.0; 0.24 ÷4 49.1 / 62.4 (A's low points at g = 0.05, 0.10, 0.15 alone, B none under 62; why is not measured). The chip's fold sets a floor across the whole window, the centre included.
+
+**So, the clean span.** What a margin at the window's edge can buy is an edge no worse than the window's interior; beyond that, no margin helps. Native: ±0.38 of the rate (2.4 Msps: ±912 kHz, where MimoSDR's fixed 200 kHz margin used ±1.0 MHz, 20 dB). Decimated: ±0.42, the decimator's pass edge (0.5 Msps: ±210 kHz, where the fixed margin left ±50 kHz). The chip's interior fold, 27-37 dB from signals one chip rate away, applies across the whole window at every rate, the centre included.
+
+**In the driver.** `demod::clean_half_span_hz(rate)`: `DECIMATED_CLEAN_FRACTION` (0.42) up to 1.44 Msps, `NATIVE_CLEAN_FRACTION` (0.38) above. MimoSDR takes it for an RTL source (`usable_half_span_hz`) in place of its fixed 200 kHz.
+
+### 26.5 Two things found on the way
+
+- **Image rejection above 840 MHz** (`data/step26-sweep-{A,B}.jsonl`, `step26-img211-{A,B}.jsonl`). The image of +300 kHz (the tone at RF + 2·IF − 300 kHz), read the same with the USRP's LO 137 and 211 kHz from its tone: A 33.8-36.8 dB from 860 to 1300 MHz, 42-52 dB at 1500-1700; B 39.3-45.4 dB at 860-1200 MHz and 37.2-40.3 at 1500-1700. At 600 MHz, 57.2 (A) and 54.9 dB (B). Step 15.1 read 56-60 dB at 862-1002 MHz on the bench of the time, with another source. The driver still writes IMR_G = IMR_P = 32; step 15 found G = 2 buys 5-14 dB above 840 MHz. Not changed here. For ADS-B, 1090 MHz's image is 1097 MHz.
+- **A line at 990 MHz, on both dongles, with the transmitter off** (`data/step26-{park990,scan990,quiet990}-{A,B}.jsonl`; `rangecheck --no-source`, the USRP not running): −12.5 to −16 dBFS, and the 8-bit output clipped (A: 12-50 % of its samples with the line within 250 kHz of the centre; B: 100 % with it anywhere within 600 kHz). It sits at a fixed RF whatever the tuning: 989.99-990.00 MHz on A, 990.08-990.11 MHz on B. A signal from outside the dongles would land at the same RF in both, within the crystals' ~1 kHz; these are 100 kHz apart, so each dongle most likely makes its own, but that is not proven. The source is not identified. It is inside the documented range and unrelated to the extension.
+
+## Step 25 — rates under 1.024 Msps: two more spans, and the resampler register's top bit (2026-10-17) — `data/step25-{lowrate,ratemap,breaks,breaks2,native}.jsonl` — `examples/glitchscan.rs --rate-floor`, `examples/tiercheck.rs --rate-floor`, `demod::set_bench_rate_floor`
+
+**The bench.** Two dongles (A, B), the USRP's tone through the pad and the splitter, at 300 MHz plus a quarter of the rate. Each rate is opened fresh (no power cycle: this host has no switch for it). The bench-only `--rate-floor` lets `set_rate` take rates under the span, for these measurements only.
+
+**Every rate, by `glitchscan`** (10 s each):
+
+| rate (Msps) | delivered / asked | phase steps | runs |
+|---|---|---|---|
+| 0.2 | 9.002 | 272,279–280,436 | 1 per dongle |
+| 0.225 | 0.500 | 13,411–15,102 | 1 per dongle |
+| 0.24, 0.25, 0.288 | 1.0002–1.0003 | 0 | 3 per dongle |
+| 0.30 | 1.0002 | 0 | 1 per dongle |
+| 0.35, 0.40 | 4.501 | 12,682–246,271 | 1 per dongle |
+| 0.5, 0.6, 0.7, 0.8, 0.85, 0.88, 0.89, 0.895 | 0.474 … 0.335 | 24,446–42,730 | 1 per dongle |
+| 0.90 | 0.3334 | 39,523–42,301 | 3 per dongle |
+| 0.905, 0.91, 0.92, 0.93, 0.94, 0.95 | 1.0002–1.0003 | 0 | 1 per dongle |
+| 0.96, 1.0 | 1.0002–1.0003 | 0 | 3 per dongle |
+| 1.024 (the span's floor, as a control) | 1.0002–1.0003 | 0 | 3 per dongle |
+
+- **The good rates.** Dropped blocks were 0 everywhere. At every good rate the tone landed within 0.5 kHz of its offset, at the same offset on each dongle at every rate (−275 … −282 Hz on A, +31 … +36 on B), so that offset is the dongles' own.
+
+**The rule.** The ratio a request writes is cut to the register's 26 bits ([RTL2832U] Table 7: rsamp_ratio [27:2]).
+- **What the chip does.** When the field's top bit (bit 25) is set, the chip resamples as if the ratio were the field + 2^26.
+- **How well it predicts.** It gives the rate delivered at 24 of the 26 rates within 0.03 %:
+  - 0.9 Msps writes the field 0x2000000 and is resampled at 0x6000000, 0.3 Msps.
+  - 0.3 Msps writes the same field and delivers the same 0.3 Msps.
+  - 0.5 Msps is predicted at 0.4737× and measured at 0.4738×.
+  - 0.2 Msps is predicted at 9.000× and measured at 9.002×.
+- **The two it doesn't cover.**
+  - 0.4 Msps writes 0x800000, f_symbol 14.4 MHz. Findings 10.2a measured that field as broken at 1.8 Msps output, and 4.5× of 0.4 is that.
+  - 0.225 Msps writes a field of 0 and delivered half the rate. The rule doesn't cover that.
+- **The reachable ratios.** Those under 2^25 (output over 0.9 Msps), and those from 3 · 2^25 to 2^27, written as ratio − 2^26 (output 0.225 … 0.30 Msps). These are exactly the measured-good spans.
+
+**Breaks** (`tiercheck --lossless-only`, 20 retunes each, the tone at ¼ and the step at 1/12 of the rate; 1.2 Msps as the control):
+- **First run.** At 0.905, 0.96 and 1.0 Msps every break recovered at 0, placed −7 … +9 per sample, with 0 dropped and 0 phase jumps. At 0.24–0.30 the first 12–13 breaks read as never recovering, and placement read −96 … +9.
+- **Why.** Those were retunes the stream held through its first second (`CHANGE_AFTER_START`) and then made back to back. They came 564 samples apart at 0.24 Msps, and `tiercheck` skips the recovery check when the next break is within 2,016 samples. Its placement estimate also reached across the 564-sample segments.
+- **With `--first-ms 1100`** (no held retunes), at 0.24, 0.288 and 0.30 Msps on both dongles: every break recovered at 0, placed −7 … +9 per sample, 0 dropped, 0 phase jumps. The 1.2 Msps control read −7 … +9. The 64-sample window gave one reading of −89 at 0.288 Msps on A; that break's per-sample placement was inside −7 … +9.
+
+**In the driver** (as first made; the decimation below changed the spans):
+- **The spans.** `demod::OUTPUT_RATE_GOOD_SPS` is now 0.905–2.88 Msps, and `demod::OUTPUT_RATE_LOW_SPS` is 0.24–0.30 Msps. Every other rate is refused with its record.
+- **Writing and reading the ratio.** `demod::rsamp_field` writes a low-span ratio as ratio − 2^26. `demod::ratio_of_field` reads a field with the top bit set as field + 2^26, so `Rtl::rate` reports the rate the chip runs at. Before, a 0.24 Msps stream read back as 0.514 Msps; the write was already right, by the 26-bit mask.
+- **The bench without the switch** (`data/step25-native.jsonl`, both dongles): the driver accepted 0.24, 0.25, 0.288, 0.30, 0.905, 0.96, 1.0 and 2.4 Msps. Each delivered the rate with 0 phase steps and read back as asked. 0.5 and 0.9 Msps were refused.
+- **MimoSDR.** Its `Caps` reads the main span only (0.905–2.88 Msps).
+
+**Every rate from 0.24 to 2.88 Msps, by decimation** (`decim`, `demod::plan_for_output_rate`, `examples/decimcheck.rs`; `data/step25-decimcheck*.jsonl`, `step25-breaks{4,5}.jsonl`, `step25-dips.jsonl`, `step25-break-dumps.txt`).
+
+**The plan.** A rate the chip isn't used at directly is made by running the chip at 2, 3 or 4 times it and decimating in the stream: ÷2 for 0.4525–0.905 Msps, ÷3 for 0.302–0.4525, ÷4 for 0.30–0.302. Every rate in the span has such a plan; a 1 kHz sweep in the tests checks it.
+
+**Lines that were the tone source, not the chip** (`data/step25-ghosts.txt`; `usrp_tone_source --offset`, the USRP's LO now settable away from the tone):
+- **What looked like a chip line.** The chip's own output (`record`, a tone at +0.233 of the rate, LO 400 kHz below the tone) showed a line at f − rate/3 at 0.905–0.93 Msps: 11.6–16.3 dB over the median on both dongles, 42–46 dB under the tone. At 0.94 and 0.96 Msps it was 1.1–4.2 dB. On that I first moved the chip floor to 0.95 Msps.
+- **Moving the LO.** With the LO 137 kHz from the tone, dongle A read 1.5–5.4 dB at every rate from 0.905 to 0.96. Dongle B read 9.8–11.8 dB at every rate, 0.96 included, where the 400 kHz LO had shown 4.2. A line made by the chip would not change with the source's LO. So it was the source, and the floor is back at 0.905 Msps.
+- **The same holds at 1.22 and 1.24 Msps.** A line at f ∓ rate/4 read 14.3–17.9 dB with the 400 kHz LO and 0.2–3.7 dB with 137 kHz (20 rates from 0.95 to 2.88 Msps, each with both LOs, dongle B).
+- **No line reads more than 7.5 dB over the median with both LOs** at any of those 20 rates. The largest are 5.2–5.7 at f − rate/5 at 1.5 Msps and 5.6–7.5 at f − rate/6 at 1.8 Msps, 53–55 dB under the tone.
+- **The bench's own.** The USRP's LO leak (tone − LO offset) and image (tone − 2 × the offset) also land on measured bins at particular rates: with 400 kHz, at 1.2, 1.6, 2.0 and 2.4 Msps.
+- **A mislabelling this found.** `record` reads the raw stream, which is the chip's, and wrote the asked rate into its sidecar: with the plan moved, a 0.905 Msps record was 1.81 Msps data under 0.905. `record` now writes the chip's rate as `core:sample_rate`, with `sdr_rtl:rate_asked`, `sdr_rtl:decimation` and, when decimated, a `core:description` saying so. `record --rate-floor` runs the chip at the rate itself.
+
+**The decimator.** A Kaiser-windowed low-pass, flat within 0.1 dB to 0.42 of the output rate, at least 70 dB down from 0.58 of it to the input's Nyquist frequency, and unity at DC; checked in the tests.
+
+**Through the stream, both dongles** (`decimcheck`, 4–5 s per rate):
+- **The rate.** 0.30–0.905 Msps delivered 0.9999–1.0001 of the rate with 0 dropped blocks. The rate read back and reported exactly.
+- **The tone.** It lands on its frequency, with the dongles' own offsets, 66–70 dB over the median, with 0 phase steps.
+- **The folding tone, LO 400 kHz from the tone.** At 0.7 of the rate it would fold onto −0.3. It read 59–67 dB under the in-band tone at most rates, at the floor (0.6–7 dB over the median), but lower at some:
+  - 0.4 and 0.8 Msps: 25 and 45–48 dB.
+  - 0.305 and 0.31 Msps: 47–56 dB, through ÷3 and through ÷4, 14–22 dB over the median.
+  - With the folding tone at 0.65 or 0.75 of the rate, the energy moved with it.
+- **The folding tone, LO 137 kHz from the tone** (`data/step25-decim-offsets.jsonl`, `step25-decim-restored.jsonl`): the same rates read 60.6–68.2 dB on both dongles, 0.4–7.5 dB over the median. That covers 0.301 (÷4), 0.305–0.45 (÷3) and 0.8 Msps (÷2). So every low reading was the tone source with its LO 400 kHz away: what in the USRP makes them is not measured, only that they follow its LO.
+- **The chip used directly at 0.905–0.95 Msps** reads 29.5–34 dB. There the folding tone lies outside the chip's own window, so this is the chip's own alias rejection at its edge, not the decimator's.
+- **The record.** `step25-dips.jsonl`'s `samples` and `tone_over_median_db` fields are swapped (fixed in `decimcheck` since).
+
+**Breaks through the decimator** (`tiercheck --lossless-only --first-ms 1100`, 0.31 ÷4, 0.4 ÷3, 0.6 ÷2 and 0.92 ÷2, then 0.4 Msps three more times, both dongles):
+- **The result.** 0 dropped blocks and 0 phase jumps. The new tone appears 1–24 output samples after `at_sample`: the filter's delay, inside `settled_at` (about 50 outputs at ÷2).
+- **Breaks read as unrecovered.** 2 of 280 did, both break 0. In each case break 1 came within 2,016 output samples (971 in the one dumped): two retunes landed back to back at the stream's 1-second start hold, and `tiercheck` skips the recovery check then.
+- **A bug the first run found.** The first run showed 37–48 phase jumps, all in the last segment. `blocking::Finished::tail_samples` widened the raw tail at the chip's rate instead of the decimated one. Fixed: it now carries the stream's own `tail_samples`, and a test checks the two agree.
+
+**One-sample glitches before a break, at the native rates too** (`TIERCHECK_DUMP`, per-sample level and frequency, 40 breaks per rate):
+- **Native 1.2 and 1.84 Msps.** No sample's level fell under 0.6 of the tone's. But single samples with a large phase error (frequency more than a quarter of the rate off the tone) sit 4–40 samples before `at_sample`: in 12 of 40 breaks at 1.2 Msps and 4 of 40 at 1.84. Most breaks also have one at `at_sample` itself, where the old segment ends.
+- **Through the decimator** each glitch becomes a one-output dip in level. At 0.4 Msps, 21 dips under 0.6 of the level in 40 breaks (9 before `at_sample`); at 0.92, 16 (9 before).
+- **In steady state there are none:** 2–12 million samples per rate, decimated and native, had 0 samples under 0.6 of the median level (the lowest 0.76–0.87).
+- **So** the last ~40 samples before a break can hold single glitched samples. Findings 19's 16-sample estimators could not see them. They are still the old configuration.
+
+**The chip's own edge at its native rates** (`data/step25-edge.jsonl`; `decimcheck --folding F`, a tone at F of the rate folding onto F − 1; the USRP's LO 137 kHz from the tone; 1.44, 2.048 and 2.4 Msps, both dongles):
+
+| folds onto (of the rate) | under the in-band tone |
+|---|---|
+| −0.48 | 8.9–11.3 dB |
+| −0.45 | 12.8–16.0 |
+| −0.42 | 18.7–23.0 |
+| −0.39 | 27.0–29.1 |
+| −0.36 | 40.7–44.1 |
+| −0.33, −0.30 | 29.2–34.4 |
+| −0.24 | 38.0–49.1 |
+
+- **The same at all three rates** as fractions of the rate, within about 2 dB between the dongles.
+- **What it means for a channel.** One near an edge of a natively made rate takes in what lies just past the other edge: 11 dB under it at 0.48 of the rate, about 30 dB under it from 0.39 inward. MimoSDR's 200 kHz edge margin at 2.4 Msps (channels to ±1.0 MHz, 0.42 of the rate) leaves 19–23 dB there.
+- **Decimated rates don't have this.** The chip's folds land in the decimator's stopband.
+
+**In the driver now.**
+- **Accepted rates:** every rate from 0.24 to 2.88 Msps (`demod::OUTPUT_RATE_SPAN_SPS`, MimoSDR's `Caps`).
+- **The chip used directly:** at 0.24–0.30 and 0.905–2.88 Msps.
+- **Between them:** ÷2, ÷3 or ÷4 in `session::Stream`, which reports `chip_rate()` and `decimation()`.
+  - **Read with `recv_into`,** the stream hands out the decimated samples. Its rate, sample counts, breaks (`at_sample` the first output that holds a new sample, `settled_at` the first clear of the old) and tail are at the rate set.
+  - **Read with `read`,** it hands out the chip's wire bytes at the chip's rate, and its rate, counts and breaks are the chip's.
+  - **The first read decides.** The other kind of read is then refused, with the reason, since both take from one flow.
+
+## Step 24 — the FIR bit by bit: all 160 bits, one at a time, against flat noise (2026-10-16) — `data/step24-fir-bits.txt`, `data/step24-level-cal.jsonl` — mimosdr's `examples/fir_bits.rs` (`run`, `level`, `shape`), `examples/usrp_tone_source.rs` (`noise`), `examples/record.rs --fields --demod`
+
+**The bench.** A USRP keys white Gaussian noise centred on 856.0 MHz: −20 dBFS RMS at its own full scale, flat across its 2.4 Msps. It reaches two dongles (A, B) through a 20 dB pad and one splitter, with no antenna. Both dongles record at once, at 856.0 MHz, 2.4 Msps, codes 15 9 0, with page 0 0x19 at 0x05 (or 0x25 for ×8). Each recording is 20 s long.
+
+**The 160 bits.** The tap registers hold 16 fields (10.3):
+- c0–c7 are 8 bits each;
+- c8–c15 are 12 bits each;
+- all are two's complement.
+
+Each setting sets **one bit of one field alone**: a sign bit as −2^(width−1), any other bit as 2^b. The reference is c15's sign bit alone (c15 = −2048). It was recorded before every field and after the last, and the driver's design was recorded at the start of each of the five runs.
+
+**The analysis** (`fir_bits shape`):
+- **Spectrum:** the PSD at 1 Hz bins, using one-second Hann windows half overlapped, about 37 per recording.
+- **Normalisation:** each recording is divided bin by bin by the reference recorded before its field on the same dongle. That removes the noise source's shape, the chain after the FIR and the window's roll-off. The TX scale's and ×8's nominal gains are taken out.
+- **Prediction:** field k alone is 2·c_k·cos(2πf(15.5 − k)/28.8 MHz) over the reference's 2·2048·cos(πf/28.8 MHz) (12.4).
+- **Fit:** the mean and rms of measured − predicted over 1 kHz blocks, for 5 kHz ≤ |f| ≤ 1.1 MHz, leaving out blocks predicted more than 20 dB under their peak.
+- **Nulls:** found on 1 Hz bins smoothed over 201.
+
+**Level and range** (`step24-level-cal.jsonl`, 3 s each, TX scale 0–40 in 5s):
+- **The reference is linear.** It rises 5.0 dB per 5 dB step, from −33.6 dBFS (TX 0) to −8.8 (TX 25). It reaches the 8-bit rails at 30 (1.5 % of values).
+- **The input compresses above TX 25.** c15 = 64 follows the reference − 30 dB through TX 30 within 0.4 dB, then falls 2.5 dB short at 35 and 6 dB short at 40.
+- **×8** measured 17.3–17.7 dB at TX 25 and 30.
+- **Sub-LSB output is constant.** With the noise off and c15 = 64, dongle A's output did not change in 3 s.
+- **The mean is about −1 LSB.** The recordings' mean is near −1 LSB (−240 to −250 of 32,768 after widening), about −39.6 dBFS by itself. Power is read with the mean taken out (`ac_dbfs`).
+- **The settings.** The weaker bits are recorded at higher TX scale (up to 25) with ×8, aimed at −15 dBFS. Every setting's TX scale and ×8 are in the data.
+
+**What each bit does** (`step24-fir-bits.txt`, 320 bit recordings, both dongles):
+
+| bits | measured − predicted, dB | rms over the band, dB | what the bit alone does |
+|---|---|---|---|
+| 6 to sign | −0.30 … +0.52 | 0.05–0.58 | the field's cosine, at 2^b of the reference's size |
+| 5 | −0.56 … −0.18 | 0.05–1.06 | the same, the floor showing near the nulls |
+| 4 | −0.76 … +0.94 | 0.07–2.02 | the cosine, filled in near its nulls |
+| 1, 2 | +2.4 … +14.4 | 0.22–5.8 | nothing above the output's floor: the band reads −42.8 to −45.1 dBFS for either |
+| 3 | +0.04 … +3.0 | 0.14–3.2 | at the floor: −39.3 to −42.2 dBFS |
+| 0 | −1.1 … +19.2 | 2.0–7.6 | at or under the floor: −43.4 to −59.3 dBFS |
+
+- **Each field alone is its predicted cosine.** Every field's sign bit matches, on both dongles. The level is within −0.05 … +0.06 dB. The shape is within 0.05–0.10 dB rms for c0–c6 and c11–c15, 0.22 for c7, and 0.29–0.41 for c8–c10.
+- **Each bit in a field is that field's shape at 2^b**, 6.02 dB per bit, from bit 5 up. What remains follows the setting, not the bit, as the same offset in every field on both dongles: TX 19 with ×8 reads +0.46 … +0.52 dB, TX 15 with ×8 +0.35 … +0.42, TX 24 −0.20 … −0.30, and TX 18 −0.04 … +0.06.
+- **At one setting the smaller values read low.** At TX 25 with ×8, bit 7 reads +0.03 (−0.05 … +0.09), bit 6 −0.19 (−0.26 … −0.10) and bit 5 −0.41 (−0.56 … −0.18), over 32 recordings each. Why is not measured.
+- **The fields add.** The driver's design (all 16 fields) matched the sum of its pairs' cosines in each of the five runs on both dongles: −0.01 … +0.02 dB, 0.05 dB rms.
+- **The nulls.** The predicted nulls lie at fs/(4(15.5 − k)): 464.5 kHz for c0, 960.0 for c8, 1,107.7 for c9 (c10's, 1,309 kHz, are outside the window).
+  - **c0–c7:** the sign bit's null falls within ±2.05 kHz of its prediction, with no consistent sign across fields or dongles.
+  - **c8:** for bits 5–11, the minus-side null falls within 5.2 kHz of its prediction. On the plus side it falls 9–17 kHz low (942.6–951.0 kHz), on both dongles and at every bit.
+  - **c9:** the minus-side null falls 8.5–12.5 kHz inside (−1,095.2 … −1,099.2 kHz, bits 7–11). The plus side's minimum is at the search's inner bound (1,047.7–1,055.1 kHz), so it is at least 52 kHz inside.
+  - Past ±0.9 MHz the 12-bit fields' nulls are also shallower than predicted. Why is not measured.
+- **Drift.** Over the 75 minutes the reference's band power fell 0.32 dB on A and 0.27 dB on B, most of it in the first 15 minutes. Each bit is compared with the reference recorded just before its field.
+
+**At three bands** (`step24-fir-bits-491.txt`, `step24-fir-bits-772.txt`, `step24-level-cal-{491,772}.jsonl`). The same sweep was run at 491.0 and 772.0 MHz.
+
+**Picking the centres** (`fir_bits run … quiet`, then `peaks`). The dongles were stepped across ±14.4 MHz of each centre with the noise off. They heard no live air above 10 dB over the median 1 kHz block, only narrow lines at fixed offsets from where the dongle was tuned. Four of those lines fall within 0.5 kHz of multiples of 14.4 MHz: 489.5995, 503.9995, 763.1995 and 777.5995 MHz.
+
+**Levels.** The same USRP setting reaches the dongles differently by band:
+
+| | 491 MHz | 772 MHz | 856 MHz |
+|---|---|---|---|
+| reference at TX 15 | −10.1 / −10.7 dBFS (8.4 dB hotter than 856) | −18.9 / −18.7 dBFS | −18.6 / −18.5 dBFS |
+| input linear through | TX 20 (c15 = 64 falls 1.5–2 dB short at 25) | TX 25 | TX 25 |
+| ×8 | 17.2–17.6 dB | — | 17.3–17.7 dB |
+| runs used base / top | 5 / 20 | 15 / 25 | 15 / 25 |
+
+**What doesn't change with the band.** Every field's sign bit matches its cosine with the same rms at all three bands, on both dongles:
+
+| fields | rms, dB |
+|---|---|
+| c0–c6 | 0.07–0.10 |
+| c7 | 0.21–0.24 |
+| c8 | 0.39–0.44 |
+| c9, c10 | 0.29–0.35 |
+| c11–c15 | 0.05–0.09 |
+
+- **The design** matched the sum of its fields within 0.01 dB (0.05 dB rms) in every run at every band.
+- **The nulls.** c0–c7's nulls fall within −2.3 … +2.8 kHz of the formula. c8's plus-side null sits 8–11 kHz low at 491 and 772 MHz, as at 856, and c9's nulls sit inside their predictions.
+- **Bit 6 against bit 7.** At one setting bit 6 reads 0.16–0.20 dB below bit 7, at 772 as at 856 MHz.
+- **So** the FIR's in-window response does not depend on the RF from 491 to 856 MHz. The edge effects past ±0.9 MHz don't either.
+
+**From outside the window** (`step24-alias.txt`, `fir_bits run … alias`, 3 s each):
+- **Setup.** The noise's 2.4 MHz band was centred 0, ±2.4, … ±12 MHz from 856.0 MHz. The on-centre band was keyed at TX 15, the off-centre bands at TX 25 and TX 30.
+- **What was read.** The power over 5 kHz–1.1 MHz, less the noise-off floor, against the on-centre band's, less the nominal 10 or 15 dB. This was done for c15 alone, c14 alone and the design.
+- **What counts.** A reading is taken as rejection where the two levels agree.
+
+| band centre | c15 alone | c14 alone | design |
+|---|---|---|---|
+| −2.4 MHz | −7.1 … −8.3 | −0.8 … −2.4 | −28.4 … −31.0 |
+| +2.4 MHz | −25.2 … −27.0 | −25.3 … −27.9 | −27.4 … −30.8 |
+| −4.8 MHz | −37 at TX 25, −28.5 at TX 30 | −24.6 … −27.6 | −44 … −48 at TX 25, −30 at TX 30 |
+| ±7.2 … ±12 | −39 … −52, near the floor, the levels disagree by up to 10 dB | same | same |
+
+- **The −2.4 MHz band** (1.2–3.6 MHz below the centre) comes through c14 alone within 2.4 dB of the in-window level, and through the design 28–31 dB down.
+- **The +2.4 MHz band** is 25–31 dB down through every set, c14 and c15 alone included. Something other than the FIR rejects it, and that is not measured.
+- **The −4.8 MHz band.** c15 and the design read about 9 and 14–18 dB higher at TX 30 than at TX 25, so the TX 30 reading is not linear. c14 reads within 3 dB at both levels.
+- **c14 against c15.** By the formula c14 alone should pass the −2.4 MHz band less than c15 alone does (−2.7 against −0.3 dB at 2.4 MHz). It passes it about 6 dB more. Not explained.
+
+**Per field, outside the window, at three bands** (`step24-outside-{491,772,856}.txt`, `step24-foldfit.txt`, `fir_bits run … fieldalias`, `aliasmap`, `foldfit`).
+
+**Setup.**
+- Each field's sign bit alone, the reference (c15) and the design were each recorded with the noise band centred 0, ±2.4, … ±12 MHz.
+- The off-centre bands were keyed 5 and 10 dB hotter than the on-centre one. The base was TX 5 at 491 MHz and TX 15 at 772 and 856.
+- **The 8-bit fields were run with ×8.** Without it, their sign bit's in-window level sits near the 8-bit output's floor. In the first T-Band run without ×8, their readings disagreed between levels by 2–15 dB and between dongles.
+- **Reading.** Each recording was compared with the same set's on-centre one, per 1 kHz block (input g + n·2.4 MHz folds onto output g), less the noise-off floor and the lift.
+- **What counts.** A block counts as linear leakage when its two levels agree within 1 dB.
+
+**Only the band just below the window (centred −2.4 MHz) reads linear.** Its leakage per field:
+
+| sets | across the bands and dongles |
+|---|---|
+| c0 | −1.8 … −3.5 dB |
+| c1–c3, c5 | −2.8 … +0.1 |
+| c4, c6, c7 | −0.5 … +3.2, mostly more than in the window |
+| c8–c11, c14 | −0.3 … −4.4 |
+| c12, c13, the reference (c15) | −6.2 … −8.5 |
+| the design | −37.6 … −42.4, the two levels agreeing on only 16–25 % of its blocks |
+
+Each set's readings span at most 2.7 dB across the three bands and two dongles, and the two dongles differ by up to 2.7 dB on one reading. Every other band read −14 to −40 dB, with the levels disagreeing. Those readings are the floor or mixing products, so the leakage there is at most what was read.
+
+**Where that band meets the FIR** (`foldfit`):
+- **Method.** At each output frequency, the fit finds the FIR input frequency f′ at which the 16 fields' cosines best reproduce all 16 measured leakages, with one common term for whatever follows the FIR.
+- **Result.** In every case (three bands, two dongles, 43 output frequencies each) the best f′ is the band's own frequency **+ 12.00 MHz**: 12,001.2–12,003.1 kHz on average, sd 11.5–12.5 kHz.
+- **The fit.** The rms is 1.1–1.6 dB there, against 9.4–9.8 dB at the band's own frequency. The common term is −3.7 … +0.9 dB: a mean of −0.9 dB for output below −500 kHz and −2.4 dB above +500 kHz.
+- **For a design.** The band 1.2–3.6 MHz below the centre is attenuated by the FIR's response at +8.4 … +10.8 MHz, not at its own frequency (by the cosines' symmetry, equally at −8.4 … −10.8 MHz). Why this mapping holds is not measured.
+
+**At other rates** (`step24-outside-856-{1024,2048,2880}k.txt`, `step24-foldfit-rates.txt`; 856 MHz, the same method, each rate's bands one rate wide and stepped by the rate; `fir_bits run … --rate`).
+
+**Inside the window.** At TX 15 the reference reads −17.7 dBFS at 2.048 Msps and −21.7 at 2.88, against −18.5 at 2.4. It is linear through TX 20 at 2.048 and through TX 25 at 2.88.
+
+**Where the out-of-window bands meet the FIR.** Measured as the fold fit's shift from each band's own frequency:
+
+| rate | band below the window | band above the window |
+|---|---|---|
+| 1.024 Msps | +9,216 kHz (= 9 × rate) at all 17 points on both dongles, 0.28–0.34 dB rms | no shift fits |
+| 2.048 Msps | +10,240 kHz (= 5 × rate) on the band's upper part (outputs ≥ −174 kHz), B: sd 14 kHz, 0.69 dB rms; A: the same but for 2 of 22 points (+576 and +626 kHz, 6.5–7.5 dB rms) | not linear |
+| 2.4 Msps | +12,000 kHz (= 5 × rate), 1.1–1.6 dB rms | not linear |
+| 2.88 Msps | +14,380 … +14,386 kHz (= 5 × rate) at about half the points, 1.9 dB rms | +2,881 … +2,882 kHz (= 1 × rate) for outputs −1.24 … 0 MHz, 0.2–2 dB rms; no fit above 0 |
+
+- **One form for all of them.** The band that lands on output g meets the FIR at g + m × f_symbol, where f_symbol = 4 × rate. m is +2 at 1.024 Msps and +1 at 2.048, 2.4 and 2.88 Msps for the band below the window. For 2.88 Msps's band above it, m is −2 (equivalent, by the cosines' symmetry and period, to g + 2 × rate).
+- **Single fields at 2.88 Msps** let in −10.0 … +4.8 dB of the band above the window, the two levels agreeing on 57–66 % of blocks.
+- **The design** reads:
+  - −35.0 … −35.2 dB on both sides at 1.024 Msps (72–76 % linear);
+  - −40.7 … −40.9 dB on both sides at 2.048 (49–68 % linear);
+  - −41.9 dB on A and −27.9 … −29.7 dB on B at 2.88 (8–12 % linear).
+- **So the design's leakage doesn't come through the fold.** By the formula, across the window the design is at least 51–54 dB down at every one of these fold points (g + 4 × rate at all four rates, g + 2 × rate at 2.88). Its measured leakage comes by another path, which the taps don't set.
+
+**What this settles.** The 160 bits are 16 shapes. Field k's shape is cos(2πf(15.5 − k)/28.8 MHz), and bit b of the field scales it by 2^b (the sign bit by −2^(width−1)). The fields add. At this output's resolution, a bit alone shows from about 2^4 up. Below that it is under the 8-bit output's floor, even with the input at the top of its linear range and ×8. Whether the low bits still add their 2^b share inside a full tap set is not measured here: a full set measures only their sum.
 
 ## Step 15 — image rejection through the stream — `data/step15-image-profile.jsonl`, `data/step15-imr-grids.jsonl` — `derived/examples/imrsearch.rs`
 
@@ -116,6 +703,546 @@ the 20 MHz grid between 500 and 840 MHz) and each recovers 7–17 dB with
 G = 35. Above 840 MHz the other direction (G = 2) gives 5–14 dB. In the
 800 MHz public-safety band (851–869 MHz) that is 58–60 → 65–67 dB; the
 image of a channel there is 7.14 MHz above it.
+
+## Step 23 — the floor: the FIR's DC gain (2026-10-12) — `data/step23-*` — `examples/gainsweep.rs`, `ifsweep.rs --demod`, `firdesign.rs --dc-gain`, `record.rs --demod`
+
+The bench: the second Linux host, its two dongles (A, B) off one splitter,
+the USRP's tone through the attenuator; the A/B (mimosdr's
+`docs/rtl-ab-bench.md`) at 2.4 Msps, the earlier driver at its gain 20 on
+one dongle and this one on the other at the same moment, swapped, the
+tone at +300 kHz matched in level (`rtl_ab_score tone`, 2^20 points).
+
+- **Where the A/B lost.** On the 800 MHz beds the loss (P1 −2.4, P2 −1.0
+  points) was spread over every channel, the strongest control channel
+  near the centre included; the A/B's own tones read 0.3–1.6 dB less over
+  the median bin through this driver at 800 MHz, 1–5.5 dB more at 700 MHz
+  and on T-Band, where it won.
+- **Gain codes** (`step23-gainsweep-852.jsonl`, every LNA × mixer × VGA,
+  852.30625 MHz, dongle A, the A/B's tone level): up to an output of about
+  −15 dBFS per bin the floor beside the tone stays at −79 to −76 dBFS
+  whatever the codes, so the carrier over it is the output level less a
+  constant; the split between the stages changes it by ≤ 1 dB at one
+  output level, and the ladder's rungs are at the best for their level.
+  Above −15 dBFS the analogue noise shows and the floor rises.
+- **The FIR's DC gain** (`step23-gainsweep-fir-scaled-852.jsonl`): the
+  design's taps scaled ×⅛ … ×2 (rounded), LNA 15, every mixer × VGA. At
+  one output level the carrier over the floor rises as the DC gain falls
+  and stops rising at ×¼: at −24 dBFS per bin ×2 54.0, ×1 57.5, ×½ 59.0,
+  ×¼ 59.7, ×⅛ 59.8 dB. At low output the floor is −79 dBFS at ×1 and
+  −85.6 at ×⅛: the floor ahead of the FIR, raised with its gain, until the
+  output's own 8-bit floor under it shows. The same at ×¼ against ×1 on
+  dongle B and at 772 and 501.7 MHz (`step23-gainsweep-fir-scale-check.jsonl`):
+  +1.5 to +4.5 dB at output levels −30 to −21 dBFS.
+- **Page 0 0x19** (`step23-demod-p0-0x19-sweep.txt`, `step23-0x19-check.txt`):
+  its low six bits written in the start sequence. The stream needs bits 0
+  and 2 set, bit 1 clear; the driver writes 0x25 (findings 9b item 16, the
+  value observed). **Bit 5 is a gain of 18 dB after the FIR (×8)**: with
+  it clear (0x05, 0x15) and the analogue gain 18 dB higher (codes
+  15 12 1 against 15 2 0) the level, the window's shape and the tones'
+  landings match 0x25's with our taps (ref −26.0, ±1.0 MHz −3.9/−3.7,
+  ±1.6 34–37 dB), and other tap sets change the response the same way
+  under either value, so the FIR stays in the path. Bit 4: 0x05 and 0x15
+  agree within the repeats' spread (three each). At 2.048 and 2.88 Msps
+  0x15 and 0x25 differ only in level. The sweep's first reading — a flat
+  window and 46–55 dB at ±1.6 MHz with bit 5 clear — was taken at codes
+  15 2 0, 18 dB less signal into the ADC: the window's droop and the
+  ±1.6 MHz landing change with the drive into the ADC, not with the bit.
+  So clearing bit 5 is the DC-gain cut without coarser taps.
+- **The cutoff** (`step23-fir-cutoff-tones.txt`, 0x15, codes 15 12 1, both
+  dongles): the design recomputed at cutoffs 1.2 / 1.3 / 1.4 / 1.5 MHz
+  (DC gain 4,096). ±1.0 MHz −3.9 → −3.4 → −3.0 → −2.7 dB (dongle A);
+  ±1.3 MHz 16–17 → 14–16 dB; ±1.6 MHz 31–40 dB at every cutoff; ±2.0 MHz
+  falls 4–6 dB. Most of the droop and the ±1.6 MHz cap are not the FIR's.
+- **Lower DC gains by rounding** (`step23-dc-gain-tones-852.txt`): the
+  design recomputed for DC gains 2,048 / 1,024 / 768 / 512. The level falls
+  6.5 / 10.4 / 13.7 / 15.7 dB (not 6 / 12 / 14.5 / 18), and the rejection
+  of a tone at ±2.0 MHz falls from 44–49 dB to 26–28 at 2,048 and 1,024 —
+  more than rounding alone predicts; not understood.
+- **Why step 22 missed it**: `firdesign`'s pair moves keep the DC gain, and
+  its model put the ADC's floor at a fixed ratio to the signal at every
+  DC gain. At one output level a set of DC gain h₀ lets the analogue gain
+  rise by 4,096 / h₀, so that ratio falls with (h₀ / 4,096)²; with that in
+  the model (`--dc-gain`) its candidates at 1,024–2,048 model 3–4.5 dB more
+  mean SINR than ours (at 4,096, 0.6). Most of them droop 10–13 dB at
+  ±1 MHz; not benched.
+- **Decode** (three 800 MHz beds, verdict / tap800 / mush; new − old,
+  points of messages matched; the tone matched within 0.7 dB unless said):
+
+  | new side | all | verdict | tap800 | mush | channels new/equal/old, p |
+  |---|---|---|---|---|---|
+  | DC 4,096 (the driver), codes 15 2 0 | −5.42 | −9.32 | −2.94 | −3.47 | 4/9/23, 0.0003 |
+  | DC 2,048, codes 15 6 0 | −1.81 | −3.90 | −1.41 | +0.07 | 8/10/18, 0.08 |
+  | DC 1,024 (rounded design), codes 15 8 1 | −5.94 | −12.14 | −5.01 | −0.18 | 10/11/15, 0.42 |
+  | DC 4,096, 3.5 dB hotter (15 4 0) | +1.58 | +1.88 | +1.47 | +1.36 | 15/11/10, 0.42 |
+  | DC 2,048, 3.5 dB hotter (15 6 1) | +2.75 | +4.30 | +1.65 | +2.07 | 17/14/5, 0.017 |
+  | **0x19 = 0x15, our taps, codes 15 12 1** | **+2.46** | **+2.12** | **+2.84** | **+2.49** | **18/12/6, 0.023** |
+
+  0x15 by offset: +0.7, +5.3, +1.2, +6.4 — ahead in every band. Its tones
+  stand 83.0–84.6 dB over the median bin against the earlier driver's
+  78.9–80.1 at the same level. The other seven beds, same setting: audit
+  +0.33, deafness −1.60, golden −0.01, home +0.41 (800 MHz), phase2 0.00,
+  tap700 −2.65 (700), tband +6.11 (T-Band); all seven +1.15 (22/34/16,
+  p = 0.42). On 700 and T-Band the tones were not matched — this side
+  1.5–2 dB hotter at 700, 5–6 at T-Band (the two drivers' gains differ by
+  band). deafness lost 92 of 4,136 on its +675 kHz control channel.
+- **The mirror** (`rtl_ab_score psd`, 6.25 kHz bins): tap700's loss was
+  one dongle's — this side on dongle A 1,337 and 934 of 2,264 against
+  1,665 and 1,769 on B; the earlier driver 1,492–1,625 on either. The
+  recordings at codes 15 12 1 carry a copy of each channel at −x
+  (tap700's at −587 kHz 3–9 dB under the channel, verdict's control
+  channel at −675 kHz 4–7 dB under), 8–14 dB over the floor; at 15 6 0
+  3 dB over; at 15 2 0 and through the earlier driver none (≤ 0.7 dB).
+  Every bed carries the USRP's own carrier at the centre, ~27–35 dB over
+  the floor; 2·f₀ − f lands at −x, so the copy reads as third-order
+  intermodulation with that carrier, growing with the drive into the IF
+  and the ADC. The ×⅛ cut buys the floor with 18 dB more drive; the
+  floor stopped improving at ×¼.
+- **A 1.5 MHz cutoff with 0x15** (four beds): verdict +1.72, phase2 +0.05,
+  deafness −0.94, tap700 −9.14 (dongle A 934 of 2,264: the mirror); all
+  −1.33. The flatter window did not pay for itself here.
+- **Net ×¼: 0x15 with the taps doubled** (DC gain 8,192, every field in
+  its width; codes 15 10 0, 6 dB less drive than 15 12 1): five beds
+  +3.75 — tap700 +7.31 (dongle A 1,653 and B 1,838 against the earlier
+  driver's 1,550 and 1,610), verdict +3.59, tband +6.18 (this side 5.5 dB
+  hotter), phase2 +0.35, deafness −0.35; by offset +3.1, +4.9, +1.1,
+  +10.6; channels 17/24/12, p = 0.46. The mirror is still there (7.5–8.4
+  dB over the floor on tap700) but the channel stands 15.5–16 dB over the
+  floor against the earlier driver's 7.6–9.4.
+- **The driver** (2026-10-12): page 0 0x19 ← 0x05 (`protocol.rs`,
+  `STREAM_ENABLE_FIR_X8` named and left clear) and the design at DC gain
+  8,192 (`taps.rs`, `DESIGN_DC_GAIN`; findings 10.3's set is the same
+  design at 4,096, kept as a test). The output for given gain codes is
+  12 dB under the earlier setting: a configuration's gain wants ~12 dB
+  more for the same level.
+- **The driver as it stands, all ten beds**, its own taps and 0x19, the
+  codes chosen per band so the tone matches the earlier driver's (800 MHz
+  15 10 0, 700 MHz 15 9 0, T-Band 15 6 0; tones within 0.2–0.5 dB except
+  one 700 MHz pair, this side 0.6–2.7 dB lower): **800 MHz +1.32 points,
+  channels 37/36/15, p = 0.003** (verdict +4.06, tap800 +3.60, mush +2.66,
+  audit +0.28, home −0.16, deafness −0.21, golden −0.22; by offset +0.5,
+  +2.0, +1.1, +2.4); **700 MHz +2.10** (tap700 +4.92, phase2 −0.12; 7
+  channels); **T-Band −4.03** (tband; channels 2/2/9, p = 0.07); all ten
+  +0.50, 40/43/25, p = 0.08. Every earlier tband run had this side 5–6
+  dB hotter: at matched level the T-Band was never measured before, and it
+  loses on the channels toward the window's edge — +1.0 MHz decodes 1,753
+  against 2,179 (5.5 dB hotter: 2,822 against 2,167), −350 kHz 140
+  against 216. The window's droop (−3.9 dB at ±1 MHz, the earlier driver
+  −2.2/−1.3) is the lead.
+- **The cutoff at 1.5 MHz, DC gain 8,192** (`step23-fir-cutoff-rates.txt`;
+  ±1 MHz −2.7/−2.5 dB against −3.9/−3.6 at 2.4 Msps; ±1.6 and ±2 MHz
+  2–7 dB less rejection at 2.4 and 2.048 Msps; 1.024 Msps alike), matched
+  per band: tband **+0.64** (was −4.03; +1.0 MHz 2,124 against 2,215),
+  700 MHz **+1.81** (tap700 +4.42, phase2 −0.24), verdict + deafness
+  **+2.45** (12/18/3, p = 0.035). The driver's design takes it
+  (`DESIGN_CUTOFF_HZ`).
+- **The driver as shipped** (0x19 ← 0x05, the design at 1.5 MHz / 8,192,
+  no bench overrides; codes per band 15 10 0 / 15 9 0 / 15 6 0 so the
+  tone matches the earlier driver's at gain 20 — within 0.3 dB at 800
+  MHz and T-Band, 0.3–0.9 dB over at 700): the tones stand 83.2 dB over
+  the median bin against 79.2 (800 MHz), 82.9 against 78.1 (700), 85.8
+  against 82.3 (T-Band).
+
+  | beds | new − old | channels new/equal/old, p |
+  |---|---|---|
+  | 800 MHz: verdict +6.63, tap800 +3.79, mush +3.08, deafness +0.45, audit +0.16, home +0.16, golden −0.12 | **+1.90** | 42/35/11, < 0.0001 |
+  | 700 MHz: tap700 +4.53, phase2 0.00 | **+2.00** | 1/6/0 |
+  | T-Band bed | **+1.90** | 10/2/1, 0.012 |
+  | **all ten** | **+1.91** | **53/43/12, < 0.0001** |
+
+  800 MHz by offset: +0.2, +3.3, +1.6, +3.6.
+- **Open**:
+  - **Alias rejection.** The earlier driver rejects +1.6 MHz by about
+    65 dB; we reject about 35 dB at ±1.6 and 14–16 at ±1.3. The bed's
+    channels 1.2–1.8 MHz above the window show in this driver's recordings
+    and not in the earlier one's. This is not production-ready.
+  - **A spur at 851.16 MHz** appears only in this driver's recordings.
+  - **Live air in the bench.** Every decode result above has to be redone
+    with the replay on frequencies that are quiet at the host, or with
+    the dongles shielded.
+  - **The copies at −x** were measured on a bench whose replay puts a
+    strong carrier at the centre. On the air the like comes from strong
+    neighbours, which the readiness plan's 7-day same-air A/B will judge.
+
+  By offset at matched level, DC 4,096: 0–0.3 MHz −0.25, 0.3–0.6 −6.3,
+  0.6–0.9 −7.0, 0.9–1.2 −13.2; DC 2,048: +0.4, −3.9, −1.8, −2.1. The
+  centre is even; the loss is the window's shape away from it.
+- **The extra NIDs on voice channels** (530 and 368 against the bed's 120)
+  were live air. The bench dongles pick up the systems on the air at the
+  host, which are the systems the beds recorded, so live calls land on
+  the scored channels (mimosdr `docs/rtl-ab-bench.md`, "Isolation").
+  Every decode score here carries that contamination, varying run to run
+  and dongle to dongle. The tone measurements are less affected.
+
+## Step 21 — Linux: a dongle the kernel driver let go of, the refused demodulator write (2026-10-12) — `data/step21-refusals.txt`, `data/step21-hwcheck-linux.jsonl` — `examples/claimcheck.rs`, `refusalcheck.rs`, `finishloop.rs`, `hwcheck.rs`
+
+The first run on Linux: a Raspberry Pi 5 (aarch64, Debian 13, kernel
+6.18), the bench dongle and the USRP B206mini's tone through the 20 dB
+pad, the programs built in the Debian 13 container and copied over. The
+host has no power-cycling analyzer (`SDR_BENCH_NO_CYCLE=1`): the dongle
+is opened as found. usbmon on the host's bus showed the wire.
+
+**The kernel driver leaves the endpoint stalled.** With
+`dvb_usb_rtl28xxu` bound, the open's claim detached it (its log:
+"successfully deinitialized and disconnected") — and the stream then
+delivered nothing for 2 s: every bulk transfer completed with EPIPE (128
+in one run), 3 of 3 runs; the same with the module unbound before the
+open. USB_EPA_CTL read 0x0210 at the open: FIFO reset and stall, the
+set-up value the vendor driver writes first (9a), left set. Our FIFO
+reset pulsed bit 9 and then wrote the register back "as it was", so the
+stall stayed. The release now clears bits 9 and 4 and never writes back
+the write-1 bits 5 (flush) and 0 (valid): 3 of 3 streams. The simulated
+dongle stalls its endpoint while either bit is set
+(`FakeRtl::set_epa_ctl`); the old release fails its test in 2 s, as on
+the Pi.
+
+**When the driver lets go, the kernel driver binds again**: after every
+close `dvb_usb_rtl28xxu` was bound, even when it had been unbound before
+the open. With the module blacklisted (a file in /etc/modprobe.d) nothing
+binds. Either way the next open finds whatever the last owner left.
+
+**A second open is refused before it sends anything (A4 on Linux).**
+`claimcheck`: "claim interface failed: interface is busy (errno 16)";
+usbmon shows no control transfer between the stream's start and its
+finish; the stream read 4.11 MB in the second after the refused open
+(4.10 expected); a third open after the close succeeds. 3 of 3.
+
+**A demodulator write needs a control read shortly before it.** Every
+finish then failed: the halt write (page 0 0x06 ← 0) was refused (STALL)
+through the retry budget, 10 of 10 `finishloop` runs, with 128 transfers
+in flight and data flowing at the full rate — not 16.7's empty queue.
+`refusalcheck` (the raw stream, one request at a time, each repeated 1
+ms apart until accepted, 3 passes):
+
+- after ≥ 300 ms with no control request, every demodulator write —
+  the halt, a rewrite of 0x06 with the value it holds — is refused for
+  the whole 500 ms the probe tries; a refused write does not end it;
+- USB-block and system-block writes (USB_SYSCTL, DEMOD_CTL rewritten
+  with their values) after 1 s idle are accepted at once;
+- reads are always accepted, and **one read of any block** — the
+  written register, page 1 0x01, the USB block's counter, DEMOD_CTL —
+  lets the demodulator write through: 0 refusals with the read 0, 250
+  or 280 ms before the write; refused with it 320 or 400 ms before (the
+  control timeout, 300 ms, set to 1 s did not move this).
+
+The vendor driver's trace (9) reads page 10 0x01 after every
+demodulator write; on the Mac (the dongle power-cycled before each run)
+finishes after 3 s of idle were never refused (16.7, 0 of 38). **Not a
+state the kernel driver left** (`data/step21-refusals-cold.txt`): with
+the module blacklisted and unloaded, the dongle unplugged for 10 s and
+plugged back in — DEMOD_CTL's first read 0x20, the power-on value (the
+port's `disable` toggle tried first was no power cycle: 0x68 after it) —
+three passes gave the same: no read before → refused 183-187 times over
+the 500 ms; a read 320 ms before → refused; a read just before → 0
+refusals. So it comes with the host: Linux on the Pi 5 against macOS on
+the Mac; which part of the host (the operating system's USB stack or
+the controller) is not separated.
+
+The request layer now sends one DEMOD_CTL read before a demodulator
+write when no read was accepted in the last 100 ms
+(`usb::DEMOD_WRITE_READ_WITHIN`), and one before each retry of a refused
+demodulator write; they are counted (`Link::wake_reads`). With it: 0
+refusals in every `refusalcheck` pass (8 wake reads a run), 10 of 10
+`finishloop` runs clean (finish 47.7 ms, 0 blocks dropped). The simulated
+dongle can refuse the same way (`FakeRtl::set_demod_write_needs_read`):
+a retune and the finish after 400 ms of reading go through unrefused;
+without the wake read the test fails.
+
+**`hwcheck` on Linux** (`data/step21-hwcheck-linux.jsonl`): the tone at
+the predicted offset at every check, 67.5-71.8 dB; 1.024-2.88 Msps
+delivered within 0.016%; the restart's first samples after 15.7 ms; 0
+samples while paused; 100-220 MHz all locked (VCO indicator 69-123). The
+frequency error is a constant 4.3-4.4 ppm (the dongle's crystal). The
+one `peak_at_predicted: false` (1.024 Msps, 5 bins) is the same 1.32 kHz
+in that rate's finer bins.
+
+**Breaks per rate on Linux** (`data/step21-settle-rate.txt`, step 19's
+`tiercheck --lossless-only --rate R --retunes 50 --first-ms 1100`, two
+passes at 1.024, 1.2, 1.44, 1.8, 2.048, 2.4 and 2.88 Msps): 700 breaks,
+0 blocks dropped, 0 phase jumps, 0 refusals. The new configuration
+begins −24 to +6 samples from `at_sample`, 40-47 of each 50 within ±8;
+the Mac with the start-bit quiesce (`data/step19-halt-rate.txt`,
+`step19-halt-default.txt`): −23 to +6, 41-49 of 50. The same.
+
+**The kernel driver loaded, 100 receivers in a row (review A3;
+`data/step21-a3loop.jsonl`, `examples/a3loop.rs`).** Each run: open, 300
+MHz, 2.048 Msps, 3 s of stream, finish, 2.4 Msps, 3 s more, finish,
+close; the tone 300 kHz above. Before every open `dvb_usb_rtl28xxu` was
+bound (it binds again at each close); mid-stream and between the two
+streams interface 0 was held by usbfs — ours — in all 100. The tone
+70.6-71.5 dB over the median bin at the predicted bin in every stream,
+the worst run 0.66 dB from the first (the review's pass line 1 dB); 0
+blocks dropped, 0 refusals.
+
+**Phase steps and the split stream on Linux.** `glitchscan` with the
+USRP tone (`data/step21-glitchscan-linux.jsonl`, step 19's nine rates
+1.024-2.88 Msps, 3 s each, two passes): 0 phase steps at every rate in
+both passes, 0 in the first 10 ms after every start, 0 blocks dropped
+(the Mac: one step at 2.88 Msps in one pass). `readsplit`
+(`data/step21-readsplit-linux.jsonl`, 2.4 Msps, 6 retunes from a second
+thread, 3 runs): 0 blocks dropped, 0 refusals, each change quiet 73-75
+ms; read against rate × time short by the changes' quiet plus ~0.6 MB,
+as on the Mac (`data/step16-stream-readsplit.jsonl`).
+
+**A break's gap in the sample clock on Linux** (`data/step21-gapcheck.txt`,
+`gapcheck`, 12 s): with no retune 140.5-141.3 ms is left over at 1.024,
+2.048 and 2.4 Msps (the run's edges; the Mac 137); with 10 and 20 retunes
+−2.1 to −2.2 ms a retune at every rate (the Mac, step 19: −2.0). A
+change is quiet 74.2 ms here against the Mac's ~62-69 (each control
+request takes ~1.9-2.4 ms on this host). Two fixes on the way:
+
+- the halt's wake read was inside the timed quiet, so each break's
+  `quiet` overstated the gap by the read: −3.5 to −3.8 ms a retune, mean
+  quiet 76.0 ms. The session now makes the wake read
+  (`Link::ready_demod_write`) before it starts timing: −2.1, 74.3 ms;
+- `gapcheck` slept a fixed interval between retunes, so each retune's
+  own ~75 ms accumulated; with 20 retunes the last ended ~13 s into a
+  12 s run, after the reader had stopped, and the unread FIFO overflowed
+  (the counter saturated at 255: 23,970 samples counted lost, both
+  builds, with and without the earlier wake read). Retunes now run at
+  their own times from the start and the reader reads until the last is
+  done: 0 lost in every run. Step 19's 20-retune rows (the Mac) were
+  taken with the old schedule.
+
+**x86_64 Linux: the second Linux host** (Debian 13, AMD, the two RTL-SDRs of its
+production config taken out of it for the bench, both fed from the
+USRP through a Y splitter after the pad; called dongle A and B in the
+data; built there with Rust 1.99; `data/step21-x86-*`). The kernel's
+DVB driver is loaded and bound to both.
+
+- `claimcheck` 4 of 4, `hwcheck` all checks on both (tone 64.5-71.2 dB,
+  100-220 MHz locked), `finishloop` 10 of 10 on each (0 refusals, 0
+  dropped, finish 46.1-46.6 ms).
+- **The refused demodulator write is the same here**
+  (`step21-x86-refusals.txt`): wake reads off, a read 280 ms before
+  the write lets it through and one 320 ms before does not, on both
+  dongles; with them on, 0 refusals. A different host controller from
+  the Pi's — it comes with Linux, not with one machine.
+- Breaks per rate (`step21-x86-settle-rate.txt`, step 19's matrix,
+  two passes, both dongles: 1,400 breaks): 0 dropped, 0 phase jumps, 0
+  refusals; placement −30 to +6 samples.
+- A3 (`step21-x86-a3loop.txt`): 30 of 30 on each dongle, interface 0
+  held by usbfs mid-stream and between the streams in every run, the
+  tone within 0.33 dB of the first run. SIGKILL during changes
+  (`step21-x86-sigkill.txt`): 10 of 10 on each. `glitchscan`: 0 steps
+  at all nine rates on both; `readsplit` 3 of 3 on both, 0 dropped.
+- The gap accounting (`step21-x86-gapcheck.txt`, one run each): left
+  over with no retune 169-170 ms, −2.4 to −4.7 ms a retune — single
+  runs; the Pi's two-run series is the measurement (−2.1).
+
+**The VCO's bottom edge differs between units — the /2 fallback**
+(`step21-x86-vco-div2-div4.txt`, `step21-x86-vco-driver-fallback.txt`).
+The first recording at 852.30625 MHz on dongle B failed: "the
+synthesizer reports no lock (R2 = 0 … VCO 1.712 GHz at /2)". Review A5,
+answered in findings 20 on one dongle (locked at /2 down to 1.709 GHz),
+does not hold for these two: `vcoedge --divs 2,4` over 851-880 MHz in
+250 kHz steps reads R2 = 0 and no tone at /2 below a VCO of 1.719 GHz
+(dongle A) and 1.724 GHz (dongle B), R2 64-66 and the tone at 64-65 dB
+from there up; /4 locks across the band. So the documented range's
+bottom (1.67 GHz) is not a unit's: the driver chose /2 from the VCO's
+range alone, and 851.5-857.75 MHz did not tune on these units.
+`Rtl::set_freq` now tries every divider that keeps the VCO in the
+documented range, smallest first, and takes the first whose R2 says
+locked (`Pll::candidates`); only if none locks is the tuning refused.
+`vcoedge --driver` (now reading the tuner's state after the tuning,
+not rewriting it) over 849-872 MHz in 250 kHz steps: 93 of 93 points
+tuned and locked on both dongles, /4 where /2 would not lock (29 and 36
+points, 849-851.4 MHz included where /4 is first anyway), the tone 63.6-
+65.3 dB at every point. The simulated dongle can report the first
+divider unlocked (`FakeRtl::queue_vco_indicators`); with the fallback
+removed its test fails.
+
+**The harness's phase jumps** (`step21-x86-jump-artifact.txt`). The
+first x86_64 matrix counted 44-296 phase jumps in 7 of 38 runs, each one
+run of consecutive windows stepping by the same angle — −92° a window at
+1.024 Msps, −121° at 1.2, −160° at 1.44: exactly a 100 kHz error (the
+two tones' spacing) per 64-sample window, wrapped. A block map of each
+such segment (`tiercheck`'s JUMPMAP) showed the first tone, two or three
+1,024-sample blocks of the second, the first again: two breaks a few ms
+apart. In all 7 runs, and in none of the 31 clean ones, the second
+break's estimated offset was −20,000 — the search limit: the stream
+holds changes until 1 s after its start, so when it starts late the
+first two retunes are made back to back, and the search across ±20,000
+samples found the break before's tone (the second break's "new" one)
+first. `tiercheck` now bounds each break's search by its neighbours:
+the rerun above has no clamped estimate and no jump. The driver made
+both changes, each with its break; the count was the harness's. Step
+19's open run (104 jumps at 1.2 Msps, 0 dropped, raw line not kept)
+fits the same signature; it cannot be checked.
+
+**Faults on Linux.**
+
+- **SIGKILL during changes** (`data/step21-sigkill.txt`): `gapcheck
+  --seconds 10 --retunes 120` (a retune every ~75 ms, each ~70 ms of
+  quiet, so the stream is changing most of the time) killed with SIGKILL
+  at a random 1.2-6 s, 30 times; after each kill a fresh `a3loop --runs
+  1`. 30 of 30 passed: the tone 70.6-71.3 dB at the predicted bin, 0
+  blocks dropped, 0 refusals. After a kill no kernel driver was bound
+  (after a clean close it binds again).
+- **usbfs memory** (`data/step21-usbfs-memory.txt`): with
+  `usbfs_memory_mb` at 1 or 2 MB (the stream queues 128 × 16 KiB = 2
+  MiB) the stream ends with an error 0.88 s after the program starts,
+  the open included, 2 of 2 each; at 3 and 16 MB it runs clean. The
+  error was nusb's "unknown (errno 12)"; sdr-core now names the limit
+  ("out of usbfs memory (ENOMEM): this stream queues 128 transfers of 16
+  KiB (2.0 MiB); raise /sys/module/usbcore/parameters/usbfs_memory_mb"),
+  confirmed on the Pi.
+- **Unplugged mid-stream**: the stream ended with "device disconnected"
+  within 0.01 s of the kernel's disconnect (the kernel log's clock read
+  10.33 s ahead of /proc/uptime, calibrated with a marker). No hang.
+
+## Step 20 — the VCO's edges as the driver tunes them (2026-10-11) — `data/step20-vco-edge-driver.jsonl`, `data/step20-div2-div4.jsonl` — `examples/vcoedge.rs --driver`, `--divs`
+
+Review A5 asked whether the production 800 MHz band, which the driver
+tunes at /2 with the VCO at the bottom of its range (1.71 GHz at 851.4
+MHz), stays locked. `vcoedge --driver`: the driver's own divider at each
+RF (`Pll::program`: the smallest that keeps the VCO in range), R2 read 20
+ms after the PLL write, the USRP tone 300 kHz above, at 25 kHz steps over
+849-872 MHz (921 points), 420-432 (481, the /4 → /8 handover), 206-216
+(401, /8 → /16) and 899-901 MHz (81). One dongle, room temperature (the
+bench's temperature cannot be controlled).
+
+- **R2 read 64-123 at every one of the 1,884 points: never outside the
+  locked span**, the VCO from 1.71 to 3.42 GHz. Below 851.4 MHz the
+  driver goes to /4 (VCO 3.40-3.42 GHz) as designed.
+- The tone: 69-71 dB over the median bin at 420-432 and 206-216 MHz (/4,
+  /8, /16); at 849-872 MHz (/2, /4 below 851.4) 32-56 dB, a mean falling
+  from 51 dB at 849 to 44 at 871; at 899-901 MHz (/2) 11-43 dB, peaking
+  every 0.9 MHz (899.2, 900.1, 901.0) and dipping between (14.4 at 899.7,
+  18.3 at 900.6), the tone's measured frequency moving ±400 Hz in step.
+  0.9 MHz of RF at /2 is 1.8 MHz of VCO, the reference (14.4 MHz) / 8: a
+  pattern tied to the synthesizer's fraction. The R2 check alone would
+  pass all of it.
+- **/4 is no better than the driver's /2** (`vcoedge --divs 2,4`, both
+  dividers at each RF where both keep the VCO in range): 851.5-872 MHz in
+  50 kHz steps, /2 mean 47.7 dB (min 32.3), /4 mean 46.2 (min 36.1), /4
+  ahead at 91 of 411; 899-901 MHz, /2 mean 31.0, /4 mean 24.2 (/4 R2
+  123-126, near the top of the span). The driver's smallest-divider rule
+  stands. What lowers the tone above ~850 MHz — the source's level there,
+  the tuner's front end, the synthesizer's phase noise at /2 and its
+  fractional pattern — this bench cannot separate (no second receiver on
+  the cable, no power meter).
+- **The driver now judges R2**: `Rtl::set_freq` refuses a tuning whose
+  R2 is outside the locked span (64-127), before taking it as the
+  receiver's state, so a stream's change writes the last good tuning back
+  (test: `an_unlocked_retune_is_refused_and_the_stream_goes_on`). On the
+  bench it refused nothing: `readsplit` (6 retunes) and `tiercheck` (50),
+  0 blocks dropped.
+
+## Step 19 — break placement per rate, the phase jumps' source, a break's gap in the sample clock (2026-10-11) — `data/step19-settle-rate-pass{1,2}.txt` — `examples/tiercheck.rs`, `examples/gapcheck.rs`
+
+The tone source for this step is the USRP B206mini
+(`examples/usrp_tone_source.rs` in mimosdr, `tone_source`'s protocol): a
+tone 70-72 dB over the median bin in `hwcheck`, against the HackRF's
+57-59, and no level creep after a re-level (findings 4f2).
+
+**Where the new configuration begins, per rate.** `tiercheck
+--lossless-only --rate R --retunes 50 --first-ms 1100` (the first retune
+after the 1 s start hold, so no break is back to back), two passes at
+each of 1.024, 1.2, 1.44, 1.8, 2.048, 2.4 and 2.88 Msps: 700 breaks, every
+one placed, 0 blocks dropped in every run.
+
+| rate (Msps) | takeover after `at_sample` (samples), both passes | phase jumps a run |
+|---|---|---|
+| 1.024 | 16-32 | 0, 0 |
+| 1.2 | 19-32 | 0, 0 |
+| 1.44 | 21-31 | 0, 0 |
+| 1.8 | 22-31 | 0, 0 |
+| 2.048 | 5-32 | 0, 0 |
+| 2.4 | 10-31 | 0, 0 |
+| 2.88 | −11-32 | 4, 3 |
+
+- The latest takeover is 32 samples (9 of 700 breaks), at every rate:
+  `BREAK_SETTLE_SAMPLES` was 32, no margin. It is now 40.
+- At 2.88 Msps 9 of 100 breaks put the new configuration *before*
+  `at_sample` (−2 to −11), and it was the only rate with phase steps.
+  Both turned out not to be the receiver's (below: the steps were the
+  HackRF source's, and these takeovers were the pause bit's near-silence
+  read through a 64-sample window — a 128-sample window moved every
+  takeover ~30 later and none was before `at_sample`); quiesced with the
+  start bit, 2.88 Msps places every break at `at_sample` (two runs of 50,
+  −7 to +9 per sample) with the signal whole, and stays accepted
+  (`demod::OUTPUT_RATE_GOOD_SPS`, 1.024-2.88 Msps).
+
+**The 1.2 Msps phase jumps were the HackRF.** With the HackRF as the
+source, `tiercheck` at 1.2 Msps counted ~1,370 phase jumps a run (15
+runs, 1,215-1,710; 1,426 after every SMA joint was tightened); with the
+USRP, 0 at every rate from 1.024 to 2.4 Msps (12 runs, same bench, same
+cable). 16.5's open item — "steps after breaks at 1.2 Msps (125-228 a
+run)" — is the source's 8-bit transmitter, not the receiver.
+
+**So were 16.5's other phase steps** (`glitchscan --source-cmd
+"<usrp_tone_source>"`, `data/step19-glitchscan-usrp.jsonl`, two passes,
+the raw stream, no control traffic, 3 s at each of 1.024, 1.152, 1.2,
+1.44, 1.6, 1.8, 2.048, 2.4, 2.88 Msps): 0 steps at every rate but one at
+2.88 Msps in one pass, and 0 in the first 10 ms after every start —
+against 16.5's ~450-830 steps a run at 2.88 Msps and the ~37° start
+transient at ≤ 1.2 Msps, both measured with the HackRF as the source.
+The receiver's samples carry no phase steps at any rate; the HackRF's did.
+
+**The "pause" bit resets the signal; the start bit does not.** Reading
+the tone's *amplitude* across breaks, not only its frequency (`tiercheck`
+`recover_offsets`, `TIERCHECK_DUMP`: |x| and the two tones' correlation
+in 1,024-sample blocks from 4,096 before `at_sample`): at every break the
+tone fell ~30× at `at_sample` (464 → 15 in |x|/25.6 at 2.048 Msps), the
+DC with it (22 → 7), then climbed back roughly linearly, ~3 a ms — still
+below a fifth of its level 23 ms on, short of it after a 150 ms segment;
+half its later level took 36,000-38,000 samples (~18 ms) every time. The
+same with no change at all inside the pause (`--change none`), with a
+gain write in place of a retune (`--change gain`), without the FIFO reset
+(`--no-fifo-reset`), with the digital AGC off (`--dagc-off`) and with the
+analog IF and RF loops off (`--aagc-off`) — identical to a count. With
+the change quiesced by the start bit instead (page 0 0x06 bit 7 cleared,
+then set; `--halt`, now the driver's default), the tone runs straight
+through at its level (464 → 464). So page 1 0x01 bit 2 — taken as a
+pause since findings 9d/10.2c because the stream stops while it is set —
+also resets the demodulator's signal state, and every change the driver
+made with it put the next ~0.1-0.5 s of samples within a few LSB of zero.
+The old window takeover of "13-32 samples" (16.6, the passes above) was
+that near-silence, not a filter pipeline.
+
+With the start bit (`data/step19-halt-rate.txt`, 50 retunes at each of
+1.024, 1.2, 1.44, 1.8, 2.048, 2.4 Msps, the USRP tone): 0 blocks
+dropped, 0 phase jumps, the signal at its level from the first sample
+after the break (recovery 0 at every break), and the new configuration
+beginning at `at_sample` itself — per sample (16-sample centred average
+of the phase-step frequency) −13 to +9 over 300 breaks, median 0-2,
+inside the estimator's ±8; by the 64-sample window −20 to +6.
+`BREAK_SETTLE_SAMPLES` stays 40, now well clear of the most measured.
+With it the default (`data/step19-halt-default.txt`): 1.2 Msps × 3,
+1.024, 2.88 × 2 — 0 dropped, 0 phase jumps, recovery 0; `finishloop` 6
+finishes and `readsplit` 3 runs, 0 blocks. **Open:** one start-bit run at
+1.2 Msps (the one right after `finishloop` and `readsplit`, raw line not
+kept) counted 104 phase jumps with 0 dropped blocks; the four other
+start-bit runs at 1.2 Msps and every other rate counted 0. The same
+sequence repeated twice (`finishloop`, `readsplit`, then two `tiercheck`
+runs at 1.2 Msps each): 0 jumps, 0 dropped, all four. One run in 21 on
+the start-bit path; unexplained, not reproduced. (Findings 21, 2026-10-12:
+reproduced on x86_64 as the harness's — two breaks a few ms apart
+defeated `tiercheck`'s break estimate; this run fits that signature.)
+
+**A break's gap in the sample clock** (`gapcheck`: a stream read for
+12 s from just before its first read to just before its finish, N
+retunes from a second thread; produced = elapsed × rate against delivered
++ tail + Σ pause (`Break::quiet`) × rate + counted loss):
+
+| rate (Msps) | 0 retunes: left over (ms) | 20 retunes: left over (ms) | per retune |
+|---|---|---|---|
+| 1.024 | 138.0, 138.0 | 95.3, 96.2 | −2.1 |
+| 2.048 | 136.5, 136.4 | 101.6, 91.9 (10: 115.8, 115.8) | −2.0 |
+| 2.4 | 137.9, 139.1 | 177.0, 155.2 | +0.8 to +1.9 |
+
+(The 20-retune columns were taken with `gapcheck`'s old schedule, a
+fixed sleep between retunes, whose last retunes could end after the
+reader stopped: findings 21. Not re-run on the Mac.)
+
+- Without the pauses the clock falls behind ~69 ms a retune (the pause:
+  66.7-70.8 ms mean); with them, within ~±2 ms a retune, the sign
+  depending on the rate. So a consumer counting samples adds each break's
+  `quiet` × rate (mimosdr does since 2026-10-11, `RxSource::
+  take_gap_samples`) and is left within ~2 ms per retune, not ~69.
+- The ~137 ms left over with no retune at all is the run's two edges (the
+  start sequence before the first sample, the finish), the same at every
+  rate: an offset fixed at the start, not a drift.
 
 ## Step 18 — full-packet mode: every transfer was one 188-byte block — `data/step18-full-packet.jsonl`, `data/step18-browser.jsonl` — `examples/fullpacket.rs`, `web/`
 
@@ -431,6 +1558,9 @@ with nothing flowing and reading the counter.
   stop make them). At 1.2 Msps `tiercheck` also found such steps after
   breaks (125-228 a run) where 1.024-1.152 found none; whether that is the
   start transient repeating after each resume at that rate is open.
+  **Answered by findings 19: every one of these steps was the HackRF
+  source's** — with the USRP as the source, none at any rate, at the
+  start or after a break.
 
 ### 16.6 The FIFO reset at each break; the refused request — `data/step16-fifo-reset.jsonl`
 
@@ -2186,6 +3316,112 @@ right after a retune can be an outlier: 692 MHz, −4399 then −923).
 - The per-frequency table (best path, best corner codes, their readings)
   is read from the record by frequency; a generated table for the driver
   comes from this file.
+- **Superseded for the driver by step 4f2 (2026-10-11).** The method
+  read inside a path change's transient and let single snapshots decide
+  (below); `src/tables/band.rs` is kept as this step's record and the
+  driver takes its path from `src/tables/band_paths.rs`.
+
+### Step 4f2 — every path, settled and averaged (2026-10-11) — `data/step4-path-settle.jsonl`, `data/step4f2-band-paths-run{1,2,3}.jsonl`
+
+**Why.** With SEL_DIV 011 known to be /16 (findings 10.5), step 4f was
+re-run on 112–202 MHz three times with its own options
+(`data/step4-band-table-div16.jsonl`, `-div16-repeat.jsonl`,
+`-div16-run3.jsonl`; the harness's `choose_div` now takes 011 as /16,
+smallest divider first, as the driver does). The three runs disagreed on
+the best path at most frequencies, and the disagreement was the method's:
+
+- Which path won stage B depended on which two paths stage A staged.
+  (RFFILT 10, RFMUX 01) was staged in 16 of the 30 frequency-runs and won
+  15; where it was not staged, a weaker path won by default. At 172 MHz
+  (run 1) stage A staged two paths that then passed almost nothing in
+  stage B.
+- Three "best" readings were single snapshots of −8091, −7075 and −6874
+  counts (≈ 30 dB above the path's own neighbours), each on (00, 00),
+  never repeated.
+
+**`path-settle`** (`harness path-settle`): at 152, 202, 502 and 852 MHz,
+every ordered pair of four paths — dead (11, 11), bypass (00, 01),
+(10, 01), (00, 00) — each path to itself as a null, five repetitions;
+the `from` path held 1 s, the `to` path written, then the meter's
+register pair read back-to-back (one read per ~2.5 ms) for 1 s.
+
+- A real path change throws a transient: in the first 50 ms the meter
+  sits a median 250–900 counts from its settled value, up to ~6000
+  (≈ 29 dB); the null rewrite, 10–100. From ~150 ms on, a real change is
+  indistinguishable from the null. Step 4f read 20 ms after the write:
+  inside the transient, which is where its outliers came from.
+- Without any change the meter wanders by about 1 dB over a second, so a
+  single snapshot cannot measure a path to 1 dB however long the wait.
+- The mean of back-to-back reads over 300–1000 ms repeats to 0.12 dB
+  (median standard deviation over repetitions and preceding paths),
+  0.26 dB at worst; over 300–350 ms, 0.35–0.7 dB.
+- 11 of the 640 register writes stalled (`R26 <- …: Stall`, `R27 <- 0x00:
+  Stall`); those transitions are excluded (the path may not have
+  changed). The band-paths harness retries a stalled write and records
+  every attempt.
+
+**The rule, from that:** at each frequency the bypass, all 16 (RFFILT,
+RFMUX) at TF 0000/0000, and the bypass again; each path written, left
+300 ms (twice the transient), then the meter averaged over 700 ms of
+back-to-back reads. Every path is measured at every frequency — no
+staging — and no single snapshot decides anything. Three full runs of the
+97-point grid (42–1002 MHz, 10 MHz steps), each in three chunks of
+15–20 minutes, `harness band-paths --config vagc --meter
+if_agc_val_msb_first -3000 3000 down --txvga 10 --backoff 0 --settle 300
+--grid-mhz 10 --rf-from … --rf-to … --source-cmd "cargo run --release
+--example tone_source -- --cabled"`. The corner codes are not measured:
+the driver leaves them at 0000/0000.
+
+**Results** (`src/tables/band_paths.rs`, generated by `examples/tables`):
+
+- 5,238 path readings, no write retried; the source stayed at +10 dB
+  relative throughout.
+- (10, 01) has the most signal at 94 of 97 frequencies, 0.5–2.7 dB over
+  bypass (about 1.8 dB from 732 MHz up); the runs' own best paths agree
+  at 94 of 97.
+- A path's reading repeats across runs to 0.18 dB (standard deviation,
+  pooled over the 487 frequency-path cells live in every run; the worst
+  cell 0.65 dB), about the within-seconds figure. The largest run-to-run differences (up to 1.29 dB, at 172, 202,
+  422, 592 and 622 MHz) each come with a bypass drift of 0.33–0.87 dB
+  across that frequency's ~20 s sequence in one run: the meter's own
+  level steps, moving the reference rather than one path.
+- **Not the bench cable** (`data/step4f2-band-paths-recheck{1,2,3}.jsonl`,
+  2026-10-11): a loose SMA joint later dropped the tone 10-30 dB on the
+  bench, so after every joint was tightened (hwcheck back to 57.7-59.2 dB,
+  two runs within 0.2 dB) those five frequencies were measured again,
+  three passes. The bypass still stepped — 0.74 dB at 172 MHz, 0.60 at
+  422, 0.32-0.34 elsewhere — and in all 15 sequences it also crept
+  0.1-0.15 dB the same way (less signal at the end of the ~20 s than at
+  the start). (10, 01) had the most signal at all five in every pass,
+  0.4-2.1 dB over bypass, as the table has it.
+- **The source, not the meter** (`data/step4f2-band-paths-recheck-usrp
+  {1,2,3}.jsonl`): the same five frequencies, three passes, with the
+  USRP B206mini as the tone source (`examples/usrp_tone_source.rs`,
+  `tone_source`'s protocol; its tone 70-72 dB over the median bin in
+  hwcheck, the HackRF's 57-59). The creep is gone — first against last
+  bypass reading −0.25 to +0.29 dB, the sign varying, 11 of 15 within
+  0.12 dB — and the largest step is 0.29 dB. So the steady loss over a
+  sequence and the 0.6-0.74 dB steps were the HackRF's output settling
+  after each re-level; the ~0.3 dB that remains is the meter's own,
+  as `path-settle` measured (0.26 dB). (10, 01) had the most signal at
+  all five in every pass, 1.0-2.1 dB over bypass.
+- 252–272 MHz: (10, 00) beats (10, 01) by 0.25–0.38 dB in every run at
+  each of the three points.
+- The table's decision: the path with the most signal by the three-run
+  mean; a margin under twice the pooled standard deviation (0.35 dB) is a
+  tie, and a tie keeps the dominant path (10, 01) unless every run picked
+  the other path on its own (with the two truly equal, each run would
+  favour either with even odds). The tie rule keeps (10, 01) at 282 MHz
+  (margin 0.04 dB, two runs of three).
+- **Segments:** 42–242 MHz (10, 01); 252–272 MHz (10, 00); 282–1002 MHz
+  (10, 01). The former 112–202 MHz gap is measured like the rest and is
+  (10, 01) throughout.
+- **The driver on this table** (`examples/hwcheck`, the same bench,
+  output not kept): RF 100–220 MHz every 10 MHz, the tone 300 kHz above
+  each, SEL_DIV /16 from 110 to 210 MHz, every PLL locked, tone 57.5–58.8
+  dB over the median bin; the tone, rate, restart and pause checks as in
+  findings 11 (tone 52.9–58.6 dB, every rate delivered to within 0.005%,
+  no overflow).
 
 ### Step 4g — IF filter — `data/step4-filter.jsonl` — `harness filter --config vagc --meter if_agc_val_msb_first -3000 3000 down --txvga 10 --backoff 0 --settle 300 --snapshots 1`
 

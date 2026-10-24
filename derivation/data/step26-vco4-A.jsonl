@@ -1,0 +1,13 @@
+{"kind":"header","step":"14","measured":"R2 (VCO_INDICATOR) and a tone 300 kHz above the RF, RF 860-915 MHz in 5 MHz steps, dividers [4]","harness":{"crates_rtl_head":"","harness_uncommitted":false,"program":"examples/vcoedge.rs"},"bench":"gains LNA 8 mixer 8 VGA 2, 2048000 sps, txvga 0, backoff -15 dB","source":"target/release/examples/usrp_tone_source --cabled --offset 137000 serial=<bench USRP>","line_legend":"rf Hz, divider, vco_hz, r2 = R2 & 0x7F read 20 ms after the PLL write, r2_says_locked, tone_over_median_db at the bin the words put the tone, tone_hz"}
+{"rf":860000000,"divider":4,"vco_hz":3454279980,"r2":123,"r2_says_locked":true,"tone_over_median_db":58.0,"tone_hz":299210}
+{"rf":865000000,"divider":4,"vco_hz":3474279932,"r2":123,"r2_says_locked":true,"tone_over_median_db":58.0,"tone_hz":299218}
+{"rf":870000000,"divider":4,"vco_hz":3494279883,"r2":124,"r2_says_locked":true,"tone_over_median_db":57.9,"tone_hz":299225}
+{"rf":875000000,"divider":4,"vco_hz":3514279834,"r2":124,"r2_says_locked":true,"tone_over_median_db":56.6,"tone_hz":299231}
+{"rf":880000000,"divider":4,"vco_hz":3534279785,"r2":124,"r2_says_locked":true,"tone_over_median_db":57.9,"tone_hz":299238}
+{"rf":885000000,"divider":4,"vco_hz":3554280176,"r2":125,"r2_says_locked":true,"tone_over_median_db":58.0,"tone_hz":299141}
+{"rf":890000000,"divider":4,"vco_hz":3574280127,"r2":125,"r2_says_locked":true,"tone_over_median_db":58.9,"tone_hz":299149}
+{"rf":895000000,"divider":4,"vco_hz":3594280078,"r2":126,"r2_says_locked":true,"tone_over_median_db":59.2,"tone_hz":299156}
+{"rf":900000000,"divider":4,"vco_hz":3614280029,"r2":126,"r2_says_locked":true,"tone_over_median_db":59.1,"tone_hz":299164}
+{"rf":905000000,"divider":4,"vco_hz":3634279980,"r2":126,"r2_says_locked":true,"tone_over_median_db":59.2,"tone_hz":299172}
+{"rf":910000000,"divider":4,"vco_hz":3654279932,"r2":126,"r2_says_locked":true,"tone_over_median_db":59.2,"tone_hz":299179}
+{"rf":915000000,"divider":4,"vco_hz":3674279883,"r2":127,"r2_says_locked":true,"tone_over_median_db":59.1,"tone_hz":299187}

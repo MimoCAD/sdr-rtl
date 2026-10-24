@@ -22,11 +22,14 @@ use std::io;
 use std::string::ToString;
 use std::vec::Vec;
 
-use sdr_core::gain::{Stage, StageReading};
-use sdr_core::{DeviceDesc, Error, Iq, RecvInfo, Result, RxSource, TuneRequest, TuneResult, block_on, elevate_current_thread, open_with_deadline};
+use sdr_core::gain::StageReading;
+use sdr_core::{
+    DeviceDesc, Error, Iq, RecvInfo, Result, RxSource, TuneRequest, TuneResult, block_on,
+    elevate_current_thread, open_with_deadline,
+};
 
-use crate::session::{self, Break, StreamReport};
-use crate::{BACKEND, Eeprom, EepromWriteReport, RtlTuner, RtlTunerStatus};
+use crate::session::{Break, StreamReport};
+use crate::{BACKEND, Eeprom, EepromWriteReport, RtlTuner, RtlTunerStatus, Stage};
 
 /// Every attached dongle ([`crate::list`]).
 pub fn list() -> Vec<DeviceDesc> {
@@ -79,6 +82,16 @@ impl Rtl {
         self.0.rate_set()
     }
 
+    /// [`crate::Rtl::decimation`].
+    pub fn decimation(&self) -> u32 {
+        self.0.decimation()
+    }
+
+    /// [`crate::Rtl::chip_rate`].
+    pub fn chip_rate(&self) -> f64 {
+        self.0.chip_rate()
+    }
+
     /// [`crate::Rtl::set_freq`].
     pub fn set_freq(&mut self, req: &TuneRequest) -> Result<TuneResult> {
         block_on(self.0.set_freq(req))
@@ -86,6 +99,26 @@ impl Rtl {
 
     pub fn freq(&self) -> Result<f64> {
         self.0.freq()
+    }
+
+    /// [`crate::Rtl::set_ppm`].
+    pub fn set_ppm(&mut self, ppm: f64) -> Result<()> {
+        block_on(self.0.set_ppm(ppm))
+    }
+
+    /// [`crate::Rtl::ppm`].
+    pub fn ppm(&self) -> f64 {
+        self.0.ppm()
+    }
+
+    /// [`crate::Rtl::set_imr_table`].
+    pub fn set_imr_table(&mut self, table: Vec<crate::image::ImrPoint>) -> Result<()> {
+        block_on(self.0.set_imr_table(table))
+    }
+
+    /// [`crate::Rtl::imr_table`].
+    pub fn imr_table(&self) -> &[crate::image::ImrPoint] {
+        self.0.imr_table()
     }
 
     /// [`crate::Rtl::set_gain`].
@@ -106,11 +139,11 @@ impl Rtl {
         block_on(self.0.set_gain_stages(lna_db, mixer_db, vga_db))
     }
 
-    pub fn stage_levels_db(&self, stage: Stage) -> Option<Vec<f64>> {
+    pub fn stage_levels_db(&self, stage: Stage) -> Vec<f64> {
         self.0.stage_levels_db(stage)
     }
 
-    pub fn stage_readings(&self) -> Vec<StageReading> {
+    pub fn stage_readings(&self) -> Vec<StageReading<Stage>> {
         self.0.stage_readings()
     }
 
@@ -167,8 +200,17 @@ impl Rtl {
     }
 
     /// [`crate::Rtl::into_stream`].
-    pub fn into_stream(self, transfer_bytes: usize, queue_depth: usize) -> core::result::Result<Stream, StreamError> {
-        block_on(self.0.into_stream(transfer_bytes, queue_depth)).map(Stream).map_err(|e| StreamError { rtl: Box::new(Rtl(*e.rtl)), error: e.error })
+    pub fn into_stream(
+        self,
+        transfer_bytes: usize,
+        queue_depth: usize,
+    ) -> core::result::Result<Stream, StreamError> {
+        block_on(self.0.into_stream(transfer_bytes, queue_depth))
+            .map(Stream)
+            .map_err(|e| StreamError {
+                rtl: Box::new(Rtl(*e.rtl)),
+                error: e.error,
+            })
     }
 
     /// The request layer, for bench programs (`--features bench`).
@@ -185,8 +227,17 @@ impl Rtl {
 
     /// [`crate::Rtl::rx_stream_with_taps`], for bench programs.
     #[cfg(feature = "bench")]
-    pub fn rx_stream_with_taps(&mut self, transfer_bytes: usize, queue_depth: usize, tap_regs: [u8; crate::taps::TAP_REGS]) -> Result<RtlStream> {
-        block_on(self.0.rx_stream_with_taps(transfer_bytes, queue_depth, tap_regs)).map(RtlStream)
+    pub fn rx_stream_with_taps(
+        &mut self,
+        transfer_bytes: usize,
+        queue_depth: usize,
+        tap_regs: [u8; crate::taps::TAP_REGS],
+    ) -> Result<RtlStream> {
+        block_on(
+            self.0
+                .rx_stream_with_taps(transfer_bytes, queue_depth, tap_regs),
+        )
+        .map(RtlStream)
     }
 }
 
@@ -199,7 +250,9 @@ pub struct StreamError {
 
 impl core::fmt::Debug for Rtl {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Rtl").field("label", &self.0.label()).finish_non_exhaustive()
+        f.debug_struct("Rtl")
+            .field("label", &self.0.label())
+            .finish_non_exhaustive()
     }
 }
 
@@ -215,20 +268,31 @@ impl core::error::Error for StreamError {}
 pub struct Finished {
     pub rtl: Rtl,
     pub report: StreamReport,
-    /// The last wire bytes (unsigned 8-bit I then Q).
+    /// The last wire bytes (unsigned 8-bit I then Q): the chip's, at its
+    /// rate ([`crate::Finished::tail`]).
     pub tail: Vec<u8>,
+    /// The tail as the stream hands samples out ([`crate::Finished::
+    /// tail_samples`]: widened, and decimated when the stream decimates).
+    tail_samples: Vec<Iq>,
 }
 
 impl Finished {
-    /// The tail widened to [`Iq`].
+    /// The tail as [`Stream::recv_into`] hands samples out: widened, and
+    /// decimated when the stream decimates.
     pub fn tail_samples(&self) -> Vec<Iq> {
-        session::widen(&self.tail)
+        self.tail_samples.clone()
     }
 }
 
 impl From<crate::Finished> for Finished {
     fn from(f: crate::Finished) -> Finished {
-        Finished { rtl: Rtl(f.rtl), report: f.report, tail: f.tail }
+        let tail_samples = f.tail_samples();
+        Finished {
+            rtl: Rtl(f.rtl),
+            report: f.report,
+            tail: f.tail,
+            tail_samples,
+        }
     }
 }
 
@@ -258,7 +322,7 @@ macro_rules! reports {
                 self.0.gain()
             }
 
-            pub fn stage_readings(&self) -> Vec<StageReading> {
+            pub fn stage_readings(&self) -> Vec<StageReading<Stage>> {
                 self.0.stage_readings()
             }
 
@@ -272,6 +336,10 @@ macro_rules! reports {
 
             pub fn breaks(&self) -> Vec<Break> {
                 self.0.breaks()
+            }
+
+            pub fn breaks_total(&self) -> u64 {
+                self.0.breaks_total()
             }
 
             pub fn stall_retries(&self) -> u64 {
@@ -290,7 +358,10 @@ macro_rules! changes {
     ($t:ident) => {
         impl $t {
             /// [`crate::Stream::reconfigure`].
-            pub fn reconfigure<T>(&self, f: impl AsyncFnOnce(&mut crate::Rtl) -> Result<T>) -> Result<(T, Break)> {
+            pub fn reconfigure<T>(
+                &self,
+                f: impl AsyncFnOnce(&mut crate::Rtl) -> Result<T>,
+            ) -> Result<(T, Break)> {
                 block_on(self.0.reconfigure(f))
             }
 
@@ -307,6 +378,11 @@ macro_rules! changes {
             /// [`crate::Stream::set_stage_level`].
             pub fn set_stage_level(&self, stage: Stage, level: usize) -> Result<Break> {
                 block_on(self.0.set_stage_level(stage, level))
+            }
+
+            /// [`crate::Stream::set_ppm`].
+            pub fn set_ppm(&self, ppm: f64) -> Result<Break> {
+                block_on(self.0.set_ppm(ppm))
             }
 
             /// [`crate::Stream::set_bandwidth`].
@@ -382,8 +458,13 @@ impl Stream {
     }
 
     /// The halves joined again ([`crate::Stream::reunite`]).
-    pub fn reunite(read: ReadHalf, control: Control) -> core::result::Result<Stream, (ReadHalf, Control)> {
-        crate::Stream::reunite(read.0, control.0).map(Stream).map_err(|(r, c)| (ReadHalf(r), Control(c)))
+    pub fn reunite(
+        read: ReadHalf,
+        control: Control,
+    ) -> core::result::Result<Stream, (ReadHalf, Control)> {
+        crate::Stream::reunite(read.0, control.0)
+            .map(Stream)
+            .map_err(|(r, c)| (ReadHalf(r), Control(c)))
     }
 
     /// [`crate::Stream::finish`].
@@ -401,6 +482,12 @@ impl Stream {
     #[cfg(feature = "bench")]
     pub fn set_fifo_reset(&self, on: bool) {
         block_on(self.0.set_fifo_reset(on))
+    }
+
+    /// [`crate::session::Stream::set_quiesce_with_pause`] (bench programs).
+    #[cfg(feature = "bench")]
+    pub fn set_quiesce_with_pause(&self, on: bool) {
+        block_on(self.0.set_quiesce_with_pause(on))
     }
 }
 
@@ -486,6 +573,15 @@ impl Link<'_> {
 
     pub fn refusals(&self) -> Vec<crate::usb::Refusal> {
         self.0.refusals()
+    }
+
+    /// [`crate::usb::Link::set_wake_reads`].
+    pub fn set_wake_reads(&self, on: bool) {
+        self.0.set_wake_reads(on)
+    }
+
+    pub fn wake_reads(&self) -> u64 {
+        self.0.wake_reads()
     }
 }
 

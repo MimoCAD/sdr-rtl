@@ -66,47 +66,93 @@ pub struct FilterTables {
 }
 
 fn passband_level(c: &FilterCurve) -> f64 {
-    let v: Vec<f64> = c.points.iter().filter(|p| p.0 >= PASSBAND_LEVEL_SPAN_HZ.0 && p.0 <= PASSBAND_LEVEL_SPAN_HZ.1).map(|p| p.1 as f64).collect();
+    let v: Vec<f64> = c
+        .points
+        .iter()
+        .filter(|p| p.0 >= PASSBAND_LEVEL_SPAN_HZ.0 && p.0 <= PASSBAND_LEVEL_SPAN_HZ.1)
+        .map(|p| p.1 as f64)
+        .collect();
     emit::median(&v)
 }
 
 fn corner(c: &FilterCurve, code: u8, scale: &MeterScale) -> Result<Corner, String> {
     let level = passband_level(c);
     // dB relative to the passband level at every point (negative = less signal).
-    let rel: Vec<(f64, f64)> = c.points.iter().map(|p| (p.0, (level - p.1 as f64) / scale.counts_per_db)).collect();
+    let rel: Vec<(f64, f64)> = c
+        .points
+        .iter()
+        .map(|p| (p.0, (level - p.1 as f64) / scale.counts_per_db))
+        .collect();
     let mut found = None;
     for i in 0..rel.len() {
         if rel[i].0 <= PASSBAND_LEVEL_SPAN_HZ.1 {
             continue;
         }
-        let past = (i..i + CORNER_CONFIRM_POINTS).all(|k| rel.get(k).is_some_and(|p| p.1 <= CORNER_DB));
+        let past =
+            (i..i + CORNER_CONFIRM_POINTS).all(|k| rel.get(k).is_some_and(|p| p.1 <= CORNER_DB));
         if past {
             if i == 0 {
-                return Err(format!("{} code {code}: the first point is already past the corner", c.stage));
+                return Err(format!(
+                    "{} code {code}: the first point is already past the corner",
+                    c.stage
+                ));
             }
             let (f0, d0) = rel[i - 1];
             let (f1, d1) = rel[i];
-            let hz = if d1 == d0 { f1 } else { f0 + (f1 - f0) * (CORNER_DB - d0) / (d1 - d0) };
+            let hz = if d1 == d0 {
+                f1
+            } else {
+                f0 + (f1 - f0) * (CORNER_DB - d0) / (d1 - d0)
+            };
             found = Some(hz);
             break;
         }
     }
-    let upper_3db_hz = found.ok_or_else(|| format!("{} code {code}: no -3 dB corner within the swept IF span", c.stage))?;
+    let upper_3db_hz = found.ok_or_else(|| {
+        format!(
+            "{} code {code}: no -3 dB corner within the swept IF span",
+            c.stage
+        )
+    })?;
     let target = upper_3db_hz + PAST_CORNER_HZ;
-    let near = rel.iter().min_by(|a, b| (a.0 - target).abs().partial_cmp(&(b.0 - target).abs()).unwrap_or(std::cmp::Ordering::Equal)).ok_or("empty curve")?;
-    Ok(Corner { code, upper_3db_hz: emit::round(upper_3db_hz, -4), db_past_corner: emit::round(near.1, 1), passband_counts: level })
+    let near = rel
+        .iter()
+        .min_by(|a, b| {
+            (a.0 - target)
+                .abs()
+                .partial_cmp(&(b.0 - target).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .ok_or("empty curve")?;
+    Ok(Corner {
+        code,
+        upper_3db_hz: emit::round(upper_3db_hz, -4),
+        db_past_corner: emit::round(near.1, 1),
+        passband_counts: level,
+    })
 }
 
 /// The largest |dB| between two curves, point by point at equal IFs up
 /// to `max_hz`.
-fn max_deviation(a: &FilterCurve, b: &FilterCurve, max_hz: f64, scale: &MeterScale) -> Result<f64, String> {
+fn max_deviation(
+    a: &FilterCurve,
+    b: &FilterCurve,
+    max_hz: f64,
+    scale: &MeterScale,
+) -> Result<f64, String> {
     if a.points.len() != b.points.len() {
-        return Err(format!("{} and {} have different point counts", a.stage, b.stage));
+        return Err(format!(
+            "{} and {} have different point counts",
+            a.stage, b.stage
+        ));
     }
     let mut mx: f64 = 0.0;
     for (p, q) in a.points.iter().zip(&b.points) {
         if p.0 != q.0 {
-            return Err(format!("{} and {} are sampled at different IFs", a.stage, b.stage));
+            return Err(format!(
+                "{} and {} are sampled at different IFs",
+                a.stage, b.stage
+            ));
         }
         if p.0 <= max_hz {
             mx = mx.max(scale.db_more(p.1, q.1).abs());
@@ -118,15 +164,30 @@ fn max_deviation(a: &FilterCurve, b: &FilterCurve, max_hz: f64, scale: &MeterSca
 /// The reference's two-state alternation: the spread of its smoothed
 /// readings inside the passband-level span, in dB.
 fn two_state_db(reference: &FilterCurve, scale: &MeterScale) -> f64 {
-    let v: Vec<i64> = reference.points.iter().filter(|p| p.0 >= PASSBAND_LEVEL_SPAN_HZ.0 && p.0 <= PASSBAND_LEVEL_SPAN_HZ.1).map(|p| p.1).collect();
+    let v: Vec<i64> = reference
+        .points
+        .iter()
+        .filter(|p| p.0 >= PASSBAND_LEVEL_SPAN_HZ.0 && p.0 <= PASSBAND_LEVEL_SPAN_HZ.1)
+        .map(|p| p.1)
+        .collect();
     match (v.iter().min(), v.iter().max()) {
         (Some(&lo), Some(&hi)) => emit::round(scale.db_more(hi, lo), 1),
         _ => 0.0,
     }
 }
 
-fn curve<'a>(curves: &'a [FilterCurve], file: &str, stage: &str, code: u8, bw: u8, hpf: u8) -> Result<&'a FilterCurve, String> {
-    curves.iter().find(|c| c.stage == stage && c.filt_code == code && c.filt_bw == bw && c.hpf == hpf).ok_or_else(|| format!("{file}: no curve {stage} code {code} bw {bw} hpf {hpf}"))
+fn curve<'a>(
+    curves: &'a [FilterCurve],
+    file: &str,
+    stage: &str,
+    code: u8,
+    bw: u8,
+    hpf: u8,
+) -> Result<&'a FilterCurve, String> {
+    curves
+        .iter()
+        .find(|c| c.stage == stage && c.filt_code == code && c.filt_bw == bw && c.hpf == hpf)
+        .ok_or_else(|| format!("{file}: no curve {stage} code {code} bw {bw} hpf {hpf}"))
 }
 
 /// The curve with every reading replaced by the median of the
@@ -143,7 +204,13 @@ fn smooth(c: &FilterCurve) -> FilterCurve {
             (c.points[i].0, emit::median(&window).round() as i64)
         })
         .collect();
-    FilterCurve { stage: c.stage.clone(), filt_code: c.filt_code, filt_bw: c.filt_bw, hpf: c.hpf, points }
+    FilterCurve {
+        stage: c.stage.clone(),
+        filt_code: c.filt_code,
+        filt_bw: c.filt_bw,
+        hpf: c.hpf,
+        points,
+    }
 }
 
 pub fn analyse(rec: &Filter, scale: &MeterScale) -> Result<FilterTables, String> {
@@ -151,7 +218,10 @@ pub fn analyse(rec: &Filter, scale: &MeterScale) -> Result<FilterTables, String>
     let file = rec.provenance.file.as_str();
     // The reference's own codes: FILT_CODE 0, FILT_BW 00, HPF 1111 (the
     // record's candidate space).
-    let r = curves.iter().find(|c| c.stage == STAGE_REF).ok_or("filter: no reference curve")?;
+    let r = curves
+        .iter()
+        .find(|c| c.stage == STAGE_REF)
+        .ok_or("filter: no reference curve")?;
     let (ref_code, ref_bw, ref_hpf) = (r.filt_code, r.filt_bw, r.hpf);
     let points_per_curve = r.points.len();
     if curves.iter().any(|c| c.points.len() != points_per_curve) {
@@ -160,21 +230,52 @@ pub fn analyse(rec: &Filter, scale: &MeterScale) -> Result<FilterTables, String>
     let reference = corner(r, ref_code, scale)?;
     let mut filt_code = Vec::new();
     for code in 0..FILT_CODES as u8 {
-        filt_code.push(corner(curve(&curves, file, STAGE_FILT_CODE, code, ref_bw, ref_hpf)?, code, scale)?);
+        filt_code.push(corner(
+            curve(&curves, file, STAGE_FILT_CODE, code, ref_bw, ref_hpf)?,
+            code,
+            scale,
+        )?);
     }
     let mut filt_bw = Vec::new();
     for bw in 0..FILT_BWS as u8 {
-        filt_bw.push(corner(curve(&curves, file, STAGE_FILT_BW, ref_code, bw, ref_hpf)?, bw, scale)?);
+        filt_bw.push(corner(
+            curve(&curves, file, STAGE_FILT_BW, ref_code, bw, ref_hpf)?,
+            bw,
+            scale,
+        )?);
     }
     let mut hpf = Vec::new();
     for h in 0..HPF_CODES as u8 {
-        hpf.push((h, max_deviation(r, curve(&curves, file, STAGE_HPF, ref_code, ref_bw, h)?, HPF_COMPARE_MAX_HZ, scale)?));
+        hpf.push((
+            h,
+            max_deviation(
+                r,
+                curve(&curves, file, STAGE_HPF, ref_code, ref_bw, h)?,
+                HPF_COMPARE_MAX_HZ,
+                scale,
+            )?,
+        ));
     }
     let hpf_max_db = hpf.iter().map(|h| h.1).fold(0.0, f64::max);
     let two_state_db = two_state_db(r, scale);
-    let repeat_max_db = max_deviation(r, curve(&curves, file, STAGE_FILT_CODE, ref_code, ref_bw, ref_hpf)?, HPF_COMPARE_MAX_HZ, scale)?;
+    let repeat_max_db = max_deviation(
+        r,
+        curve(&curves, file, STAGE_FILT_CODE, ref_code, ref_bw, ref_hpf)?,
+        HPF_COMPARE_MAX_HZ,
+        scale,
+    )?;
     let if_span_hz = (r.points[0].0, r.points[points_per_curve - 1].0);
-    Ok(FilterTables { filt_code, filt_bw, reference, hpf, hpf_max_db, two_state_db, repeat_max_db, points_per_curve, if_span_hz })
+    Ok(FilterTables {
+        filt_code,
+        filt_bw,
+        reference,
+        hpf,
+        hpf_max_db,
+        two_state_db,
+        repeat_max_db,
+        points_per_curve,
+        if_span_hz,
+    })
 }
 
 pub fn emit(t: &FilterTables, rec: &Filter, scale: &MeterScale) -> String {
@@ -209,7 +310,11 @@ the HPF codes.",
         t.if_span_hz.1 / 1e6,
         rec.if_step_hz / 1e3,
         t.points_per_curve,
-        if rec.ddc_track { "tracked the tone (pset_iffreq 1 MHz below it)" } else { "stayed fixed" },
+        if rec.ddc_track {
+            "tracked the tone (pset_iffreq 1 MHz below it)"
+        } else {
+            "stayed fixed"
+        },
         MEDIAN_WINDOW,
         PASSBAND_LEVEL_SPAN_HZ.0 / 1e6,
         PASSBAND_LEVEL_SPAN_HZ.1 / 1e6,
@@ -223,8 +328,10 @@ the HPF codes.",
     s.blank();
     s.line("use super::types::*;");
     s.blank();
-    s.doc("The reference curve (FILT_CODE 0000, FILT_BW 00, HPF 1111): its corner
-and rejection by the same method, for comparison.");
+    s.doc(
+        "The reference curve (FILT_CODE 0000, FILT_BW 00, HPF 1111): its corner
+and rejection by the same method, for comparison.",
+    );
     s.line(&format!(
         "pub const REFERENCE: FiltCorner = FiltCorner {{ code: {}, upper_3db_hz: {}, db_2mhz_past_corner: {} }};",
         t.reference.code,
@@ -232,19 +339,39 @@ and rejection by the same method, for comparison.");
         f(t.reference.db_past_corner, 1)
     ));
     s.blank();
-    s.doc("FILT_CODE 0000 (widest) ..= 1111 (narrowest) with FILT_BW 00 and HPF
-1111: the upper -3 dB corner, and the curve 2 MHz past it.");
-    s.line(&format!("pub const FILT_CODE_UPPER_3DB: [FiltCorner; {}] = [", t.filt_code.len()));
+    s.doc(
+        "FILT_CODE 0000 (widest) ..= 1111 (narrowest) with FILT_BW 00 and HPF
+1111: the upper -3 dB corner, and the curve 2 MHz past it.",
+    );
+    s.line(&format!(
+        "pub const FILT_CODE_UPPER_3DB: [FiltCorner; {}] = [",
+        t.filt_code.len()
+    ));
     for c in &t.filt_code {
-        s.line(&format!("    FiltCorner {{ code: 0b{:04b}, upper_3db_hz: {}, db_2mhz_past_corner: {} }},", c.code, f(c.upper_3db_hz, 1), f(c.db_past_corner, 1)));
+        s.line(&format!(
+            "    FiltCorner {{ code: 0b{:04b}, upper_3db_hz: {}, db_2mhz_past_corner: {} }},",
+            c.code,
+            f(c.upper_3db_hz, 1),
+            f(c.db_past_corner, 1)
+        ));
     }
     s.line("];");
     s.blank();
-    s.doc("FILT_BW 00 (widest), 01 and 10 (middle), 11 (narrowest) with FILT_CODE
-0000 and HPF 1111.");
-    s.line(&format!("pub const FILT_BW_UPPER_3DB: [FiltCorner; {}] = [", t.filt_bw.len()));
+    s.doc(
+        "FILT_BW 00 (widest), 01 and 10 (middle), 11 (narrowest) with FILT_CODE
+0000 and HPF 1111.",
+    );
+    s.line(&format!(
+        "pub const FILT_BW_UPPER_3DB: [FiltCorner; {}] = [",
+        t.filt_bw.len()
+    ));
     for c in &t.filt_bw {
-        s.line(&format!("    FiltCorner {{ code: 0b{:02b}, upper_3db_hz: {}, db_2mhz_past_corner: {} }},", c.code, f(c.upper_3db_hz, 1), f(c.db_past_corner, 1)));
+        s.line(&format!(
+            "    FiltCorner {{ code: 0b{:02b}, upper_3db_hz: {}, db_2mhz_past_corner: {} }},",
+            c.code,
+            f(c.upper_3db_hz, 1),
+            f(c.db_past_corner, 1)
+        ));
     }
     s.line("];");
     s.blank();
@@ -265,15 +392,30 @@ smoothed readings between {:.1} and {:.1} MHz): {}. The roll-off below
         t.two_state_db,
         PASSBAND_LEVEL_SPAN_HZ.0 / 1e6,
         PASSBAND_LEVEL_SPAN_HZ.1 / 1e6,
-        if no_effect { "no HPF code has a measurable effect above 0.1 MHz in this configuration" } else { "some HPF code departs from the reference by more than its alternation" }
+        if no_effect {
+            "no HPF code has a measurable effect above 0.1 MHz in this configuration"
+        } else {
+            "some HPF code departs from the reference by more than its alternation"
+        }
     ));
-    s.line(&format!("pub const HPF_EFFECT: [HpfEffect; {}] = [", t.hpf.len()));
+    s.line(&format!(
+        "pub const HPF_EFFECT: [HpfEffect; {}] = [",
+        t.hpf.len()
+    ));
     for (code, dev) in &t.hpf {
-        s.line(&format!("    HpfEffect {{ code: 0b{code:04b}, max_deviation_from_reference_db: {} }},", f(*dev, 1)));
+        s.line(&format!(
+            "    HpfEffect {{ code: 0b{code:04b}, max_deviation_from_reference_db: {} }},",
+            f(*dev, 1)
+        ));
     }
     s.line("];");
     s.doc("The reference curve's two-state alternation, the threshold above.");
-    s.line(&format!("pub const REFERENCE_TWO_STATE_DB: f64 = {};", f(t.two_state_db, 1)));
-    s.line(&format!("pub const HPF_HAS_NO_MEASURABLE_EFFECT: bool = {no_effect};"));
+    s.line(&format!(
+        "pub const REFERENCE_TWO_STATE_DB: f64 = {};",
+        f(t.two_state_db, 1)
+    ));
+    s.line(&format!(
+        "pub const HPF_HAS_NO_MEASURABLE_EFFECT: bool = {no_effect};"
+    ));
     s.finish()
 }

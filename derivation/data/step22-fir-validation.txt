@@ -1,0 +1,83 @@
+records read: 41 sweeps; 486 lines of sets outside the allow-list skipped unparsed
+
+(a) direct path: measured − model at the tone's landing (both ≥ 10 dB over the floor)
+  step12-fold-clean.jsonl 2.048 Msps design: in band n 41 mean +0.06 rms 0.39 worst +1.0 dB; beyond Nyquist n 24 mean +0.63 rms 0.94 worst +2.0 dB
+  step12-fold-clean.jsonl 2.048 Msps power-on: in band n 41 mean -0.21 rms 0.48 worst -0.9 dB; beyond Nyquist n 62 mean -0.22 rms 4.04 worst -30.7 dB
+  step12-fold-clean.jsonl 2.400 Msps design: in band n 47 mean +0.08 rms 0.53 worst +1.3 dB; beyond Nyquist n 22 mean +0.11 rms 0.71 worst +1.4 dB
+  step12-fold-clean.jsonl 2.400 Msps power-on: in band n 47 mean -0.12 rms 0.52 worst -1.3 dB; beyond Nyquist n 66 mean +0.08 rms 0.71 worst -1.9 dB
+  step12-fold-clean.jsonl 2.880 Msps design: in band n 57 mean -0.13 rms 0.74 worst +1.8 dB; beyond Nyquist n 14 mean +1.82 rms 1.98 worst +3.2 dB
+  step12-fold-clean.jsonl 2.880 Msps power-on: in band n 57 mean -0.05 rms 0.43 worst -1.0 dB; beyond Nyquist n 52 mean +0.44 rms 2.17 worst +5.8 dB
+  step12-source8-check.jsonl 2.400 Msps design: in band n 47 mean +0.11 rms 0.63 worst -1.3 dB; beyond Nyquist n 20 mean +0.27 rms 0.89 worst +1.8 dB
+  step12-source8-check.jsonl 2.048 Msps design: in band n 41 mean +0.20 rms 0.44 worst +1.3 dB; beyond Nyquist n 24 mean +0.77 rms 0.96 worst +1.8 dB
+  step12-source8-check.jsonl 2.880 Msps design: in band n 57 mean -0.18 rms 0.80 worst +2.0 dB; beyond Nyquist n 14 mean +1.97 rms 2.14 worst +3.3 dB
+  step12-candidates.jsonl 2.048 Msps design: in band n 41 mean -0.17 rms 0.48 worst +0.8 dB; beyond Nyquist n 24 mean +0.18 rms 0.76 worst +2.4 dB
+  step12-candidates.jsonl 2.048 Msps fields:-12,-42,-67,-101,-126,-113,-22,12: in band n 41 mean -0.32 rms 0.55 worst -0.9 dB; beyond Nyquist n 29 mean -0.89 rms 3.51 worst -18.6 dB
+  step12-candidates.jsonl 2.048 Msps fields:-58,-101,-128,-118,-84,-37,26,127: in band n 41 mean -0.35 rms 0.56 worst -0.9 dB; beyond Nyquist n 41 mean +0.05 rms 1.01 worst +3.3 dB
+  step12-candidates.jsonl 2.048 Msps fields:-62,-106,-120,-74,13,92,127,127,1: in band n 41 mean -0.30 rms 0.54 worst -0.9 dB; beyond Nyquist n 17 mean -0.85 rms 3.38 worst -13.7 dB
+  step12-candidates.jsonl 2.400 Msps design: in band n 47 mean +0.08 rms 0.57 worst +1.3 dB; beyond Nyquist n 26 mean +0.37 rms 1.30 worst +4.0 dB
+  step12-candidates.jsonl 2.400 Msps fields:-12,-42,-67,-101,-126,-113,-22,12: in band n 47 mean -0.08 rms 0.56 worst +1.2 dB; beyond Nyquist n 29 mean +0.14 rms 1.03 worst +2.5 dB
+  step12-candidates.jsonl 2.400 Msps fields:-62,-106,-120,-74,13,92,127,127,1: in band n 47 mean -0.07 rms 0.56 worst -1.3 dB; beyond Nyquist n 12 mean -0.39 rms 0.84 worst -1.4 dB
+  step12-candidates.jsonl 2.880 Msps design: in band n 57 mean +0.06 rms 0.57 worst +2.1 dB; beyond Nyquist n 13 mean +0.41 rms 1.39 worst -3.9 dB
+  step12-candidates.jsonl 2.880 Msps fields:-12,-42,-67,-101,-126,-113,-22,12: in band n 57 mean -0.01 rms 0.45 worst +1.4 dB; beyond Nyquist n 14 mean +0.99 rms 2.10 worst +7.5 dB
+  step12-candidates.jsonl 2.880 Msps fields:-22,-35,-64,-99,-121,-118,-76,11,: in band n 57 mean -0.01 rms 0.44 worst +1.2 dB; beyond Nyquist n 14 mean +0.01 rms 0.49 worst +0.8 dB
+  step12-candidates-round2.jsonl 2.048 Msps design: in band n 41 mean -0.17 rms 0.48 worst -0.8 dB; beyond Nyquist n 24 mean +0.18 rms 0.77 worst +2.2 dB
+  step12-candidates-round2.jsonl 2.048 Msps fields:-31,-31,-37,-41,-39,-26,-3,32,80,: in band n 41 mean -0.26 rms 0.52 worst -0.9 dB; beyond Nyquist n 28 mean -0.98 rms 4.57 worst -24.1 dB
+  step12-candidates-round2.jsonl 2.048 Msps fields:-41,-13,-7,2,17,38,64,96,129,166,: in band n 41 mean -0.18 rms 0.49 worst -0.8 dB; beyond Nyquist n 17 mean -0.81 rms 3.10 worst -12.4 dB
+  step12-candidates-round2.jsonl 2.400 Msps design: in band n 47 mean +0.09 rms 0.56 worst +1.4 dB; beyond Nyquist n 25 mean +0.39 rms 1.41 worst +4.4 dB
+  step12-candidates-round2.jsonl 2.400 Msps fields:-31,-31,-37,-41,-39,-26,-3,32,80,: in band n 47 mean +0.01 rms 0.54 worst +1.3 dB; beyond Nyquist n 29 mean +0.27 rms 1.27 worst +4.5 dB
+  step12-candidates-round2.jsonl 2.400 Msps fields:-48,-31,-32,-31,-21,-3,24,59,104,: in band n 47 mean +0.03 rms 0.54 worst +1.3 dB; beyond Nyquist n 22 mean -0.08 rms 0.78 worst -1.5 dB
+  step12-candidates-round2.jsonl 2.880 Msps design: in band n 57 mean +0.04 rms 0.48 worst +1.3 dB; beyond Nyquist n 14 mean +1.19 rms 1.51 worst +2.4 dB
+  step12-candidates-round2.jsonl 2.880 Msps fields:-31,-31,-37,-41,-39,-26,-3,32,80,: in band n 57 mean -0.06 rms 0.47 worst -1.1 dB; beyond Nyquist n 14 mean +0.01 rms 0.52 worst +1.4 dB
+
+(b) mirror path (ν = 2·IF − δ, D = D4(fold(ν, f_symbol))): measured − model where a line is reported; bounds where none is
+  step12-chain.jsonl 2.048 Msps single:15:2047: lines n 67 mean -0.85 rms 1.09 worst -2.3 dB; none reported and model under the weakest reported line + 6 dB: 107; model above it: 2 -2.60→-0.500:-52.7>-63.9 -1.05→-0.002:-22.4>-55.1
+  step12-chain.jsonl 2.400 Msps single:15:2047: lines n 77 mean -1.04 rms 1.70 worst +6.2 dB; none reported and model under the weakest reported line + 6 dB: 105; model above it: 0 
+  step12-chain.jsonl 2.880 Msps single:15:2047: lines n 95 mean +10.13 rms 17.04 worst +42.8 dB; none reported and model under the weakest reported line + 6 dB: 33; model above it: 0 
+  step12-fold-clean.jsonl 2.048 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 134; model above it: 0 
+  step12-fold-clean.jsonl 2.048 Msps power-on: lines n 1 mean +8.44 rms 8.44 worst +8.4 dB; none reported and model under the weakest reported line + 6 dB: 135; model above it: 0 
+  step12-fold-clean.jsonl 2.400 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 140; model above it: 0 
+  step12-fold-clean.jsonl 2.400 Msps power-on: lines n 1 mean +9.31 rms 9.31 worst +9.3 dB; none reported and model under the weakest reported line + 6 dB: 141; model above it: 0 
+  step12-fold-clean.jsonl 2.880 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 139; model above it: 0 
+  step12-fold-clean.jsonl 2.880 Msps power-on: lines n 0; none reported and model under the weakest reported line + 6 dB: 138; model above it: 0 
+  step12-source8-check.jsonl 2.400 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 141; model above it: 0 
+  step12-source8-check.jsonl 2.048 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 133; model above it: 0 
+  step12-source8-check.jsonl 2.880 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 139; model above it: 0 
+  step12-candidates.jsonl 2.048 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 171; model above it: 0 
+  step12-candidates.jsonl 2.048 Msps fields:-12,-42,-67,-101,-126,-113,-22,12: lines n 18 mean -0.19 rms 1.81 worst +6.0 dB; none reported and model under the weakest reported line + 6 dB: 156; model above it: 0 
+  step12-candidates.jsonl 2.048 Msps fields:-58,-101,-128,-118,-84,-37,26,127: lines n 20 mean -0.19 rms 1.67 worst +5.5 dB; none reported and model under the weakest reported line + 6 dB: 152; model above it: 0 
+  step12-candidates.jsonl 2.048 Msps fields:-62,-106,-120,-74,13,92,127,127,1: lines n 21 mean +0.01 rms 1.76 worst +5.9 dB; none reported and model under the weakest reported line + 6 dB: 150; model above it: 0 
+  step12-candidates.jsonl 2.400 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 180; model above it: 0 
+  step12-candidates.jsonl 2.400 Msps fields:-12,-42,-67,-101,-126,-113,-22,12: lines n 34 mean -0.65 rms 0.84 worst -1.6 dB; none reported and model under the weakest reported line + 6 dB: 144; model above it: 0 
+  step12-candidates.jsonl 2.400 Msps fields:-62,-106,-120,-74,13,92,127,127,1: lines n 37 mean -0.50 rms 1.22 worst -2.9 dB; none reported and model under the weakest reported line + 6 dB: 132; model above it: 0 
+  step12-candidates.jsonl 2.880 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 157; model above it: 0 
+  step12-candidates.jsonl 2.880 Msps fields:-12,-42,-67,-101,-126,-113,-22,12: lines n 42 mean +5.68 rms 7.67 worst +37.4 dB; none reported and model under the weakest reported line + 6 dB: 93; model above it: 0 
+  step12-candidates.jsonl 2.880 Msps fields:-22,-35,-64,-99,-121,-118,-76,11,: lines n 34 mean +8.86 rms 9.02 worst +12.4 dB; none reported and model under the weakest reported line + 6 dB: 110; model above it: 0 
+  step12-candidates-round2.jsonl 2.048 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 171; model above it: 0 
+  step12-candidates-round2.jsonl 2.048 Msps fields:-31,-31,-37,-41,-39,-26,-3,32,80,: lines n 18 mean -0.05 rms 1.76 worst +6.8 dB; none reported and model under the weakest reported line + 6 dB: 156; model above it: 0 
+  step12-candidates-round2.jsonl 2.048 Msps fields:-41,-13,-7,2,17,38,64,96,129,166,: lines n 31 mean -0.85 rms 1.19 worst -4.0 dB; none reported and model under the weakest reported line + 6 dB: 136; model above it: 0 
+  step12-candidates-round2.jsonl 2.400 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 180; model above it: 0 
+  step12-candidates-round2.jsonl 2.400 Msps fields:-31,-31,-37,-41,-39,-26,-3,32,80,: lines n 33 mean -0.78 rms 1.02 worst -2.2 dB; none reported and model under the weakest reported line + 6 dB: 149; model above it: 0 
+  step12-candidates-round2.jsonl 2.400 Msps fields:-48,-31,-32,-31,-21,-3,24,59,104,: lines n 38 mean -0.49 rms 0.76 worst -1.3 dB; none reported and model under the weakest reported line + 6 dB: 128; model above it: 1 -1.35→-1.110:-57.5>-65.4
+  step12-candidates-round2.jsonl 2.880 Msps design: lines n 0; none reported and model under the weakest reported line + 6 dB: 179; model above it: 0 
+  step12-candidates-round2.jsonl 2.880 Msps fields:-31,-31,-37,-41,-39,-26,-3,32,80,: lines n 32 mean -2.74 rms 3.55 worst -7.3 dB; none reported and model under the weakest reported line + 6 dB: 147; model above it: 0 
+
+(c) filterfit's figures at 2.4 Msps (worst alias re the centre inside ±0.7 / ±0.8 / ±1.0 MHz, spread over ±0.96 MHz): model | record
+  step12-fold-clean.jsonl design: model 45.2 / 42.0 / 26.9 / 4.5 | record 42.8 / 41.8 / 25.8 / 4.6
+  step12-fold-clean.jsonl power-on: model 30.7 / 29.7 / 17.7 / 2.0 | record 30.9 / 29.4 / 17.8 / 2.9
+  step12-source8-check.jsonl design: model 45.2 / 42.0 / 26.9 / 4.5 | record 44.7 / 41.3 / 26.3 / 4.8
+  step12-candidates.jsonl design: model 45.2 / 42.0 / 26.9 / 4.5 | record 43.7 / 41.7 / 26.0 / 4.9
+  step12-candidates.jsonl fields:-12,-42,-67,-101,-126,-113,-22,12: model 45.8 / 43.2 / 24.9 / 2.0 | record 46.2 / 42.2 / 24.1 / 2.6
+  step12-candidates.jsonl fields:-62,-106,-120,-74,13,92,127,127,1: model 50.1 / 49.6 / 28.2 / 3.0 | record 44.6 / 44.2 / 27.1 / 3.6
+  step12-candidates-round2.jsonl design: model 45.2 / 42.0 / 26.9 / 4.5 | record 43.4 / 41.6 / 25.9 / 4.9
+  step12-candidates-round2.jsonl fields:-31,-31,-37,-41,-39,-26,-3,32,80,: model 41.7 / 38.5 / 23.5 / 2.1 | record 40.4 / 37.6 / 22.7 / 2.5
+  step12-candidates-round2.jsonl fields:-48,-31,-32,-31,-21,-3,24,59,104,: model 44.9 / 41.3 / 25.3 / 2.9 | record 43.8 / 40.7 / 24.4 / 3.3
+
+(d) the 2026-10-12 tone test, ours (model; the bench read +1.6→−0.8: 43–44, +2.0→−0.4: 52–59, +1.3→−1.1: ~16, −1.6→+0.8: 37–42 dB under the in-band reference)
+  {"tone_mhz":1.30,"lands_mhz":-1.100,"rej_re_landing_db":10.1,"rej_re_centre_db":18.4,"mirror_lands_mhz":1.040,"mirror_rej_re_landing_db":100.3}
+  {"tone_mhz":1.60,"lands_mhz":-0.800,"rej_re_landing_db":41.0,"rej_re_centre_db":42.9,"mirror_lands_mhz":0.740,"mirror_rej_re_landing_db":102.1}
+  {"tone_mhz":2.00,"lands_mhz":-0.400,"rej_re_landing_db":49.5,"rej_re_centre_db":50.6,"mirror_lands_mhz":0.340,"mirror_rej_re_landing_db":109.5}
+  {"tone_mhz":-1.60,"lands_mhz":0.800,"rej_re_landing_db":41.0,"rej_re_centre_db":42.9,"mirror_lands_mhz":-0.860,"mirror_rej_re_landing_db":52.9}
+  {"tone_mhz":-2.00,"lands_mhz":0.400,"rej_re_landing_db":49.5,"rej_re_centre_db":50.6,"mirror_lands_mhz":-0.460,"mirror_rej_re_landing_db":66.0}
+  {"tone_mhz":3.00,"lands_mhz":0.600,"rej_re_landing_db":115.7,"rej_re_centre_db":117.1,"mirror_lands_mhz":-0.660,"mirror_rej_re_landing_db":101.8}
+  {"tone_mhz":-3.00,"lands_mhz":-0.600,"rej_re_landing_db":115.7,"rej_re_centre_db":117.1,"mirror_lands_mhz":0.540,"mirror_rej_re_landing_db":56.7}
+  {"tone_mhz":-1.30,"lands_mhz":1.100,"rej_re_landing_db":10.1,"rej_re_centre_db":18.4,"mirror_lands_mhz":-1.160,"mirror_rej_re_landing_db":49.0}

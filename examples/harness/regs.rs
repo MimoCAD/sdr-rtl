@@ -42,7 +42,8 @@ pub const USB_SYSCTL_FULL_PACKET: u32 = 1 << 3;
 pub const USB_SYSCTL_DMA_EN: u32 = 1 << 0;
 /// Reset value of USB_SYSCTL's documented bits: DMA = 1, others 0.
 pub const USB_SYSCTL_RESET: u32 = USB_SYSCTL_DMA_EN;
-pub const USB_SYSCTL_DOC_MASK: u32 = USB_SYSCTL_SIE_RESET | USB_SYSCTL_FULL_PACKET | USB_SYSCTL_DMA_EN;
+pub const USB_SYSCTL_DOC_MASK: u32 =
+    USB_SYSCTL_SIE_RESET | USB_SYSCTL_FULL_PACKET | USB_SYSCTL_DMA_EN;
 
 /// USB_EPA_CFG, offset 0x0144 (Table 31).
 pub const USB_EPA_CFG: u16 = 0x0144;
@@ -56,7 +57,8 @@ pub const EPA_CFG_DIR_IN: u32 = 1 << 4;
 pub const EPA_CFG_NUM_MASK: u32 = 0x0F;
 /// Documented reset: enable 0, type 10b, iso 00, number 0 (bit 4 R, no reset).
 pub const EPA_CFG_RESET: u32 = EPA_CFG_TYPE_BULK << EPA_CFG_TYPE_SHIFT;
-pub const EPA_CFG_RESET_MASK: u32 = EPA_CFG_ISO_MASK | EPA_CFG_ENABLE | EPA_CFG_TYPE_MASK | EPA_CFG_NUM_MASK;
+pub const EPA_CFG_RESET_MASK: u32 =
+    EPA_CFG_ISO_MASK | EPA_CFG_ENABLE | EPA_CFG_TYPE_MASK | EPA_CFG_NUM_MASK;
 
 /// USB_EPA_CTL, offset 0x0148 (Table 32).
 pub const USB_EPA_CTL: u16 = 0x0148;
@@ -184,8 +186,22 @@ pub struct Default {
     pub cite: &'static str,
 }
 
-const fn d(name: &'static str, page: u8, offset: u8, mask: u8, value: u8, cite: &'static str) -> Default {
-    Default { name, page, offset, mask, value, cite }
+const fn d(
+    name: &'static str,
+    page: u8,
+    offset: u8,
+    mask: u8,
+    value: u8,
+    cite: &'static str,
+) -> Default {
+    Default {
+        name,
+        page,
+        offset,
+        mask,
+        value,
+        cite,
+    }
 }
 
 /// The demodulator reset values the documents print, as bytes. Multi-byte
@@ -193,7 +209,14 @@ const fn d(name: &'static str, page: u8, offset: u8, mask: u8, value: u8, cite: 
 /// whose multi-byte fields are read-only and not used here).
 pub const DEMOD_DEFAULTS: &[Default] = &[
     // Table 2 / p. 13 (AAGC), page 1.
-    d("en_if_agc,en_rf_agc,aagc_hold,loop_gain2<3:0>", 1, 0x04, 0xFE, 0xC0, "Table 2 p.12"),
+    d(
+        "en_if_agc,en_rf_agc,aagc_hold,loop_gain2<3:0>",
+        1,
+        0x04,
+        0xFE,
+        0xC0,
+        "Table 2 p.12",
+    ),
     d("loop_gain2<4>", 1, 0x05, 0x80, 0x80, "Table 2 p.12"),
     d("vtop1", 1, 0x06, 0x3F, 0x10, "Table 2 p.12"),
     d("krf2", 1, 0x07, 0xFF, 0x0F, "Table 2 p.12"),
@@ -208,21 +231,56 @@ pub const DEMOD_DEFAULTS: &[Default] = &[
     d("krf1", 1, 0xCB, 0xFF, 0x02, "Table 2 p.12"),
     d("krf3", 1, 0xCD, 0xFF, 0x20, "Table 2 p.12"),
     d("krf4", 1, 0xCE, 0xFF, 0x30, "Table 2 p.12"),
-    d("polar_rf_agc,polar_if_agc", 0, 0x0E, 0x03, 0x00, "Table 2 p.12"),
+    d(
+        "polar_rf_agc,polar_if_agc",
+        0,
+        0x0E,
+        0x03,
+        0x00,
+        "Table 2 p.12",
+    ),
     // Table 3.
     d("IIC_repeat", 1, 0x01, 0x08, 0x00, "Table 3 p.15"),
     // Table 4.
     d("AD_EN_reg,AD_EN_reg1", 0, 0x08, 0xC0, 0x00, "Table 4 p.17"),
     d("opt_adc_iq", 0, 0x06, 0x30, 0x00, "Table 4 p.17"),
     // Tables 4-5.
-    d("en_bbin,en_dc_est,en_iq_comp,en_iq_est", 1, 0xB1, 0x1B, 0x1B, "Tables 4-5 pp.17-18"),
+    d(
+        "en_bbin,en_dc_est,en_iq_comp,en_iq_est",
+        1,
+        0xB1,
+        0x1B,
+        0x1B,
+        "Tables 4-5 pp.17-18",
+    ),
     // Table 6.
     d("Spec_inv,En_aci", 1, 0x15, 0x03, 0x02, "Table 6 p.20"),
     // Table 7 + Table 12: cfreq_off_ratio 0xAEBAF << 4 over 0x9D..0x9F,
     // rsamp_ratio 0xC99999 << 2 over 0x9F..0xA2.
-    d("cfreq_off_ratio[19:12]", 1, 0x9D, 0xFF, 0xAE, "Table 12 p.24"),
-    d("cfreq_off_ratio[11:4]", 1, 0x9E, 0xFF, 0xBA, "Table 12 p.24"),
-    d("cfreq_off_ratio[3:0],rsamp_ratio[25:22]", 1, 0x9F, 0xFF, 0xF3, "Tables 7,12 pp.20,24"),
+    d(
+        "cfreq_off_ratio[19:12]",
+        1,
+        0x9D,
+        0xFF,
+        0xAE,
+        "Table 12 p.24",
+    ),
+    d(
+        "cfreq_off_ratio[11:4]",
+        1,
+        0x9E,
+        0xFF,
+        0xBA,
+        "Table 12 p.24",
+    ),
+    d(
+        "cfreq_off_ratio[3:0],rsamp_ratio[25:22]",
+        1,
+        0x9F,
+        0xFF,
+        0xF3,
+        "Tables 7,12 pp.20,24",
+    ),
     d("rsamp_ratio[21:14]", 1, 0xA0, 0xFF, 0x26, "Table 7 p.20"),
     d("rsamp_ratio[13:6]", 1, 0xA1, 0xFF, 0x66, "Table 7 p.20"),
     d("rsamp_ratio[5:0]", 1, 0xA2, 0xFC, 0x64, "Table 7 p.20"),
@@ -234,9 +292,23 @@ pub const DEMOD_DEFAULTS: &[Default] = &[
     // Table 10.
     d("en_dagc", 1, 0x11, 0x01, 0x01, "Table 10 p.22"),
     // Table 11.
-    d("dis_auto_scan,pset_mode_gi", 1, 0x5F, 0x0F, 0x06, "Table 11 p.22"),
+    d(
+        "dis_auto_scan,pset_mode_gi",
+        1,
+        0x5F,
+        0x0F,
+        0x06,
+        "Table 11 p.22",
+    ),
     // Table 13, page 0.
-    d("err_pass,mode_PID,enable_PID", 0, 0x61, 0xE0, 0xE0, "Table 13 p.25"),
+    d(
+        "err_pass,mode_PID,enable_PID",
+        0,
+        0x61,
+        0xE0,
+        0xE0,
+        "Table 13 p.25",
+    ),
     d("en_PID[7:0]", 0, 0x62, 0xFF, 0x00, "Table 13 p.25"),
     d("en_PID[15:8]", 0, 0x63, 0xFF, 0x00, "Table 13 p.25"),
     d("en_PID[23:16]", 0, 0x64, 0xFF, 0x00, "Table 13 p.25"),
@@ -257,12 +329,35 @@ pub const PID_MSB_MASK: u8 = 0x1F;
 pub fn demod_oracle() -> Vec<(String, u8, u8, u8, u8, &'static str)> {
     let mut v: Vec<_> = DEMOD_DEFAULTS
         .iter()
-        .map(|x| (x.name.to_string(), x.page, x.offset, x.mask, x.value, x.cite))
+        .map(|x| {
+            (
+                x.name.to_string(),
+                x.page,
+                x.offset,
+                x.mask,
+                x.value,
+                x.cite,
+            )
+        })
         .collect();
     for (n, pid) in PID_RESET.iter().enumerate() {
         let off = PID_FIRST_OFF + 2 * n as u8;
-        v.push((format!("PID{n}[12:8]"), PID_PAGE, off, PID_MSB_MASK, (pid >> 8) as u8, "Table 13 pp.25-26"));
-        v.push((format!("PID{n}[7:0]"), PID_PAGE, off + 1, 0xFF, *pid as u8, "Table 13 pp.25-26"));
+        v.push((
+            format!("PID{n}[12:8]"),
+            PID_PAGE,
+            off,
+            PID_MSB_MASK,
+            (pid >> 8) as u8,
+            "Table 13 pp.25-26",
+        ));
+        v.push((
+            format!("PID{n}[7:0]"),
+            PID_PAGE,
+            off + 1,
+            0xFF,
+            *pid as u8,
+            "Table 13 pp.25-26",
+        ));
     }
     v
 }

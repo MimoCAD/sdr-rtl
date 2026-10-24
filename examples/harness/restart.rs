@@ -43,7 +43,10 @@ const TEST_VALUE: u8 = 0x7E;
 const TEST_VALUE_IN_RESET: u8 = 0x7D;
 
 fn snapshot(rtl: &Rtl) -> Vec<Option<u8>> {
-    WATCH.iter().map(|&(_, p, o)| rtl.demod_read8(p, o).ok()).collect()
+    WATCH
+        .iter()
+        .map(|&(_, p, o)| rtl.demod_read8(p, o).ok())
+        .collect()
 }
 
 fn snap_json(rtl: &Rtl, v: &[Option<u8>]) -> J {
@@ -77,7 +80,11 @@ fn res<T>(r: usb::R<T>) -> J {
 /// DEMOD_CTL bit 5 to 0 (held in reset) or 1 (released), read-modify-write.
 fn demod_reset(rtl: &Rtl, hold: bool) -> usb::R<u8> {
     let c = rtl.sys_read8(DEMOD_CTL)?;
-    let n = if hold { c & !DEMOD_CTL_RESET_RELEASE } else { c | DEMOD_CTL_RESET_RELEASE };
+    let n = if hold {
+        c & !DEMOD_CTL_RESET_RELEASE
+    } else {
+        c | DEMOD_CTL_RESET_RELEASE
+    };
     rtl.sys_write8(DEMOD_CTL, n)?;
     rtl.sys_read8(DEMOD_CTL)
 }
@@ -115,8 +122,14 @@ pub fn probe() -> Result<(), String> {
             .with("test_write", w)
             .with("before", snap_json(&rtl, &before))
             .with("demod_ctl_held", held.as_ref().ok().map(|v| hex8(*v)))
-            .with("reads_while_held", J::Arr(during.iter().map(|b| J::from(b.map(hex8))).collect()))
-            .with("demod_ctl_released", released.as_ref().ok().map(|v| hex8(*v)))
+            .with(
+                "reads_while_held",
+                J::Arr(during.iter().map(|b| J::from(b.map(hex8))).collect()),
+            )
+            .with(
+                "demod_ctl_released",
+                released.as_ref().ok().map(|v| hex8(*v)),
+            )
             .with("after_release", snap_json(&rtl, &after))
             .with("changed_by_pulse", changed(&before, &after)),
     );
@@ -138,12 +151,25 @@ pub fn probe() -> Result<(), String> {
             .with("before", snap_json(&rtl, &before))
             .with("demod_ctl_held", held.as_ref().ok().map(|v| hex8(*v)))
             .with("write_0x7D_while_held", w_held)
-            .with("read_while_held", match &r_held { Ok(v) => hex8(*v), Err(e) => J::from(format!("error: {e}")) })
-            .with("demod_ctl_released", released.as_ref().ok().map(|v| hex8(*v)))
+            .with(
+                "read_while_held",
+                match &r_held {
+                    Ok(v) => hex8(*v),
+                    Err(e) => J::from(format!("error: {e}")),
+                },
+            )
+            .with(
+                "demod_ctl_released",
+                released.as_ref().ok().map(|v| hex8(*v)),
+            )
             .with("after_release", snap_json(&rtl, &after))
             .with("changed", changed(&before, &after)),
     );
-    println!("B: write while held {:?}, after release test reg {:?}", r_held.as_ref().ok(), after[3]);
+    println!(
+        "B: write while held {:?}, after release test reg {:?}",
+        r_held.as_ref().ok(),
+        after[3]
+    );
 
     // C: FIFO reset pulse alone.
     let _ = step3::apply_baseline(&rtl, RATE_HZ, &[]);
@@ -155,12 +181,20 @@ pub fn probe() -> Result<(), String> {
         "c_fifo_reset_pulse",
         J::obj()
             .with("before", snap_json(&rtl, &before))
-            .with("epa_ctl_set_then_cleared", f.as_ref().ok().map(|(a, b)| J::Arr(vec![hex32(*a), hex32(*b)])))
+            .with(
+                "epa_ctl_set_then_cleared",
+                f.as_ref()
+                    .ok()
+                    .map(|(a, b)| J::Arr(vec![hex32(*a), hex32(*b)])),
+            )
             .with("error", f.err().map(|e| e.to_string()))
             .with("after", snap_json(&rtl, &after))
             .with("changed", changed(&before, &after)),
     );
-    println!("C: FIFO reset changed {}", changed(&before, &after).render());
+    println!(
+        "C: FIFO reset changed {}",
+        changed(&before, &after).render()
+    );
     rec.set("chip_answers_at_end", step3::alive(&rtl));
     crate::write_record("step3-restart-probe.json", &rec);
     Ok(())
@@ -229,7 +263,11 @@ fn done(path: &std::path::Path) -> HashSet<(u8, u8, u8)> {
 fn capture_base(rtl: &Rtl) -> Result<Vec<(u8, u8, u8)>, String> {
     BASE_REGS
         .iter()
-        .map(|&(p, o)| rtl.demod_read8(p, o).map(|v| (p, o, v)).map_err(|e| format!("baseline read p{p} 0x{o:02X}: {e}")))
+        .map(|&(p, o)| {
+            rtl.demod_read8(p, o)
+                .map(|v| (p, o, v))
+                .map_err(|e| format!("baseline read p{p} 0x{o:02X}: {e}"))
+        })
         .collect()
 }
 
@@ -258,7 +296,14 @@ pub fn bulk_events(c: &usb::Check, which: &str, rtl: &Rtl, e: &mut Vec<String>) 
 
 /// The restart sequence of [`ORDER`] up to and including the FIFO reset.
 /// Ok(true) when every step was accepted and read back as intended.
-fn restart(rtl: &Rtl, base: &[(u8, u8, u8)], page: u8, off: u8, value: u8, e: &mut Vec<String>) -> bool {
+fn restart(
+    rtl: &Rtl,
+    base: &[(u8, u8, u8)],
+    page: u8,
+    off: u8,
+    value: u8,
+    e: &mut Vec<String>,
+) -> bool {
     let mut ok = true;
     match demod_reset(rtl, true) {
         Ok(c) if c & DEMOD_CTL_RESET_RELEASE == 0 => {}
@@ -312,9 +357,16 @@ pub fn run(opts: &crate::bytescan::Opts) -> Result<(), String> {
     usb::guard()?;
     let done = done(&path);
     let total = PAGES.len() * 256 * 256;
-    let fresh_file = std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
-    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
-    let w = |out: &mut std::fs::File, j: J| writeln!(out, "{}", j.render()).map_err(|e| e.to_string());
+    let fresh_file = std::fs::metadata(&path)
+        .map(|m| m.len() == 0)
+        .unwrap_or(true);
+    let mut out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    let w =
+        |out: &mut std::fs::File, j: J| writeln!(out, "{}", j.render()).map_err(|e| e.to_string());
     if fresh_file {
         let hdr = crate::header("3-bytescan-restart", "bulk IN bytes after writing one demodulator byte value, then the documented demodulator and FIFO restarts")
             .with("kind", "header")
@@ -352,11 +404,23 @@ pub fn run(opts: &crate::bytescan::Opts) -> Result<(), String> {
             );
         w(&mut out, hdr)?;
     }
-    println!("bytescan --restart: {} of {} candidates already logged in {}; limit {:?}", done.len(), total, path.display(), limit);
+    println!(
+        "bytescan --restart: {} of {} candidates already logged in {}; limit {:?}",
+        done.len(),
+        total,
+        path.display(),
+        limit
+    );
 
     let (mut rtl, mut bulk, setup) = step3::fresh_with_baseline(RATE_HZ, &[])?;
     let mut base = capture_base(&rtl)?;
-    w(&mut out, setup.with("k", "setup").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)))?;
+    w(
+        &mut out,
+        setup.with("k", "setup").with(
+            "detector",
+            usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS),
+        ),
+    )?;
     let start = Instant::now();
     let (mut tested, mut skipped, mut hits) = (0usize, 0usize, 0usize);
     'scan: for page in PAGES {
@@ -368,12 +432,23 @@ pub fn run(opts: &crate::bytescan::Opts) -> Result<(), String> {
                 if limit.is_some_and(|n| tested >= n) {
                     break 'scan;
                 }
-                let line = J::obj().with("k", "c").with("p", page).with("o", off).with("v", value);
+                let line = J::obj()
+                    .with("k", "c")
+                    .with("p", page)
+                    .with("o", off)
+                    .with("v", value);
                 let mut e = Vec::new();
                 let mut recover = false;
                 let orig = match rtl.demod_read8(page, off) {
                     Ok(o) if o == value => {
-                        w(&mut out, J::obj().with("k", "s").with("p", page).with("o", off).with("v", value))?;
+                        w(
+                            &mut out,
+                            J::obj()
+                                .with("k", "s")
+                                .with("p", page)
+                                .with("o", off)
+                                .with("v", value),
+                        )?;
                         skipped += 1;
                         continue;
                     }
@@ -418,7 +493,10 @@ pub fn run(opts: &crate::bytescan::Opts) -> Result<(), String> {
                     line.set("b", bytes);
                     line.set("lat", lat.map(|d| (d.as_secs_f64() * 1e4).round() / 10.0));
                     line.set("s", streams);
-                    match rtl.demod_write8(page, off, o).and_then(|_| rtl.demod_read8(page, off)) {
+                    match rtl
+                        .demod_write8(page, off, o)
+                        .and_then(|_| rtl.demod_read8(page, off))
+                    {
                         Ok(b) if b == o => {}
                         Ok(b) => e.push(format!("restore read back {b}")),
                         Err(x) => e.push(format!("restore: {x}")),
@@ -433,7 +511,9 @@ pub fn run(opts: &crate::bytescan::Opts) -> Result<(), String> {
                     }
                     if streams {
                         hits += 1;
-                        println!("STREAMS: page {page} offset 0x{off:02X} value 0x{value:02X} ({bytes} bytes)");
+                        println!(
+                            "STREAMS: page {page} offset 0x{off:02X} value 0x{value:02X} ({bytes} bytes)"
+                        );
                     }
                 }
                 if !recover && !step3::alive(&rtl) {
@@ -465,7 +545,19 @@ pub fn run(opts: &crate::bytescan::Opts) -> Result<(), String> {
                     rtl = r;
                     bulk = b;
                     base = capture_base(&rtl)?;
-                    w(&mut out, setup.with("k", "recovery").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)).with("after", J::obj().with("p", page).with("o", off).with("v", value)))?;
+                    w(
+                        &mut out,
+                        setup
+                            .with("k", "recovery")
+                            .with(
+                                "detector",
+                                usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS),
+                            )
+                            .with(
+                                "after",
+                                J::obj().with("p", page).with("o", off).with("v", value),
+                            ),
+                    )?;
                     continue;
                 }
                 w(&mut out, line)?;

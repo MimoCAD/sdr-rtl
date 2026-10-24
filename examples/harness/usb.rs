@@ -6,7 +6,9 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use nusb::descriptors::TransferType;
-use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, Direction, In, Recipient, TransferError};
+use nusb::transfer::{
+    Bulk, ControlIn, ControlOut, ControlType, Direction, In, Recipient, TransferError,
+};
 use nusb::{DeviceInfo, Endpoint, Interface, MaybeFuture};
 
 use crate::json::{J, hex8, hex16};
@@ -111,7 +113,10 @@ impl Rtl {
     pub fn open() -> Result<Rtl, String> {
         let info = guard()?;
         let dev = info.open().wait().map_err(|e| format!("open: {e}"))?;
-        Ok(Rtl { dev, demod_form: DEMOD_FORM })
+        Ok(Rtl {
+            dev,
+            demod_form: DEMOD_FORM,
+        })
     }
 
     /// A vendor Get: bmRequestType 0xC0, bRequest don't care.
@@ -185,21 +190,34 @@ impl Rtl {
     }
 
     fn form(&self) -> DemodForm {
-        self.demod_form.expect("the demodulator wValue encoding is not established yet (run step 1)")
+        self.demod_form
+            .expect("the demodulator wValue encoding is not established yet (run step 1)")
     }
     pub fn demod_read(&self, page: u8, off: u8, len: u16) -> R<Vec<u8>> {
-        self.get(self.form().wvalue(off), windex(BLOCK_DEMOD, ACCESS_GET, page as u16), len)
+        self.get(
+            self.form().wvalue(off),
+            windex(BLOCK_DEMOD, ACCESS_GET, page as u16),
+            len,
+        )
     }
     pub fn demod_read8(&self, page: u8, off: u8) -> R<u8> {
         Ok(self.demod_read(page, off, 1)?[0])
     }
     pub fn demod_write8(&self, page: u8, off: u8, v: u8) -> R<()> {
-        self.set(self.form().wvalue(off), windex(BLOCK_DEMOD, ACCESS_SET, page as u16), &[v])
+        self.set(
+            self.form().wvalue(off),
+            windex(BLOCK_DEMOD, ACCESS_SET, page as u16),
+            &[v],
+        )
     }
     /// Several consecutive registers in one Set (wLength = data.len()), as
     /// the vendor driver was seen to write page 1 0x3E-0x3F (findings 9b).
     pub fn demod_write(&self, page: u8, off: u8, data: &[u8]) -> R<()> {
-        self.set(self.form().wvalue(off), windex(BLOCK_DEMOD, ACCESS_SET, page as u16), data)
+        self.set(
+            self.form().wvalue(off),
+            windex(BLOCK_DEMOD, ACCESS_SET, page as u16),
+            data,
+        )
     }
     /// Write one byte and read it back; Ok(readback).
     pub fn demod_write8_verify(&self, page: u8, off: u8, v: u8) -> R<u8> {
@@ -235,7 +253,14 @@ impl Rtl {
                     eps.push(
                         J::obj()
                             .with("address", hex8(e.address()))
-                            .with("direction", if e.direction() == Direction::In { "IN" } else { "OUT" })
+                            .with(
+                                "direction",
+                                if e.direction() == Direction::In {
+                                    "IN"
+                                } else {
+                                    "OUT"
+                                },
+                            )
                             .with("transfer_type", format!("{:?}", e.transfer_type()))
                             .with("max_packet_size", e.max_packet_size())
                             .with("interval", e.interval()),
@@ -289,10 +314,18 @@ fn little() -> bool {
     REG32_LITTLE_ENDIAN.expect("the register byte order is not established yet (run step 1)")
 }
 pub fn from_bytes32(b: [u8; 4]) -> u32 {
-    if little() { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+    if little() {
+        u32::from_le_bytes(b)
+    } else {
+        u32::from_be_bytes(b)
+    }
 }
 pub fn to_bytes32(v: u32) -> [u8; 4] {
-    if little() { v.to_le_bytes() } else { v.to_be_bytes() }
+    if little() {
+        v.to_le_bytes()
+    } else {
+        v.to_be_bytes()
+    }
 }
 
 /// Keeps [`BulkCounter::QUEUED`] bulk IN transfers in flight at all times
@@ -365,12 +398,25 @@ impl Check {
     /// The host kept at least one transfer queued throughout, with no
     /// error, halt or disconnection.
     pub fn clean(&self) -> bool {
-        self.errored == 0 && self.halts == 0 && !self.halted && !self.disconnected && self.in_flight_min > 0
+        self.errored == 0
+            && self.halts == 0
+            && !self.halted
+            && !self.disconnected
+            && self.in_flight_min > 0
     }
 
     /// "Stall x2", one entry per error kind.
     pub fn error_list(&self) -> Vec<String> {
-        self.errors.iter().map(|(k, n)| if *n == 1 { k.clone() } else { format!("{k} x{n}") }).collect()
+        self.errors
+            .iter()
+            .map(|(k, n)| {
+                if *n == 1 {
+                    k.clone()
+                } else {
+                    format!("{k} x{n}")
+                }
+            })
+            .collect()
     }
 
     /// Compact form for the scan records: [submitted, completed,
@@ -391,9 +437,15 @@ impl Check {
             .with("submitted", self.submitted)
             .with("completed", self.completed)
             .with("errored", self.errored)
-            .with("errors", J::Arr(self.error_list().into_iter().map(J::from).collect()))
+            .with(
+                "errors",
+                J::Arr(self.error_list().into_iter().map(J::from).collect()),
+            )
             .with("halts", self.halts)
-            .with("halt_clears", J::Arr(self.clears.iter().map(|c| J::from(c.as_str())).collect()))
+            .with(
+                "halt_clears",
+                J::Arr(self.clears.iter().map(|c| J::from(c.as_str())).collect()),
+            )
             .with("disconnected", self.disconnected)
             .with("halted", self.halted)
             .with("in_flight_start", self.in_flight_start)
@@ -446,7 +498,9 @@ impl BulkCounter {
     }
 
     pub fn open(rtl: &Rtl, buf_len: usize) -> Result<BulkCounter, String> {
-        let (ifn, addr, _mps) = rtl.bulk_in().ok_or("no bulk IN endpoint in the descriptors")?;
+        let (ifn, addr, _mps) = rtl
+            .bulk_in()
+            .ok_or("no bulk IN endpoint in the descriptors")?;
         let iface = rtl
             .dev
             .claim_interface(ifn)
@@ -455,7 +509,14 @@ impl BulkCounter {
         let ep = iface
             .endpoint::<Bulk, In>(addr)
             .map_err(|e| format!("endpoint 0x{addr:02X}: {e}"))?;
-        let mut c = BulkCounter { _iface: iface, ep, buf_len, check: Check::default(), clear_halts: true, halted: false };
+        let mut c = BulkCounter {
+            _iface: iface,
+            ep,
+            buf_len,
+            check: Check::default(),
+            clear_halts: true,
+            halted: false,
+        };
         c.top_up();
         c.check = c.fresh_check();
         Ok(c)
@@ -463,7 +524,12 @@ impl BulkCounter {
 
     fn fresh_check(&self) -> Check {
         let n = self.ep.pending();
-        Check { in_flight_start: n, in_flight_min: n, halted: self.halted, ..Check::default() }
+        Check {
+            in_flight_start: n,
+            in_flight_min: n,
+            halted: self.halted,
+            ..Check::default()
+        }
     }
 
     /// Queue new transfers until [`Self::QUEUED`] are in flight.
@@ -478,7 +544,11 @@ impl BulkCounter {
     /// Before a wait: retry the clear of a halt that a failed clear left in
     /// place, then top up. Returns the bytes of transfers cancelled for it.
     fn ready(&mut self) -> usize {
-        let n = if self.halted && self.clear_halts { self.clear_halt(None) } else { 0 };
+        let n = if self.halted && self.clear_halts {
+            self.clear_halt(None)
+        } else {
+            0
+        };
         self.top_up();
         n
     }
@@ -496,7 +566,12 @@ impl BulkCounter {
     /// Account one completion and resubmit its buffer; on a halt, clear
     /// it. Returns the bytes received (the completion's, plus any held by
     /// transfers cancelled for the clear).
-    fn take(&mut self, c: nusb::transfer::Completion, mut keep: Option<&mut Vec<u8>>, sizes: Option<&mut Vec<usize>>) -> usize {
+    fn take(
+        &mut self,
+        c: nusb::transfer::Completion,
+        mut keep: Option<&mut Vec<u8>>,
+        sizes: Option<&mut Vec<usize>>,
+    ) -> usize {
         self.check.completed += 1;
         self.check.in_flight_min = self.check.in_flight_min.min(self.ep.pending());
         let mut n = c.actual_len;
@@ -623,7 +698,15 @@ impl BulkCounter {
         }
         let elapsed = start.elapsed();
         let check = self.take_check();
-        Window { bytes, elapsed, completions, errors: check.error_list(), stale_bytes: stale, sizes, check }
+        Window {
+            bytes,
+            elapsed,
+            completions,
+            errors: check.error_list(),
+            stale_bytes: stale,
+            sizes,
+            check,
+        }
     }
 
     /// Take every transfer that has already completed (counted in the
@@ -658,7 +741,11 @@ impl BulkCounter {
                 }
             }
         }
-        FirstByte { latency, bytes, check: self.take_check() }
+        FirstByte {
+            latency,
+            bytes,
+            check: self.take_check(),
+        }
     }
 
     /// Cancel and drain every queued transfer.
@@ -683,8 +770,9 @@ pub fn vbus(on: bool) -> Result<String, String> {
         Err(first) => {
             let reset = analyzer_command(&["reset"]).unwrap_or_else(|e| e);
             std::thread::sleep(Duration::from_secs(4));
-            analyzer_command(&["vbus", if on { "on" } else { "off" }])
-                .map(|text| format!("{text} (after analyzer reset: {reset}; first attempt: {first})"))
+            analyzer_command(&["vbus", if on { "on" } else { "off" }]).map(|text| {
+                format!("{text} (after analyzer reset: {reset}; first attempt: {first})")
+            })
         }
     }
 }
@@ -692,13 +780,27 @@ pub fn vbus(on: bool) -> Result<String, String> {
 fn analyzer_command(args: &[&str]) -> Result<String, String> {
     let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/Cargo.toml");
     let out = Command::new("cargo")
-        .args(["run", "--quiet", "--manifest-path", manifest, "--release", "--bin", "cynthion-witness", "--"])
+        .args([
+            "run",
+            "--quiet",
+            "--manifest-path",
+            manifest,
+            "--release",
+            "--bin",
+            "cynthion-witness",
+            "--",
+        ])
         .args(args)
         .output()
         .map_err(|e| format!("spawn cargo: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() {
-        return Err(format!("{}: {} {}", args.join(" "), text, String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!(
+            "{}: {} {}",
+            args.join(" "),
+            text,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
     Ok(text)
 }

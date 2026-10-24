@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::Iq;
-use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, windex, wvalue_usb};
 use sdr_rtl::blocking::{Rtl, RtlStream};
+use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLOCK_USB, windex, wvalue_usb};
 
 const EPA_FIFO_CFG: u16 = 0x160;
 const COUNTER_BYTE: usize = 3;
@@ -46,13 +46,30 @@ const MARKS_S: [f64; 7] = [0.05, 0.2, 0.5, 1.0, 2.0, 4.0, 8.0];
 const RESTART_MARKS_S: [f64; 3] = [0.05, 0.5, 2.0];
 
 fn usb_read(rtl: &Rtl, off: u16, len: u16) -> Result<Vec<u8>, String> {
-    rtl.link().get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), len, "USB block read").map_err(|e| e.to_string())
+    rtl.link()
+        .get(
+            wvalue_usb(off),
+            windex(BLOCK_USB, ACCESS_GET, 0),
+            len,
+            "USB block read",
+        )
+        .map_err(|e| e.to_string())
 }
 
 fn usb_write(rtl: &Rtl, off: u16, data: &[u8]) -> Result<(), String> {
     let end = off + data.len() as u16;
-    assert!((off >= EPA_FIFO_CFG && end <= EPA_FIFO_CFG + 4) || (off >= EPA_CTL && end <= EPA_CTL + 2), "writes stay inside USB_EPA_FIFO_CFG and USB_EPA_CTL");
-    rtl.link().set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), data, "USB block write").map_err(|e| e.to_string())
+    assert!(
+        (off >= EPA_FIFO_CFG && end <= EPA_FIFO_CFG + 4) || (off >= EPA_CTL && end <= EPA_CTL + 2),
+        "writes stay inside USB_EPA_FIFO_CFG and USB_EPA_CTL"
+    );
+    rtl.link()
+        .set(
+            wvalue_usb(off),
+            windex(BLOCK_USB, ACCESS_SET, 0),
+            data,
+            "USB block write",
+        )
+        .map_err(|e| e.to_string())
 }
 
 fn counter(rtl: &Rtl) -> Result<(u8, Vec<u8>), String> {
@@ -67,16 +84,28 @@ fn emit(step: &str, rtl: &Rtl, extra: &str) -> Result<u8, String> {
 }
 
 /// Read the stream without pause, the counter at each mark.
-fn marks(rtl: &Rtl, s: &mut RtlStream, buf: &mut [Iq], label: &str, at: &[f64]) -> Result<(), String> {
+fn marks(
+    rtl: &Rtl,
+    s: &mut RtlStream,
+    buf: &mut [Iq],
+    label: &str,
+    at: &[f64],
+) -> Result<(), String> {
     let t = Instant::now();
     let (mut n, mut overflows) = (0usize, 0usize);
     for &m in at {
         while t.elapsed().as_secs_f64() < m {
-            let info = s.recv_into(buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+            let info = s
+                .recv_into(buf, RECV_TIMEOUT_S)
+                .map_err(|e| e.to_string())?;
             n += info.n_samples;
             overflows += info.overflow as usize;
         }
-        emit(&format!("{label} {m} s"), rtl, &format!(",\"samples\":{n},\"overflows\":{overflows}"))?;
+        emit(
+            &format!("{label} {m} s"),
+            rtl,
+            &format!(",\"samples\":{n},\"overflows\":{overflows}"),
+        )?;
     }
     Ok(())
 }
@@ -84,12 +113,24 @@ fn marks(rtl: &Rtl, s: &mut RtlStream, buf: &mut [Iq], label: &str, at: &[f64]) 
 fn run() -> Result<(), String> {
     let cycle = power_cycle()?;
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
-    emit("after power cycle and open", &rtl, &format!(",\"cycle\":\"{cycle}\""))?;
+    emit(
+        "after power cycle and open",
+        &rtl,
+        &format!(",\"cycle\":\"{cycle}\""),
+    )?;
     rtl.set_rate(RATE_SPS).map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
-    marks(&rtl, &mut s, &mut buf, "streaming, read without pause, at", &MARKS_S)?;
+    marks(
+        &rtl,
+        &mut s,
+        &mut buf,
+        "streaming, read without pause, at",
+        &MARKS_S,
+    )?;
     std::thread::sleep(STALL);
     emit("after a 2 s stall", &rtl, "")?;
     s.stop().map_err(|e| e.to_string())?;
@@ -104,19 +145,37 @@ fn run() -> Result<(), String> {
     if !cleared {
         let (_, v) = counter(&rtl)?;
         usb_write(&rtl, EPA_FIFO_CFG, &[v[0], v[1], v[2], 0])?;
-        cleared = emit("(b) after the register written back with the counter byte 0", &rtl, &format!(",\"wrote\":[{},{},{},0]", v[0], v[1], v[2]))? == 0;
+        cleared = emit(
+            "(b) after the register written back with the counter byte 0",
+            &rtl,
+            &format!(",\"wrote\":[{},{},{},0]", v[0], v[1], v[2]),
+        )? == 0;
     }
     if !cleared {
         let ctl = usb_read(&rtl, EPA_CTL, 2)?;
         let was = u16::from_le_bytes([ctl[0], ctl[1]]);
         usb_write(&rtl, EPA_CTL, &(was | EPA_CTL_FIFO_RESET).to_le_bytes())?;
-        emit("(c) USB_EPA_CTL bit 9 set", &rtl, &format!(",\"epa_ctl_was\":{was}"))?;
+        emit(
+            "(c) USB_EPA_CTL bit 9 set",
+            &rtl,
+            &format!(",\"epa_ctl_was\":{was}"),
+        )?;
         usb_write(&rtl, EPA_CTL, &was.to_le_bytes())?;
         let now = usb_read(&rtl, EPA_CTL, 2)?;
-        emit("(c) USB_EPA_CTL restored", &rtl, &format!(",\"epa_ctl_now\":{}", u16::from_le_bytes([now[0], now[1]])))?;
+        emit(
+            "(c) USB_EPA_CTL restored",
+            &rtl,
+            &format!(",\"epa_ctl_now\":{}", u16::from_le_bytes([now[0], now[1]])),
+        )?;
     }
     s.start().map_err(|e| e.to_string())?;
-    marks(&rtl, &mut s, &mut buf, "restarted, read without pause, at", &RESTART_MARKS_S)?;
+    marks(
+        &rtl,
+        &mut s,
+        &mut buf,
+        "restarted, read without pause, at",
+        &RESTART_MARKS_S,
+    )?;
     Ok(())
 }
 

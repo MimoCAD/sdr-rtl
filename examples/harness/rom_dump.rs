@@ -131,7 +131,11 @@ fn chunk_trials(rtl: &Rtl) -> Result<(u16, J), String> {
                         } else {
                             short += 1;
                         }
-                        mismatched_bytes += b.iter().zip(&refs[k][off..off + n]).filter(|(x, y)| x != y).count();
+                        mismatched_bytes += b
+                            .iter()
+                            .zip(&refs[k][off..off + n])
+                            .filter(|(x, y)| x != y)
+                            .count();
                     }
                     Err(_) => failed += 1,
                 }
@@ -174,24 +178,40 @@ fn read_space(rtl: &Rtl, chunk: u16) -> Pass {
         let o = match get_rom(rtl, a as u16, n as u16, 0) {
             Ok(b) => {
                 data[a..a + b.len()].copy_from_slice(&b);
-                if b.len() == n { Outcome::Full } else { Outcome::Short(b.len()) }
+                if b.len() == n {
+                    Outcome::Full
+                } else {
+                    Outcome::Short(b.len())
+                }
             }
             Err(_) => Outcome::Failed,
         };
         outcomes.push((a as u16, o));
         a += n;
     }
-    Pass { data, outcomes, ms: start.elapsed().as_millis() }
+    Pass {
+        data,
+        outcomes,
+        ms: start.elapsed().as_millis(),
+    }
 }
 
 fn pass_summary(p: &Pass) -> J {
-    let full = p.outcomes.iter().filter(|(_, o)| *o == Outcome::Full).count();
+    let full = p
+        .outcomes
+        .iter()
+        .filter(|(_, o)| *o == Outcome::Full)
+        .count();
     let bad: Vec<J> = p
         .outcomes
         .iter()
         .filter(|(_, o)| *o != Outcome::Full)
         .take(32)
-        .map(|(a, o)| J::obj().with("address", hex16(*a)).with("outcome", format!("{o:?}")))
+        .map(|(a, o)| {
+            J::obj()
+                .with("address", hex16(*a))
+                .with("outcome", format!("{o:?}"))
+        })
         .collect();
     J::obj()
         .with("chunks", p.outcomes.len())
@@ -202,10 +222,13 @@ fn pass_summary(p: &Pass) -> J {
 
 /// The first address whose chunk was not read in full.
 fn first_failure(p: &Pass) -> Option<usize> {
-    p.outcomes.iter().find(|(_, o)| *o != Outcome::Full).map(|(a, o)| match o {
-        Outcome::Short(n) => *a as usize + n,
-        _ => *a as usize,
-    })
+    p.outcomes
+        .iter()
+        .find(|(_, o)| *o != Outcome::Full)
+        .map(|(a, o)| match o {
+            Outcome::Short(n) => *a as usize + n,
+            _ => *a as usize,
+        })
 }
 
 /// The smallest power-of-two period (>= 256) at which `d` repeats whole.
@@ -246,10 +269,23 @@ fn probe(reads: &[(u16, u16)]) -> Result<(), String> {
     alive(&rtl, "before");
     // The register blocks through their own requests and through
     // GetROMCode at the same wValue, same session (register values only).
-    for &(name, base, off, len) in &[("sys", SYS_BASE, 0u16, 16u16), ("sys", SYS_BASE, 0x40, 16), ("usb", USB_BASE, 0, 16), ("usb", USB_BASE, 0x140, 32)] {
-        let own = if name == "sys" { rtl.sys_read(off, len) } else { rtl.usb_read(off, len) };
+    for &(name, base, off, len) in &[
+        ("sys", SYS_BASE, 0u16, 16u16),
+        ("sys", SYS_BASE, 0x40, 16),
+        ("usb", USB_BASE, 0, 16),
+        ("usb", USB_BASE, 0x140, 32),
+    ] {
+        let own = if name == "sys" {
+            rtl.sys_read(off, len)
+        } else {
+            rtl.usb_read(off, len)
+        };
         let rom = get_rom(&rtl, base + off, len, 0);
-        println!("{name} 0x{:04X} own {:02X?}", base + off, own.map_err(|e| e.to_string()));
+        println!(
+            "{name} 0x{:04X} own {:02X?}",
+            base + off,
+            own.map_err(|e| e.to_string())
+        );
         println!("{name} 0x{:04X} rom {:02X?}", base + off, rom);
     }
     for &(addr, len) in reads {
@@ -271,19 +307,49 @@ fn probe(reads: &[(u16, u16)]) -> Result<(), String> {
 /// Only the verdicts are recorded (these are register values, not ROM).
 fn register_blocks(rtl: &Rtl) -> J {
     let mut out = J::Arr(Vec::new());
-    for &(name, base, off, len) in &[("system", SYS_BASE, 0u16, 16u16), ("system", SYS_BASE, 0x40, 20), ("usb", USB_BASE, 0, 16), ("usb", USB_BASE, 0x144, 32)] {
-        let own = if name == "system" { rtl.sys_read(off, len).map_err(|e| e.to_string()) } else { rtl.usb_read(off, len).map_err(|e| e.to_string()) };
+    for &(name, base, off, len) in &[
+        ("system", SYS_BASE, 0u16, 16u16),
+        ("system", SYS_BASE, 0x40, 20),
+        ("usb", USB_BASE, 0, 16),
+        ("usb", USB_BASE, 0x144, 32),
+    ] {
+        let own = if name == "system" {
+            rtl.sys_read(off, len).map_err(|e| e.to_string())
+        } else {
+            rtl.usb_read(off, len).map_err(|e| e.to_string())
+        };
         let rom = get_rom(rtl, base + off, len, 0);
         let verdict = match (&own, &rom) {
             (Ok(o), Ok(r)) if o == r => "equal as read".to_string(),
-            (Ok(o), Ok(r)) if o.len() == r.len() && o.chunks(4).zip(r.chunks(4)).all(|(x, y)| x.iter().rev().eq(y.iter())) => {
+            (Ok(o), Ok(r))
+                if o.len() == r.len()
+                    && o.chunks(4)
+                        .zip(r.chunks(4))
+                        .all(|(x, y)| x.iter().rev().eq(y.iter())) =>
+            {
                 "equal with the 4 bytes of every 32-bit word reversed".to_string()
             }
-            (Ok(_), Ok(r)) if r.iter().all(|&x| x == r[0]) => "different: GetROMCode reads one repeated value".to_string(),
-            (Ok(o), Ok(r)) => format!("different in {} of {} bytes", o.iter().zip(r).filter(|(x, y)| x != y).count(), o.len()),
-            (o, r) => format!("own request {:?}, GetROMCode {:?}", o.as_ref().map(|v| v.len()), r.as_ref().map(|v| v.len())),
+            (Ok(_), Ok(r)) if r.iter().all(|&x| x == r[0]) => {
+                "different: GetROMCode reads one repeated value".to_string()
+            }
+            (Ok(o), Ok(r)) => format!(
+                "different in {} of {} bytes",
+                o.iter().zip(r).filter(|(x, y)| x != y).count(),
+                o.len()
+            ),
+            (o, r) => format!(
+                "own request {:?}, GetROMCode {:?}",
+                o.as_ref().map(|v| v.len()),
+                r.as_ref().map(|v| v.len())
+            ),
         };
-        out.push(J::obj().with("block", name).with("wValue", hex16(base + off)).with("length", len).with("verdict", verdict));
+        out.push(
+            J::obj()
+                .with("block", name)
+                .with("wValue", hex16(base + off))
+                .with("length", len)
+                .with("verdict", verdict),
+        );
     }
     out
 }
@@ -301,7 +367,13 @@ fn region_map(a: &[u8], c: &[u8]) -> J {
                 .with("start", hex16(base as u16))
                 .with("zero_bytes", s.iter().filter(|&&x| x == 0).count())
                 .with("distinct_values", seen.iter().filter(|&&x| x).count())
-                .with("differing_a_c", s.iter().zip(&c[base..base + 0x1000]).filter(|(x, y)| x != y).count()),
+                .with(
+                    "differing_a_c",
+                    s.iter()
+                        .zip(&c[base..base + 0x1000])
+                        .filter(|(x, y)| x != y)
+                        .count(),
+                ),
         );
     }
     out
@@ -313,7 +385,9 @@ fn differing_ranges(a: &[u8], b: &[u8]) -> Vec<String> {
     let mut out = Vec::new();
     let mut run: Option<(usize, usize, usize)> = None;
     for blk in 0..a.len() / 256 {
-        let n = (blk * 256..blk * 256 + 256).filter(|&i| a[i] != b[i]).count();
+        let n = (blk * 256..blk * 256 + 256)
+            .filter(|&i| a[i] != b[i])
+            .count();
         match (&mut run, n > 0) {
             (Some((_, end, c)), true) => {
                 *end = blk * 256 + 255;
@@ -344,12 +418,22 @@ fn xdata_check() -> Result<(), String> {
     let rtl = Rtl::open()?;
     let show = |what: &str, r: Result<Vec<u8>, String>| println!("{what:<58} {:02X?}", r);
     let get = |value: u16, block: u16, page: u16, len: u16| {
-        rtl.get(value, windex(block, ACCESS_GET, page), len).map_err(|e| e.to_string())
+        rtl.get(value, windex(block, ACCESS_GET, page), len)
+            .map_err(|e| e.to_string())
     };
     for &(value, len) in &[(0x3000u16, 8u16), (0x2144, 4), (0x2158, 4), (0x2000, 4)] {
-        show(&format!("block 2 (system) wValue 0x{value:04X}, page nibble 0"), get(value, BLOCK_SYS, 0, len));
-        show(&format!("block 1 (USB)    wValue 0x{value:04X}, page nibble 0"), get(value, BLOCK_USB, 0, len));
-        show(&format!("block 2 (system) wValue 0x{value:04X}, page nibble 1"), get(value, BLOCK_SYS, 1, len));
+        show(
+            &format!("block 2 (system) wValue 0x{value:04X}, page nibble 0"),
+            get(value, BLOCK_SYS, 0, len),
+        );
+        show(
+            &format!("block 1 (USB)    wValue 0x{value:04X}, page nibble 0"),
+            get(value, BLOCK_USB, 0, len),
+        );
+        show(
+            &format!("block 2 (system) wValue 0x{value:04X}, page nibble 1"),
+            get(value, BLOCK_SYS, 1, len),
+        );
     }
     Ok(())
 }
@@ -376,9 +460,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return probe(&reads);
     }
     let dir = out_dir()?;
-    let mut rec = crate::header("5-rom-dump", "the ROM read through GetROMCode (Table 27): its size, SHA-256, the read method and the consistency of repeated reads; no ROM byte is recorded");
+    let mut rec = crate::header(
+        "5-rom-dump",
+        "the ROM read through GetROMCode (Table 27): its size, SHA-256, the read method and the consistency of repeated reads; no ROM byte is recorded",
+    );
     let cyc = if crate::no_cycle() {
-        J::obj().with("skipped", "--no-cycle: the dongle was opened as found, not power-cycled")
+        J::obj().with(
+            "skipped",
+            "--no-cycle: the dongle was opened as found, not power-cycled",
+        )
     } else {
         usb::power_cycle()?
     };
@@ -396,7 +486,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
             .with("timeout_ms", TIMEOUT.as_millis() as u64)
             .with("control_endpoint_max_packet", mps0),
     );
-    println!("step 5: chunk trials (lengths {CHUNK_TRIALS:?} at {TRIAL_ADDRESSES:04X?}, {TRIAL_SPAN} B each, against one-byte reads)");
+    println!(
+        "step 5: chunk trials (lengths {CHUNK_TRIALS:?} at {TRIAL_ADDRESSES:04X?}, {TRIAL_SPAN} B each, against one-byte reads)"
+    );
     let (chunk, trials) = chunk_trials(&rtl)?;
     println!("  chunk = {chunk}");
     rec.set(
@@ -429,10 +521,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 J::obj()
                     .with("address", hex16(addr))
                     .with("wIndex", hex16(windex(BLOCK_ROM, ACCESS_GET, page)))
-                    .with("outcome", match &r {
-                        Ok(y) => format!("{} bytes", y.len()),
-                        Err(e) => e.clone(),
-                    })
+                    .with(
+                        "outcome",
+                        match &r {
+                            Ok(y) => format!("{} bytes", y.len()),
+                            Err(e) => e.clone(),
+                        },
+                    )
                     .with("equal_to_page_0", same),
             );
         }
@@ -470,7 +565,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ));
     }
     if ab_n != 0 || !outcomes_equal {
-        return Err(format!("passes A and B differ ({ab_n} bytes, outcomes equal {outcomes_equal}); nothing written"));
+        return Err(format!(
+            "passes A and B differ ({ab_n} bytes, outcomes equal {outcomes_equal}); nothing written"
+        ));
     }
     // The size: the ROM is the part of the space that reads the same in
     // two power sessions, from 0x0000 up to the first address that does
@@ -480,7 +577,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
     // registers in the same session); 0x3000 up holds the system block's
     // registers (see `register_blocks`).
     let volatile = ac_first;
-    let size = [fail, volatile].into_iter().flatten().min().unwrap_or(SPACE);
+    let size = [fail, volatile]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(SPACE);
     let size_basis = match (fail, volatile) {
         (Some(f), _) if Some(f) == Some(size) => format!("the first failed read at 0x{f:04X}"),
         (_, Some(v)) if v == size => format!(
@@ -518,7 +619,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
             .with("first_differing_a_b", ab_first.map(|i| hex16(i as u16)))
             .with("space_bytes_differing_a_c", ac_n)
             .with("first_differing_a_c", ac_first.map(|i| hex16(i as u16)))
-            .with("space_a_c_differing_256_byte_blocks", J::Arr(ac_ranges.iter().map(|s| J::from(s.as_str())).collect()))
+            .with(
+                "space_a_c_differing_256_byte_blocks",
+                J::Arr(ac_ranges.iter().map(|s| J::from(s.as_str())).collect()),
+            )
             .with("chunk_outcomes_equal_in_all_passes", outcomes_equal),
     );
     rec.set("space_map_4KiB", region_map(&a.data, &c.data));
@@ -531,7 +635,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
             .with("hex", format!("0x{size:X}"))
             .with("basis", size_basis)
             .with("first_failed_address", fail.map(|f| format!("0x{f:04X}")))
-            .with("space_mirror_period", mirror_period(&a.data).map(|m| format!("0x{m:X}"))),
+            .with(
+                "space_mirror_period",
+                mirror_period(&a.data).map(|m| format!("0x{m:X}")),
+            ),
     );
     rec.set("sha256", sha.clone());
     rec.set(
@@ -540,7 +647,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     );
     crate::write_record("step5-rom-dump.json", &rec);
     println!("  size {size} B (0x{size:X}); SHA-256 {sha}");
-    println!("  image A/B {img_ab} differing, A/C {img_ac} differing; space A/B {ab_n}, A/C {ac_n}; outcomes equal: {outcomes_equal}");
+    println!(
+        "  image A/B {img_ab} differing, A/C {img_ac} differing; space A/B {ab_n}, A/C {ac_n}; outcomes equal: {outcomes_equal}"
+    );
     println!("  wrote {}", bin.display());
     Ok(())
 }
@@ -560,7 +669,8 @@ const K: [u32; 64] = [
 
 pub fn sha256_hex(msg: &[u8]) -> String {
     let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
     ];
     let mut m = msg.to_vec();
     m.push(0x80);
@@ -571,18 +681,30 @@ pub fn sha256_hex(msg: &[u8]) -> String {
     for block in m.chunks(64) {
         let mut w = [0u32; 64];
         for t in 0..16 {
-            w[t] = u32::from_be_bytes([block[4 * t], block[4 * t + 1], block[4 * t + 2], block[4 * t + 3]]);
+            w[t] = u32::from_be_bytes([
+                block[4 * t],
+                block[4 * t + 1],
+                block[4 * t + 2],
+                block[4 * t + 3],
+            ]);
         }
         for t in 16..64 {
             let s0 = w[t - 15].rotate_right(7) ^ w[t - 15].rotate_right(18) ^ (w[t - 15] >> 3);
             let s1 = w[t - 2].rotate_right(17) ^ w[t - 2].rotate_right(19) ^ (w[t - 2] >> 10);
-            w[t] = w[t - 16].wrapping_add(s0).wrapping_add(w[t - 7]).wrapping_add(s1);
+            w[t] = w[t - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[t - 7])
+                .wrapping_add(s1);
         }
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
         for t in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ (!e & g);
-            let t1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[t]).wrapping_add(w[t]);
+            let t1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[t])
+                .wrapping_add(w[t]);
             let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let t2 = s0.wrapping_add(maj);

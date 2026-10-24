@@ -1,0 +1,76 @@
+== dongle-A refusalcheck --trials 4 --no-wake --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.79,"window_ms_max":1.79}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.77,"window_ms_max":1.77}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":183,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.39,"window_ms_max":2.39}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.81,"window_ms_max":1.81}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":183,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== dongle-A refusalcheck --trials 4 --no-wake --before usb --gap-us 280000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.78,"window_ms_max":283.80}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.73,"window_ms_max":283.79}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.03,"window_ms_max":284.08}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.35}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.80,"window_ms_max":1.81}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.08,"window_ms_max":284.20}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.33,"window_ms_max":2.40}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.81,"window_ms_max":1.94}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.19,"window_ms_max":284.21}
+{"wake_reads":0,"no_wake":true}
+== dongle-A refusalcheck --trials 4 --no-wake --before usb --gap-us 320000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.69,"window_ms_max":323.69}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.66,"window_ms_max":323.66}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.34,"window_ms_max":2.34}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.80,"window_ms_max":1.80}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== dongle-A refusalcheck --trials 4 --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.87,"window_ms_max":1.88}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.88,"window_ms_max":1.88}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.05,"window_ms_max":4.26}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.40,"window_ms_max":2.44}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.76,"window_ms_max":1.81}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.16,"window_ms_max":4.22}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.31,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.81,"window_ms_max":1.81}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.18,"window_ms_max":2.18}
+{"wake_reads":8,"no_wake":false}
+== dongle-B refusalcheck --trials 4 --no-wake --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.79,"window_ms_max":1.79}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.77,"window_ms_max":1.77}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":183,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.31,"window_ms_max":2.31}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.81,"window_ms_max":1.81}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":183,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== dongle-B refusalcheck --trials 4 --no-wake --before usb --gap-us 280000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.66,"window_ms_max":283.71}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.66,"window_ms_max":283.70}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.03,"window_ms_max":284.08}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.35}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.79,"window_ms_max":1.80}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.06,"window_ms_max":284.06}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.34,"window_ms_max":2.40}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.83,"window_ms_max":1.94}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.95,"window_ms_max":284.08}
+{"wake_reads":0,"no_wake":true}
+== dongle-B refusalcheck --trials 4 --no-wake --before usb --gap-us 320000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.66,"window_ms_max":323.66}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.89,"window_ms_max":323.89}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.36,"window_ms_max":2.36}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.92,"window_ms_max":1.92}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== dongle-B refusalcheck --trials 4 --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.06,"window_ms_max":2.10}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.92,"window_ms_max":2.56}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.05,"window_ms_max":4.40}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.39,"window_ms_max":2.62}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.88,"window_ms_max":2.09}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.37,"window_ms_max":4.59}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.34,"window_ms_max":2.46}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.81,"window_ms_max":1.87}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.19,"window_ms_max":2.21}
+{"wake_reads":8,"no_wake":false}

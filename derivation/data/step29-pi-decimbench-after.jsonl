@@ -1,0 +1,3 @@
+{"kind":"decim","k":2,"taps":61,"inputs":24117248,"secs":0.349,"ns_per_input":14.46,"core_share_at_chip_2_4_msps":3.47,"checksum":182181882}
+{"kind":"decim","k":3,"taps":89,"inputs":24117248,"secs":0.304,"ns_per_input":12.59,"core_share_at_chip_2_4_msps":3.02,"checksum":126229870}
+{"kind":"decim","k":4,"taps":119,"inputs":24117248,"secs":0.283,"ns_per_input":11.72,"core_share_at_chip_2_4_msps":2.81,"checksum":93993501}

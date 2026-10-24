@@ -21,12 +21,16 @@ mod bench;
 
 use std::time::{Duration, Instant};
 
-use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
+use sdr_rtl::Stage;
 use sdr_rtl::blocking::Rtl;
 
 fn arg<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> T {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(default)
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 /// What a run varies.
@@ -47,21 +51,25 @@ struct Opts {
 }
 
 fn run_once(o: &Opts) -> Result<String, String> {
-    let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
+    let mut rtl = Rtl::open(&bench::rtl_spec()).map_err(|e| e.to_string())?;
     match o.codes {
         Some([l, m, v]) => {
             for (stage, code) in [(Stage::Lna, l), (Stage::Mixer, m), (Stage::Vga, v)] {
-                rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
+                rtl.set_stage_level(stage, code)
+                    .map_err(|e| e.to_string())?;
             }
         }
         None => rtl.set_gain(o.gain).map_err(|e| e.to_string())?,
     }
     rtl.set_rate(o.rate).map_err(|e| e.to_string())?;
-    rtl.set_freq(&TuneRequest::auto(300e6)).map_err(|e| e.to_string())?;
+    rtl.set_freq(&TuneRequest::auto(300e6))
+        .map_err(|e| e.to_string())?;
     if o.status {
         rtl.tuner_status().map_err(|e| e.to_string())?;
     }
-    let mut s = rtl.into_stream(0, o.depth).map_err(|e| e.error.to_string())?;
+    let mut s = rtl
+        .into_stream(0, o.depth)
+        .map_err(|e| e.error.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     if o.explicit_start {
         s.start().map_err(|e| e.to_string())?;
@@ -69,7 +77,10 @@ fn run_once(o: &Opts) -> Result<String, String> {
     let t = Instant::now();
     let mut n = 0usize;
     while t.elapsed() < Duration::from_secs_f64(o.secs) {
-        n += s.recv_into(&mut buf, o.timeout).map_err(|e| e.to_string())?.n_samples;
+        n += s
+            .recv_into(&mut buf, o.timeout)
+            .map_err(|e| e.to_string())?
+            .n_samples;
     }
     let rate = o.rate;
     // The request layer's clock (`Refusal::at`).
@@ -79,13 +90,28 @@ fn run_once(o: &Opts) -> Result<String, String> {
     let r = &f.report;
     // Each refusal by when it came: ms after the finish began (negative:
     // before it, from the start), and how long the chip took to refuse.
-    let ms = |at: sdr_core::time::Instant| if at >= finish_at { (at - finish_at).as_secs_f64() * 1e3 } else { -((finish_at - at).as_secs_f64() * 1e3) };
+    let ms = |at: sdr_core::time::Instant| {
+        if at >= finish_at {
+            (at - finish_at).as_secs_f64() * 1e3
+        } else {
+            -((finish_at - at).as_secs_f64() * 1e3)
+        }
+    };
     let refused: Vec<String> = f
         .rtl
         .link()
         .refusals()
         .iter()
-        .map(|x| format!("\"{} 0x{:04X} 0x{:04X} at {:+.2} ms, refused after {:.2} ms\"", if x.set { "set" } else { "get" }, x.value, x.index, ms(x.at), x.took.as_secs_f64() * 1e3))
+        .map(|x| {
+            format!(
+                "\"{} 0x{:04X} 0x{:04X} at {:+.2} ms, refused after {:.2} ms\"",
+                if x.set { "set" } else { "get" },
+                x.value,
+                x.index,
+                ms(x.at),
+                x.took.as_secs_f64() * 1e3
+            )
+        })
         .collect();
     Ok(format!(
         "{{\"rate\":{rate},\"depth\":{},\"finish_ms\":{:.1},\"tail\":{},\"received\":{n},\"samples\":{},\"dropped_blocks\":{},\"saturated\":{},\"stall_retries\":{},\"refused\":[{}]}}",

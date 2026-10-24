@@ -19,21 +19,30 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
-use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE};
 use sdr_rtl::OPEN_RF_HZ;
+use sdr_rtl::Stage;
 use sdr_rtl::blocking::Rtl;
+use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE};
 
 const RETUNE_STEP_HZ: f64 = 100e3;
 const BLOCK_SAMPLES: f64 = 94.0;
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let get = |k: &str| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let rate: f64 = get("--rate").and_then(|v| v.parse().ok()).unwrap_or(1.8e6);
     let cycles: u32 = get("--cycles").and_then(|v| v.parse().ok()).unwrap_or(50);
-    let every = Duration::from_millis(get("--every-ms").and_then(|v| v.parse().ok()).unwrap_or(200));
+    let every = Duration::from_millis(
+        get("--every-ms")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200),
+    );
     // `--blind`: pause and resume as one write each of the whole register
     // (its power-on 0x10 with or without bit 2; the I²C repeater is closed
     // between operations) in place of the read, write and read-back.
@@ -41,10 +50,13 @@ fn run() -> Result<(), String> {
     let cycle = power_cycle()?;
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
     for (stage, code) in [(Stage::Lna, 8), (Stage::Mixer, 8), (Stage::Vga, 2)] {
-        rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
+        rtl.set_stage_level(stage, code)
+            .map_err(|e| e.to_string())?;
     }
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
     let t = Instant::now();
@@ -55,7 +67,9 @@ fn run() -> Result<(), String> {
     let mut errors: Vec<String> = Vec::new();
     let mut next = every;
     while done < cycles {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         n += info.n_samples as u64;
         overflows += info.overflow as usize;
         if t.elapsed() < next {
@@ -64,16 +78,31 @@ fn run() -> Result<(), String> {
         let t_p = Instant::now();
         let r = (|| -> Result<(u8, u8), String> {
             if blind {
-                rtl.link().demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT]).map_err(|e| format!("pause: {e}"))?;
+                rtl.link()
+                    .demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT])
+                    .map_err(|e| format!("pause: {e}"))?;
             } else {
                 s.pause().map_err(|e| format!("pause: {e}"))?;
             }
-            let c1 = rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(|e| format!("read 1: {e}"))?;
-            rtl.set_freq(&TuneRequest::auto(OPEN_RF_HZ + RETUNE_STEP_HZ * (done % 2) as f64)).map_err(|e| format!("retune: {e}"))?;
-            let c2 = rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(|e| format!("read 2: {e}"))?;
-            rtl.link().usb_write8(BLK_DROP_COUNTER, 0).map_err(|e| format!("clear: {e}"))?;
+            let c1 = rtl
+                .link()
+                .usb_read8(BLK_DROP_COUNTER)
+                .map_err(|e| format!("read 1: {e}"))?;
+            rtl.set_freq(&TuneRequest::auto(
+                OPEN_RF_HZ + RETUNE_STEP_HZ * (done % 2) as f64,
+            ))
+            .map_err(|e| format!("retune: {e}"))?;
+            let c2 = rtl
+                .link()
+                .usb_read8(BLK_DROP_COUNTER)
+                .map_err(|e| format!("read 2: {e}"))?;
+            rtl.link()
+                .usb_write8(BLK_DROP_COUNTER, 0)
+                .map_err(|e| format!("clear: {e}"))?;
             if blind {
-                rtl.link().demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON]).map_err(|e| format!("resume: {e}"))?;
+                rtl.link()
+                    .demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON])
+                    .map_err(|e| format!("resume: {e}"))?;
             } else {
                 s.resume().map_err(|e| format!("resume: {e}"))?;
             }
@@ -100,7 +129,9 @@ fn run() -> Result<(), String> {
     // Read on so the last resume's samples are in.
     let t_end = t.elapsed() + every;
     while t.elapsed() < t_end {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         n += info.n_samples as u64;
     }
     let elapsed = t.elapsed().as_secs_f64();

@@ -1,0 +1,8 @@
+usbfs_memory_mb=1 try 1 took s: {"error":"[rtl] bulk recv failed: unknown (errno 12)"}
+usbfs_memory_mb=1 try 2 took s: {"error":"[rtl] bulk recv failed: unknown (errno 12)"}
+usbfs_memory_mb=2 try 1 took s: {"error":"[rtl] bulk recv failed: unknown (errno 12)"}
+usbfs_memory_mb=2 try 2 took s: {"error":"[rtl] bulk recv failed: unknown (errno 12)"}
+usbfs_memory_mb=3 try 1 took s: {"rate":2048000,"depth":128,"finish_ms":47.6,"tail":7722,"received":6152192,"samples":6159914,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+usbfs_memory_mb=3 try 2 took s: {"rate":2048000,"depth":128,"finish_ms":47.6,"tail":7816,"received":6152192,"samples":6160008,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+usbfs_memory_mb=16 try 1 took s: {"rate":2048000,"depth":128,"finish_ms":47.8,"tail":7816,"received":6152192,"samples":6160008,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}
+usbfs_memory_mb=16 try 2 took s: {"rate":2048000,"depth":128,"finish_ms":47.7,"tail":7722,"received":6152192,"samples":6159914,"dropped_blocks":0,"saturated":false,"stall_retries":0,"refused":[]}

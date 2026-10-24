@@ -5,7 +5,7 @@
 //! one setting.
 
 use crate::emit::{self, Src, f, opt_f};
-use crate::records::{BandFreq, BandReading, BandTable};
+use crate::records::{BandFreq, BandReading, BandTable, Provenance};
 use crate::scale::{MeterScale, RAIL_COUNTS};
 
 /// The bypass path every frequency's readings are relative to: the
@@ -45,7 +45,15 @@ pub struct PathResult {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Entry {
-    Measured { best: PathResult, runner_up: Option<PathResult>, margin_db: Option<f64>, spread_db: f64, stage_a_agrees: bool, stage_a_db: Box<[Option<f64>; STAGE_A_READINGS]>, repeat_db: Vec<f64> },
+    Measured {
+        best: PathResult,
+        runner_up: Option<PathResult>,
+        margin_db: Option<f64>,
+        spread_db: f64,
+        stage_a_agrees: bool,
+        stage_a_db: Box<[Option<f64>; STAGE_A_READINGS]>,
+        repeat_db: Vec<f64>,
+    },
     Unmeasured(String),
 }
 
@@ -87,28 +95,52 @@ pub struct BandTables {
 }
 
 fn db_vs(bypass: i64, reading: i64, scale: &MeterScale) -> Option<f64> {
-    if reading >= RAIL_COUNTS { None } else { Some(emit::round(scale.db_more(bypass, reading), 1)) }
+    if reading >= RAIL_COUNTS {
+        None
+    } else {
+        Some(emit::round(scale.db_more(bypass, reading), 1))
+    }
 }
 
-fn path_result(block: &[&BandReading], bypass: i64, scale: &MeterScale) -> Result<PathResult, String> {
+fn path_result(
+    block: &[&BandReading],
+    bypass: i64,
+    scale: &MeterScale,
+) -> Result<PathResult, String> {
     let (rffilt, rfmux) = (block[0].rffilt, block[0].rfmux);
     if block.len() != STAGE_B_READINGS_PER_PATH {
-        return Err(format!("path ({rffilt:02b}, {rfmux:02b}): {} stage-B readings, not {STAGE_B_READINGS_PER_PATH}", block.len()));
+        return Err(format!(
+            "path ({rffilt:02b}, {rfmux:02b}): {} stage-B readings, not {STAGE_B_READINGS_PER_PATH}",
+            block.len()
+        ));
     }
     let mut corners: Vec<Option<(i64, f64)>> = vec![None; STAGE_B_READINGS_PER_PATH];
     for r in block {
         let i = (r.tf_nch * TF_CODES + r.tf_lp) as usize;
         if corners[i].is_some() {
-            return Err(format!("path ({rffilt:02b}, {rfmux:02b}): corner ({}, {}) measured twice in stage B", r.tf_nch, r.tf_lp));
+            return Err(format!(
+                "path ({rffilt:02b}, {rfmux:02b}): corner ({}, {}) measured twice in stage B",
+                r.tf_nch, r.tf_lp
+            ));
         }
         corners[i] = Some((r.reading, scale.db_more(bypass, r.reading)));
     }
-    let corners: Vec<(i64, f64)> = corners.into_iter().map(|c| c.ok_or("a corner code missing")).collect::<Result<_, _>>()?;
+    let corners: Vec<(i64, f64)> = corners
+        .into_iter()
+        .map(|c| c.ok_or("a corner code missing"))
+        .collect::<Result<_, _>>()?;
     // The best corner: the most signal (lowest counts); ties to the
     // lowest (TF_NCH, TF_LP) — index order.
-    let (best_i, best) = corners.iter().enumerate().fold((0usize, corners[0]), |acc, (i, c)| if c.0 < acc.1.0 { (i, *c) } else { acc });
+    let (best_i, best) = corners
+        .iter()
+        .enumerate()
+        .fold((0usize, corners[0]), |acc, (i, c)| {
+            if c.0 < acc.1.0 { (i, *c) } else { acc }
+        });
     if best.0 >= RAIL_COUNTS {
-        return Err(format!("path ({rffilt:02b}, {rfmux:02b}): nothing passed at any corner code"));
+        return Err(format!(
+            "path ({rffilt:02b}, {rfmux:02b}): nothing passed at any corner code"
+        ));
     }
     Ok(PathResult {
         rffilt,
@@ -117,7 +149,16 @@ fn path_result(block: &[&BandReading], bypass: i64, scale: &MeterScale) -> Resul
         tf_lp: (best_i % TF_CODES as usize) as u8,
         best_db: emit::round(best.1, 1),
         at_0000_db: emit::round(corners[0].1, 1),
-        corners_db: corners.iter().map(|c| if c.0 >= RAIL_COUNTS { None } else { Some(emit::round(c.1, 1)) }).collect(),
+        corners_db: corners
+            .iter()
+            .map(|c| {
+                if c.0 >= RAIL_COUNTS {
+                    None
+                } else {
+                    Some(emit::round(c.1, 1))
+                }
+            })
+            .collect(),
     })
 }
 
@@ -128,7 +169,10 @@ fn analyse_freq(fq: &BandFreq, scale: &MeterScale) -> Result<Entry, String> {
     let reference = fq.reference.as_ref().ok_or("no ref line")?;
     let bypass = reference.reading;
     if fq.readings.len() < STAGE_A_READINGS {
-        return Err(format!("{} readings, fewer than stage A's {STAGE_A_READINGS}", fq.readings.len()));
+        return Err(format!(
+            "{} readings, fewer than stage A's {STAGE_A_READINGS}",
+            fq.readings.len()
+        ));
     }
     // Stage A: the first 16 lines, every path once at TF 0000/0000.
     let (stage_a, stage_b) = fq.readings.split_at(STAGE_A_READINGS);
@@ -140,7 +184,10 @@ fn analyse_freq(fq: &BandFreq, scale: &MeterScale) -> Result<Entry, String> {
         }
         let i = (r.rffilt * RFMUX_CODES + r.rfmux) as usize;
         if stage_a_counts[i].is_some() {
-            return Err(format!("path ({:02b}, {:02b}) measured twice in stage A", r.rffilt, r.rfmux));
+            return Err(format!(
+                "path ({:02b}, {:02b}) measured twice in stage A",
+                r.rffilt, r.rfmux
+            ));
         }
         stage_a_counts[i] = Some(r.reading);
         stage_a_db[i] = db_vs(bypass, r.reading, scale);
@@ -149,20 +196,39 @@ fn analyse_freq(fq: &BandFreq, scale: &MeterScale) -> Result<Entry, String> {
         return Err("stage A did not cover every path".into());
     }
     let live: Vec<f64> = stage_a_db.iter().flatten().copied().collect();
-    let spread_db = if live.is_empty() { 0.0 } else { emit::round(live.iter().cloned().fold(f64::NEG_INFINITY, f64::max) - live.iter().cloned().fold(f64::INFINITY, f64::min), 1) };
+    let spread_db = if live.is_empty() {
+        0.0
+    } else {
+        emit::round(
+            live.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+                - live.iter().cloned().fold(f64::INFINITY, f64::min),
+            1,
+        )
+    };
 
     // Stage B: the two best paths of stage A, 256 corner codes each.
     if fq.stage_a_best.len() != STAGE_B_PATHS {
-        return Err(format!("{} staged paths, not {STAGE_B_PATHS}", fq.stage_a_best.len()));
+        return Err(format!(
+            "{} staged paths, not {STAGE_B_PATHS}",
+            fq.stage_a_best.len()
+        ));
     }
     let mut results = Vec::new();
     let mut repeat_db = Vec::new();
     for &(rffilt, rfmux) in &fq.stage_a_best {
-        let block: Vec<&BandReading> = stage_b.iter().filter(|r| r.rffilt == rffilt && r.rfmux == rfmux).collect();
+        let block: Vec<&BandReading> = stage_b
+            .iter()
+            .filter(|r| r.rffilt == rffilt && r.rfmux == rfmux)
+            .collect();
         match path_result(&block, bypass, scale) {
             Ok(p) => {
-                let a = stage_a_counts[(rffilt * RFMUX_CODES + rfmux) as usize].unwrap_or(RAIL_COUNTS);
-                let b = block.iter().find(|r| r.tf_nch == 0 && r.tf_lp == 0).map(|r| r.reading).unwrap_or(RAIL_COUNTS);
+                let a =
+                    stage_a_counts[(rffilt * RFMUX_CODES + rfmux) as usize].unwrap_or(RAIL_COUNTS);
+                let b = block
+                    .iter()
+                    .find(|r| r.tf_nch == 0 && r.tf_lp == 0)
+                    .map(|r| r.reading)
+                    .unwrap_or(RAIL_COUNTS);
                 repeat_db.push(emit::round(scale.db_more(a, b).abs(), 1));
                 results.push(p);
             }
@@ -175,12 +241,27 @@ fn analyse_freq(fq: &BandFreq, scale: &MeterScale) -> Result<Entry, String> {
     }
     // The winner: the most signal at its best corner; ties to the lower
     // (RFFILT, RFMUX).
-    results.sort_by(|a, b| b.best_db.partial_cmp(&a.best_db).unwrap_or(std::cmp::Ordering::Equal).then((a.rffilt, a.rfmux).cmp(&(b.rffilt, b.rfmux))));
+    results.sort_by(|a, b| {
+        b.best_db
+            .partial_cmp(&a.best_db)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then((a.rffilt, a.rfmux).cmp(&(b.rffilt, b.rfmux)))
+    });
     let best = results[0].clone();
     let runner_up = results.get(1).cloned();
-    let margin_db = runner_up.as_ref().map(|r| emit::round(best.best_db - r.best_db, 1));
+    let margin_db = runner_up
+        .as_ref()
+        .map(|r| emit::round(best.best_db - r.best_db, 1));
     let stage_a_agrees = fq.stage_a_best[0] == (best.rffilt, best.rfmux);
-    Ok(Entry::Measured { best, runner_up, margin_db, spread_db, stage_a_agrees, stage_a_db: Box::new(stage_a_db), repeat_db })
+    Ok(Entry::Measured {
+        best,
+        runner_up,
+        margin_db,
+        spread_db,
+        stage_a_agrees,
+        stage_a_db: Box::new(stage_a_db),
+        repeat_db,
+    })
 }
 
 pub fn analyse(rec: &BandTable, scale: &MeterScale) -> Result<BandTables, String> {
@@ -194,13 +275,23 @@ pub fn analyse(rec: &BandTable, scale: &MeterScale) -> Result<BandTables, String
         if let Some(r) = &fq.reference {
             match source_level {
                 None => source_level = Some(r.source_level_db),
-                Some(l) if l != r.source_level_db => return Err(format!("{} MHz: the source level changed to {} dB (was {l})", fq.rf_hz / 1_000_000, r.source_level_db)),
+                Some(l) if l != r.source_level_db => {
+                    return Err(format!(
+                        "{} MHz: the source level changed to {} dB (was {l})",
+                        fq.rf_hz / 1_000_000,
+                        r.source_level_db
+                    ));
+                }
                 _ => {}
             }
         }
         readings += fq.readings.len();
-        let entry = analyse_freq(fq, scale).map_err(|e| format!("band table at {} Hz: {e}", fq.rf_hz))?;
-        points.push(Point { rf_hz: fq.rf_hz, entry });
+        let entry =
+            analyse_freq(fq, scale).map_err(|e| format!("band table at {} Hz: {e}", fq.rf_hz))?;
+        points.push(Point {
+            rf_hz: fq.rf_hz,
+            entry,
+        });
     }
 
     // Statistics over the measured points.
@@ -212,7 +303,15 @@ pub fn analyse(rec: &BandTable, scale: &MeterScale) -> Result<BandTables, String
     let mut best_counts: Vec<((u8, u8), usize)> = Vec::new();
     let mut measured = 0;
     for p in &points {
-        if let Entry::Measured { best, margin_db, spread_db, stage_a_db, repeat_db, .. } = &p.entry {
+        if let Entry::Measured {
+            best,
+            margin_db,
+            spread_db,
+            stage_a_db,
+            repeat_db,
+            ..
+        } = &p.entry
+        {
             measured += 1;
             repeat.extend(repeat_db.iter().copied());
             corner_gain.push(emit::round(best.best_db - best.at_0000_db, 1));
@@ -230,7 +329,8 @@ pub fn analyse(rec: &BandTable, scale: &MeterScale) -> Result<BandTables, String
             }
         }
     }
-    let sortf = |v: &mut Vec<f64>| v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let sortf =
+        |v: &mut Vec<f64>| v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     sortf(&mut repeat);
     sortf(&mut corner_gain);
     sortf(&mut spreads);
@@ -240,7 +340,18 @@ pub fn analyse(rec: &BandTable, scale: &MeterScale) -> Result<BandTables, String
     let segments = corner_segments(&points, SEGMENT_TOLERANCE_DB);
     let segments_at_repeatability = corner_segments(&points, REPEATABILITY_DB).len();
     let path_segments = path_segments(&points);
-    let stage_a_disagrees = points.iter().filter(|p| matches!(p.entry, Entry::Measured { stage_a_agrees: false, .. })).count();
+    let stage_a_disagrees = points
+        .iter()
+        .filter(|p| {
+            matches!(
+                p.entry,
+                Entry::Measured {
+                    stage_a_agrees: false,
+                    ..
+                }
+            )
+        })
+        .count();
 
     Ok(BandTables {
         points,
@@ -267,7 +378,12 @@ fn push_unmeasured(out: &mut Vec<Segment>, rf_hz: u32) {
             s.to_hz = rf_hz;
             s.points += 1;
         }
-        _ => out.push(Segment { from_hz: rf_hz, to_hz: rf_hz, path: None, points: 1 }),
+        _ => out.push(Segment {
+            from_hz: rf_hz,
+            to_hz: rf_hz,
+            path: None,
+            points: 1,
+        }),
     }
 }
 
@@ -293,8 +409,18 @@ fn close(o: Open) -> Segment {
         }
     }
     let (i, _) = best.expect("an open segment keeps at least one candidate");
-    let Some((rffilt, rfmux, _, _)) = o.seg.path else { unreachable!("an open segment has a path") };
-    Segment { path: Some((rffilt, rfmux, (i / TF_CODES as usize) as u8, (i % TF_CODES as usize) as u8)), ..o.seg }
+    let Some((rffilt, rfmux, _, _)) = o.seg.path else {
+        unreachable!("an open segment has a path")
+    };
+    Segment {
+        path: Some((
+            rffilt,
+            rfmux,
+            (i / TF_CODES as usize) as u8,
+            (i % TF_CODES as usize) as u8,
+        )),
+        ..o.seg
+    }
 }
 
 /// Segments from the lowest frequency up: a frequency joins the open
@@ -319,12 +445,24 @@ fn corner_segments(points: &[Point], tolerance_db: f64) -> Vec<Segment> {
         // This point's margin per corner code: reading minus its best,
         // at or below 0; None where the code is outside the tolerance
         // or passed nothing.
-        let own: Vec<Option<f64>> = best.corners_db.iter().map(|d| d.filter(|d| best.best_db - d <= tolerance_db).map(|d| d - best.best_db)).collect();
+        let own: Vec<Option<f64>> = best
+            .corners_db
+            .iter()
+            .map(|d| {
+                d.filter(|d| best.best_db - d <= tolerance_db)
+                    .map(|d| d - best.best_db)
+            })
+            .collect();
         let mut joined = false;
         if let Some(o) = &mut open
             && o.seg.path.map(|(rf, mx, _, _)| (rf, mx)) == Some((best.rffilt, best.rfmux))
         {
-            let merged: Vec<Option<f64>> = o.margins.iter().zip(&own).map(|(a, b)| a.zip(*b).map(|(a, b)| a.min(b))).collect();
+            let merged: Vec<Option<f64>> = o
+                .margins
+                .iter()
+                .zip(&own)
+                .map(|(a, b)| a.zip(*b).map(|(a, b)| a.min(b)))
+                .collect();
             if merged.iter().any(Option::is_some) {
                 o.margins = merged;
                 o.seg.to_hz = p.rf_hz;
@@ -336,7 +474,15 @@ fn corner_segments(points: &[Point], tolerance_db: f64) -> Vec<Segment> {
             if let Some(o) = open.take() {
                 out.push(close(o));
             }
-            open = Some(Open { seg: Segment { from_hz: p.rf_hz, to_hz: p.rf_hz, path: Some((best.rffilt, best.rfmux, 0, 0)), points: 1 }, margins: own });
+            open = Some(Open {
+                seg: Segment {
+                    from_hz: p.rf_hz,
+                    to_hz: p.rf_hz,
+                    path: Some((best.rffilt, best.rfmux, 0, 0)),
+                    points: 1,
+                },
+                margins: own,
+            });
         }
     }
     if let Some(o) = open.take() {
@@ -352,11 +498,19 @@ fn path_segments(points: &[Point]) -> Vec<Segment> {
         match &p.entry {
             Entry::Unmeasured(_) => push_unmeasured(&mut out, p.rf_hz),
             Entry::Measured { best, .. } => match out.last_mut() {
-                Some(s) if s.path.is_some_and(|(rf, mx, _, _)| (rf, mx) == (best.rffilt, best.rfmux)) => {
+                Some(s)
+                    if s.path
+                        .is_some_and(|(rf, mx, _, _)| (rf, mx) == (best.rffilt, best.rfmux)) =>
+                {
                     s.to_hz = p.rf_hz;
                     s.points += 1;
                 }
-                _ => out.push(Segment { from_hz: p.rf_hz, to_hz: p.rf_hz, path: Some((best.rffilt, best.rfmux, 0, 0)), points: 1 }),
+                _ => out.push(Segment {
+                    from_hz: p.rf_hz,
+                    to_hz: p.rf_hz,
+                    path: Some((best.rffilt, best.rfmux, 0, 0)),
+                    points: 1,
+                }),
             },
         }
     }
@@ -384,7 +538,17 @@ fn path_lit(p: &PathResult) -> String {
 }
 
 pub fn emit(t: &BandTables, rec: &BandTable, scale: &MeterScale) -> String {
-    let mut s = Src::new(&[&rec.provenance, &scale.provenance]);
+    let records: Vec<&Provenance> = rec.provenance.iter().chain([&scale.provenance]).collect();
+    let mut s = Src::new(&records);
+    let unmeasured = t.segments.iter().find(|s| s.path.is_none());
+    let gap = match unmeasured {
+        Some(u) => format!(
+            "; and no setting is measured between the grid\nfrequencies {} and {} MHz: no SEL_DIV code reached the LO when the\ntable was taken (011 was read as the document's /1; findings 10.5\nmeasured /16, and findings 4f2 measures the span)",
+            u.from_hz / 1_000_000,
+            u.to_hz / 1_000_000
+        ),
+        None => String::new(),
+    };
     let first = t.points.first().map(|p| p.rf_hz).unwrap_or(0);
     let last = t.points.last().map(|p| p.rf_hz).unwrap_or(0);
     s.module_doc(&format!(
@@ -393,7 +557,8 @@ pub fn emit(t: &BandTables, rec: &BandTable, scale: &MeterScale) -> String {
 frequencies from {} to {} MHz in {} MHz steps ({} measured, {} readings),
 and the segments of neighbours sharing one setting.
 
-Method (findings.md step 4f): at each frequency the LO was programmed
+Method (findings.md step 4f; superseded for the driver by step 4f2's
+every-path table, `band_paths`): at each frequency the LO was programmed
 (IF {:.2} MHz above the RF), the source re-levelled once at the bypass
 path (RFFILT {:02b}, RFMUX {:02b}, TF 0000/0000) and then held — it stayed
 at {:+} dB relative at every frequency — and `if_agc_val` (MSB-first,
@@ -430,8 +595,7 @@ is unmeasured (a second-tone step would measure it); the live-path
 spread at one frequency is large (median {:.1} dB, up to {:.1} dB), so
 the band code matters even with the tracking filter bypassed; image
 rejection is uncalibrated (findings.md step 4h: 10-20 dB with
-IMR_G = IMR_P = 32); and no setting is measured between the grid
-frequencies {} and {} MHz, where no SEL_DIV code reaches the LO.",
+IMR_G = IMR_P = 32){gap}.",
         t.points.len(),
         first / 1_000_000,
         last / 1_000_000,
@@ -447,7 +611,10 @@ frequencies {} and {} MHz, where no SEL_DIV code reaches the LO.",
         scale.counts_per_db,
         pct(&t.margin_db_sorted, 0.5),
         SEGMENT_TOLERANCE_DB,
-        t.margin_db_sorted.iter().filter(|m| **m < SEGMENT_TOLERANCE_DB).count(),
+        t.margin_db_sorted
+            .iter()
+            .filter(|m| **m < SEGMENT_TOLERANCE_DB)
+            .count(),
         t.margin_db_sorted.len(),
         t.stage_a_disagrees,
         t.measured,
@@ -461,8 +628,6 @@ frequencies {} and {} MHz, where no SEL_DIV code reaches the LO.",
         pct(&t.corner_gain_db_sorted, 1.0),
         pct(&t.spread_db_sorted, 0.5),
         pct(&t.spread_db_sorted, 1.0),
-        t.segments.iter().find(|s| s.path.is_none()).map(|s| s.from_hz / 1_000_000).unwrap_or(0),
-        t.segments.iter().find(|s| s.path.is_none()).map(|s| s.to_hz / 1_000_000).unwrap_or(0),
     ));
     s.blank();
     s.line("use super::types::*;");
@@ -472,56 +637,97 @@ frequencies {} and {} MHz, where no SEL_DIV code reaches the LO.",
     s.doc("The IF the LO sat above the RF by.");
     s.line(&format!("pub const IF_HZ: f64 = {};", f(rec.if_hz, 1)));
     s.blank();
-    s.doc("How often each (RFFILT, RFMUX) passed nothing at TF 0000/0000 in
-stage A, indexed RFFILT * 4 + RFMUX, over the measured frequencies.");
+    s.doc(
+        "How often each (RFFILT, RFMUX) passed nothing at TF 0000/0000 in
+stage A, indexed RFFILT * 4 + RFMUX, over the measured frequencies.",
+    );
     let dead: Vec<String> = t.dead_paths.iter().map(|n| n.to_string()).collect();
-    s.line(&format!("pub const STAGE_A_DEAD_COUNT: [u16; {STAGE_A_READINGS}] = [{}];", dead.join(", ")));
+    s.line(&format!(
+        "pub const STAGE_A_DEAD_COUNT: [u16; {STAGE_A_READINGS}] = [{}];",
+        dead.join(", ")
+    ));
     s.doc("How often each (RFFILT, RFMUX) is the best path by stage B.");
-    s.line(&format!("pub const BEST_PATH_COUNT: [((u8, u8), u16); {}] = [", t.best_path_counts.len()));
+    s.line(&format!(
+        "pub const BEST_PATH_COUNT: [((u8, u8), u16); {}] = [",
+        t.best_path_counts.len()
+    ));
     for ((rffilt, rfmux), n) in &t.best_path_counts {
         s.line(&format!("    ((0b{rffilt:02b}, 0b{rfmux:02b}), {n}),"));
     }
     s.line("];");
     s.blank();
     s.doc("Per grid frequency.");
-    s.line(&format!("pub const BAND_GRID: [BandPoint; {}] = [", t.points.len()));
+    s.line(&format!(
+        "pub const BAND_GRID: [BandPoint; {}] = [",
+        t.points.len()
+    ));
     for p in &t.points {
         let entry = match &p.entry {
-            Entry::Measured { best, runner_up, margin_db, spread_db, stage_a_agrees, stage_a_db, .. } => {
+            Entry::Measured {
+                best,
+                runner_up,
+                margin_db,
+                spread_db,
+                stage_a_agrees,
+                stage_a_db,
+                ..
+            } => {
                 let cells: Vec<String> = stage_a_db.iter().map(|d| opt_f(*d, 1)).collect();
                 format!(
                     "BandEntry::Measured {{ best: {}, runner_up: {}, margin_over_runner_up_db: {}, live_path_spread_db: {}, stage_a_agrees: {stage_a_agrees}, stage_a_paths_db_vs_bypass: [{}] }}",
                     path_lit(best),
-                    runner_up.as_ref().map(|r| format!("Some({})", path_lit(r))).unwrap_or_else(|| "None".into()),
+                    runner_up
+                        .as_ref()
+                        .map(|r| format!("Some({})", path_lit(r)))
+                        .unwrap_or_else(|| "None".into()),
                     opt_f(*margin_db, 1),
                     f(*spread_db, 1),
                     cells.join(", ")
                 )
             }
-            Entry::Unmeasured(reason) => format!("BandEntry::Unmeasured {{ reason: {} }}", emit::s(reason)),
+            Entry::Unmeasured(reason) => {
+                format!("BandEntry::Unmeasured {{ reason: {} }}", emit::s(reason))
+            }
         };
-        s.line(&format!("    BandPoint {{ rf_hz: {}, entry: {entry} }},", f(p.rf_hz as f64, 1)));
+        s.line(&format!(
+            "    BandPoint {{ rf_hz: {}, entry: {entry} }},",
+            f(p.rf_hz as f64, 1)
+        ));
     }
     s.line("];");
     s.blank();
     let seg_lit = |seg: &Segment| {
         let path = match seg.path {
-            Some((rffilt, rfmux, nch, lp)) => format!("Some(FrontPath {{ rffilt: 0b{rffilt:02b}, rfmux: 0b{rfmux:02b}, tf_nch: 0b{nch:04b}, tf_lp: 0b{lp:04b} }})"),
+            Some((rffilt, rfmux, nch, lp)) => format!(
+                "Some(FrontPath {{ rffilt: 0b{rffilt:02b}, rfmux: 0b{rfmux:02b}, tf_nch: 0b{nch:04b}, tf_lp: 0b{lp:04b} }})"
+            ),
             None => "None".into(),
         };
-        format!("    BandSegment {{ from_hz: {}, to_hz: {}, path: {path}, grid_points: {} }},", f(seg.from_hz as f64, 1), f(seg.to_hz as f64, 1), seg.points)
+        format!(
+            "    BandSegment {{ from_hz: {}, to_hz: {}, path: {path}, grid_points: {} }},",
+            f(seg.from_hz as f64, 1),
+            f(seg.to_hz as f64, 1),
+            seg.points
+        )
     };
     s.doc(&format!(
         "Neighbouring grid frequencies merged by (RFFILT, RFMUX) alone, from
-the lowest up (corner codes left at 0000/0000): the robust part of the
-measurement, since paths differ by tens of dB and the corner codes by a
-median {:.1} dB. Unmeasured frequencies form their own segments (`path`
-None). `from_hz` and `to_hz` are the first and last grid frequencies in
-the segment; the true boundary lies between a segment's `to_hz` and the
-next segment's `from_hz`.",
+the lowest up (corner codes left at 0000/0000), as the staged search
+ranked them. Superseded for the driver by
+`band_paths::BAND_PATH_SEGMENTS` (findings.md step 4f2): stage A's 20 ms
+single snapshot read inside a path change's transient, so it could leave
+the best path unstaged, and a single stage-B snapshot could win on an
+outlier. The corner codes moved the best path's reading by a median
+{:.1} dB. Unmeasured frequencies form their own segments (`path` None).
+`from_hz` and `to_hz` are the first and last grid frequencies in the
+segment; the true boundary lies between a segment's `to_hz` and the next
+segment's `from_hz`.",
         pct(&t.corner_gain_db_sorted, 0.5)
     ));
-    s.line(&format!("pub const BAND_PATH_SEGMENTS: [BandSegment; {}] = [", t.path_segments.len()));
+    s.line(&format!(
+        "pub const STAGED_PATH_SEGMENTS: [BandSegment; {}] = [",
+        t.path_segments.len()
+    ));
     for seg in &t.path_segments {
         s.line(&seg_lit(seg));
     }
@@ -537,12 +743,16 @@ with the smallest worst shortfall (ties to the lowest code). At the
 {} segments: the best corner codes of a single-tone, single-snapshot
 measurement are set by the loop's alternation more than by the filter,
 so this table is the record's answer, not a resolved one.",
-        SEGMENT_TOLERANCE_DB,
-        REPEATABILITY_DB,
-        t.segments_at_repeatability
+        SEGMENT_TOLERANCE_DB, REPEATABILITY_DB, t.segments_at_repeatability
     ));
-    s.line(&format!("pub const SEGMENT_TOLERANCE_DB: f64 = {};", f(SEGMENT_TOLERANCE_DB, 1)));
-    s.line(&format!("pub const BAND_SEGMENTS: [BandSegment; {}] = [", t.segments.len()));
+    s.line(&format!(
+        "pub const SEGMENT_TOLERANCE_DB: f64 = {};",
+        f(SEGMENT_TOLERANCE_DB, 1)
+    ));
+    s.line(&format!(
+        "pub const BAND_SEGMENTS: [BandSegment; {}] = [",
+        t.segments.len()
+    ));
     for seg in &t.segments {
         s.line(&seg_lit(seg));
     }

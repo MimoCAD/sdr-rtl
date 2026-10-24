@@ -56,7 +56,11 @@ pub const fn field_range(bits: u32) -> (i32, i32) {
 
 /// The width of field `k`.
 pub const fn field_bits(k: usize) -> u32 {
-    if k < NARROW_TAPS { NARROW_BITS } else { WIDE_BITS }
+    if k < NARROW_TAPS {
+        NARROW_BITS
+    } else {
+        WIDE_BITS
+    }
 }
 
 // ---- Our own low-pass (findings 10.3, "Our own low-pass") ----
@@ -73,12 +77,31 @@ pub const fn field_bits(k: usize) -> u32 {
 /// The rate the design assumes the taps run at: the ADC's 28.8 MHz
 /// ([RTL2832U] p. 10).
 pub const DESIGN_FS_HZ: f64 = XTAL_HZ;
-/// The cutoff: passes the 2.048 Msps output's ±1.024 MHz with margin.
-pub const DESIGN_CUTOFF_HZ: f64 = 1.2e6;
+/// The cutoff. Findings 10.3 chose 1.2 MHz (the 2.048 Msps output's
+/// ±1.024 MHz with margin); findings 23 measured 1.5: the window at
+/// ±1 MHz −2.7 dB against −3.9 at 2.4 Msps, and on the A/B's T-Band bed,
+/// at matched level, +0.6 points against the earlier driver where 1.2 lost
+/// 4.0 — its channels toward the window's edge were short of level. It
+/// costs 2–7 dB of rejection at ±1.6 and ±2 MHz (2.048 and 2.4 Msps) and
+/// nothing measurable on the 700 and 800 MHz beds.
+pub const DESIGN_CUTOFF_HZ: f64 = 1.5e6;
+/// Findings 10.3's cutoff, the one the step 10-22 records were taken at
+/// (tests only: they hold [`compute_design_at`] to the design recorded
+/// there).
+#[cfg(test)]
+pub const FINDINGS_10_CUTOFF_HZ: f64 = 1.2e6;
 /// 32 taps, symmetric: the 16 fields are one half.
 pub const DESIGN_LENGTH: usize = 2 * TAPS;
-/// The sum of all 32 taps (a power of two of the design's choosing).
-pub const DESIGN_DC_GAIN: f64 = 4096.0;
+/// The sum of all 32 taps. Findings 10.3 chose 4,096 and nothing measured
+/// it; findings 23 did: the stream's floor rides up with the gain from the
+/// ADC to the output, and at one output level the carrier over the floor
+/// stops improving once that gain is a quarter of 4,096 with the FIR's ×8
+/// (page 0 0x19 bit 5) set. The stream now leaves the ×8 clear
+/// ([`crate::protocol::STREAM_ENABLE_VALUE`]), and 8,192 here is that
+/// quarter at twice the taps' precision.
+pub const DESIGN_DC_GAIN: f64 = 8192.0;
+/// Findings 10.3's DC gain, the one the step 10-22 records were taken at.
+pub const FINDINGS_10_DC_GAIN: f64 = 4096.0;
 /// The Hamming window w(n) = A − B·cos(2πn / (N − 1)).
 pub const HAMMING_A: f64 = 0.54;
 pub const HAMMING_B: f64 = 0.46;
@@ -87,27 +110,37 @@ pub const HAMMING_B: f64 = 0.46;
 /// centre), as [`compute_design`] computes them (findings 10.3 records
 /// the same values). A constant so the `no_std` core needs no sine; the
 /// computation is the definition, and a test holds the two equal.
-pub const DESIGN: [i32; TAPS] = [-6, -5, -5, -2, 3, 15, 34, 61, 96, 138, 185, 233, 279, 317, 345, 360];
+pub const DESIGN: [i32; TAPS] = [
+    -13, -16, -22, -28, -30, -22, 3, 51, 125, 225, 346, 478, 609, 724, 809, 855,
+];
+
+/// The design at [`DESIGN_CUTOFF_HZ`] and [`DESIGN_DC_GAIN`].
+#[cfg(all(test, feature = "std"))]
+pub fn compute_design() -> [i32; TAPS] {
+    compute_design_at(DESIGN_CUTOFF_HZ, DESIGN_DC_GAIN)
+}
 
 /// The design: h(n) = 2fc · sinc(2fc · (n − (N−1)/2)) · w(n) for
 /// n = 0..15, fc = cutoff / fs, scaled so the full symmetric filter sums
-/// to the DC gain, rounded to integers.
+/// to `dc_gain`, rounded to integers.
 #[cfg(feature = "std")]
-pub fn compute_design() -> [i32; TAPS] {
-    let x = 2.0 * DESIGN_CUTOFF_HZ / DESIGN_FS_HZ;
+pub fn compute_design_at(cutoff_hz: f64, dc_gain: f64) -> [i32; TAPS] {
+    let x = 2.0 * cutoff_hz / DESIGN_FS_HZ;
     let centre = (DESIGN_LENGTH as f64 - 1.0) / 2.0;
     let half: Vec<f64> = (0..TAPS)
         .map(|n| {
             let t = core::f64::consts::PI * x * (centre - n as f64);
             let sinc = if t == 0.0 { 1.0 } else { t.sin() / t };
-            let w = HAMMING_A - HAMMING_B * (core::f64::consts::TAU * n as f64 / (DESIGN_LENGTH as f64 - 1.0)).cos();
+            let w = HAMMING_A
+                - HAMMING_B
+                    * (core::f64::consts::TAU * n as f64 / (DESIGN_LENGTH as f64 - 1.0)).cos();
             x * sinc * w
         })
         .collect();
     let sum = 2.0 * half.iter().sum::<f64>();
     let mut c = [0i32; TAPS];
     for (k, h) in half.iter().enumerate() {
-        c[k] = (h / sum * DESIGN_DC_GAIN).round() as i32;
+        c[k] = (h / sum * dc_gain).round() as i32;
     }
     c
 }
@@ -130,7 +163,10 @@ pub fn pack(c: &[i32; TAPS]) -> Result<[u8; TAP_REGS]> {
         if v < lo || v > hi {
             return Err(Error::Unsupported {
                 backend: BACKEND,
-                what: format!("tap c{k} = {v} does not fit its {}-bit field ({lo}..={hi})", field_bits(k)),
+                what: format!(
+                    "tap c{k} = {v} does not fit its {}-bit field ({lo}..={hi})",
+                    field_bits(k)
+                ),
             });
         }
     }
@@ -157,11 +193,18 @@ pub fn unpack(r: &[u8; TAP_REGS]) -> [i32; TAPS] {
         c[k] = r[k] as i8 as i32;
     }
     let sign = 1u32 << (WIDE_BITS - 1);
-    let s12 = |v: u32| if v & sign != 0 { v as i32 - (1 << WIDE_BITS) } else { v as i32 };
+    let s12 = |v: u32| {
+        if v & sign != 0 {
+            v as i32 - (1 << WIDE_BITS)
+        } else {
+            v as i32
+        }
+    };
     for p in 0..(TAPS - NARROW_TAPS) / 2 {
         let o = NARROW_TAPS + WIDE_GROUP_BYTES * p;
         c[NARROW_TAPS + 2 * p] = s12((r[o] as u32) << NIBBLE | (r[o + 1] as u32) >> NIBBLE);
-        c[NARROW_TAPS + 2 * p + 1] = s12(((r[o + 1] as u32) & NIBBLE_MASK) << u8::BITS | r[o + 2] as u32);
+        c[NARROW_TAPS + 2 * p + 1] =
+            s12(((r[o + 1] as u32) & NIBBLE_MASK) << u8::BITS | r[o + 2] as u32);
     }
     c
 }
@@ -171,10 +214,23 @@ mod tests {
     use super::*;
 
     /// Findings 10.3: "Taps c0–c15: −6 −5 −5 −2 3 15 34 61 96 138 185 233
-    /// 279 317 345 360."
+    /// 279 317 345 360." — the same design at its DC gain.
+    #[cfg(feature = "std")]
     #[test]
-    fn the_design_is_findings_10s() {
-        assert_eq!(design(), [-6, -5, -5, -2, 3, 15, 34, 61, 96, 138, 185, 233, 279, 317, 345, 360]);
+    fn the_design_at_1p2_mhz_and_4096_is_findings_10s() {
+        assert_eq!(
+            compute_design_at(FINDINGS_10_CUTOFF_HZ, FINDINGS_10_DC_GAIN),
+            [
+                -6, -5, -5, -2, 3, 15, 34, 61, 96, 138, 185, 233, 279, 317, 345, 360
+            ]
+        );
+    }
+
+    /// Findings 23's DC gain and cutoff: every field fits its width.
+    #[test]
+    fn the_design_fits_its_fields_at_8192() {
+        assert_eq!(DESIGN_DC_GAIN, 2.0 * FINDINGS_10_DC_GAIN);
+        assert!(pack(&design()).is_ok());
     }
 
     /// The constant is what the design computes.
@@ -188,8 +244,17 @@ mod tests {
     fn the_design_is_a_low_pass_with_its_dc_gain() {
         let c = design();
         let full: i32 = 2 * c.iter().sum::<i32>();
-        assert!((full - DESIGN_DC_GAIN as i32).abs() <= TAPS as i32, "{full}");
-        assert!(c.windows(2).skip(3).all(|w| w[1] > w[0]), "rising toward the centre: {c:?}");
+        assert!(
+            (full - DESIGN_DC_GAIN as i32).abs() <= TAPS as i32,
+            "{full}"
+        );
+        // From its deepest negative tap (the sinc's first sidelobe) on, it
+        // rises to the centre.
+        let deepest = (0..TAPS).min_by_key(|&k| c[k]).unwrap();
+        assert!(
+            c[deepest..].windows(2).all(|w| w[1] > w[0]),
+            "rising toward the centre: {c:?}"
+        );
         assert_eq!(unpack(&design_registers()), c);
     }
 
@@ -197,7 +262,10 @@ mod tests {
     fn the_registers_span_0x1c_to_0x2f() {
         assert_eq!((TAP_PAGE, TAP_FIRST), (1, 0x1C));
         assert_eq!(TAP_FIRST as usize + TAP_REGS - 1, 0x2F);
-        assert_eq!(NARROW_TAPS + (TAPS - NARROW_TAPS) / 2 * WIDE_GROUP_BYTES, TAP_REGS);
+        assert_eq!(
+            NARROW_TAPS + (TAPS - NARROW_TAPS) / 2 * WIDE_GROUP_BYTES,
+            TAP_REGS
+        );
     }
 
     /// The layout's arithmetic, by hand: c8 = 0xABC and c9 = 0x123 give

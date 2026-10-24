@@ -12,12 +12,30 @@ every finding — is in [`derivation/`](derivation/) (start with
 is refused with the reason, never guessed.
 
 - Open by spec: `Rtl::open("")` (first found), `Rtl::open("0")` (index),
-  `Rtl::open("serial=00000001")`.
-- Tuning 42–1002 MHz, the actual frequency from the synthesizer words
-  written.
+  `Rtl::open("serial=00000001")`; a dongle's own calibration rides along:
+  `serial=00000001,ppm=0.97,imr=805:7:33+420:33:0`.
+- Crystal correction (`set_ppm`): one crystal clocks the tuner, the DDC
+  and the resampler, so one scale corrects the tuning and the rate (one
+  number per dongle holds from 154 MHz to 1 GHz); the synthesizer's own
+  fixed offset from its words (a quarter count, +109.86 Hz at the VCO,
+  measured the same on two dongles) is corrected always.
+- The rate as set, on the air: the demodulator's own timing loop is cut
+  from its resampler at every start. Left on, it steered the rate by up
+  to ±488 ppm with an antenna attached (findings 29).
+- Image-rejection calibration (`set_imr_table`): the best IMR settings
+  differ from dongle to dongle, so each dongle's are measured on the
+  bench and carried with it; up to +27 dB of image rejection above 700
+  MHz (findings 28). Without one, the documented middle setting.
+- Tuning 42–1700 MHz (ADS-B's 1090 MHz among it; the top measured on
+  the bench, findings 26), the actual frequency from the synthesizer
+  words written.
 - Gain as one number or per stage (LNA, mixer, VGA — 16 levels each, dB
   measured on the bench), tuner and demodulator AGC, the IF filter.
-- Output rates 1.024–2.88 Msps, with our own decimation filter taps.
+- Every output rate from 0.24 to 2.88 Msps. Up to 1.2 Msps the chip
+  runs at 2–4 times the rate and the stream decimates, so what lies
+  outside the window does not fold onto its edges;
+  `demod::clean_half_span_hz` says how much of each rate's window is
+  clean.
 - Async at its core, so it runs in a browser too: on `wasm32` it drives
   the dongle over WebUSB (`Rtl::request` opens the browser's device
   chooser; see [`web/`](web/) for a page that streams and writes the
@@ -35,7 +53,10 @@ is refused with the reason, never guessed.
   - `split()` into a `ReadHalf` and a `Control`, for a reading thread and
     a changing one; `Stream::reunite` joins them again.
   - `finish` hands the receiver back with a `StreamReport`: the samples
-    delivered and the chip's own count of every block it dropped.
+    delivered and the chip's own count of every block it dropped — and
+    the blocks it drops without counting (two dongles on one hub above
+    2.4 Msps do), seen by the sample clock falling behind the host's
+    (`clock_lost_samples`; the receive where it happens is flagged).
 - The configuration EEPROM: read, parse, compose a new identity, write
   page by page with a verified read-back.
 - `no_std` at its core (with `alloc`): the register encodings, the

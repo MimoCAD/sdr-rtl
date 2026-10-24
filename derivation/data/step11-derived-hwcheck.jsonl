@@ -1,4 +1,4 @@
-{"check":"open","label":"RTL2832U serial 77771111153705700","open_ms":248.5,"chip_id_ok":true,"rf_hz":299999995.4,"divider":8,"vco_indicator":92,"locked":true,"gain_db":61.0,"level":[0,-20]}
+{"check":"open","label":"RTL2832U (serial redacted)","open_ms":248.5,"chip_id_ok":true,"rf_hz":299999995.4,"divider":8,"vco_indicator":92,"locked":true,"gain_db":61.0,"level":[0,-20]}
 {"check":"tone_start","rate_sps":2048000,"first_samples_ms":132.12,"got":1880}
 {"check":"tone_off","offset_hz":100000,"predicted_bin":200,"peak_bin":4,"peak_at_predicted":false,"snr_db":3.4,"mirror_db":2.3,"peak_hz":1953,"error_hz":-98047,"clipped":0.00000,"overflows":0}
 {"check":"tone","offset_hz":100000,"predicted_bin":200,"peak_bin":203,"peak_at_predicted":true,"snr_db":58.3,"mirror_db":3.0,"peak_hz":101275,"error_hz":1275,"clipped":0.00000,"overflows":0}

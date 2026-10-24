@@ -146,13 +146,24 @@ fn rel(pc: u16, len: u16, r: u8) -> u16 {
 }
 
 fn decode(mem: &[u8], base: u16, pc: u16) -> Option<Insn> {
-    let at = |o: u16| -> Option<u8> { mem.get(pc.wrapping_sub(base).wrapping_add(o) as usize).copied() };
+    let at = |o: u16| -> Option<u8> {
+        mem.get(pc.wrapping_sub(base).wrapping_add(o) as usize)
+            .copied()
+    };
     let op = at(0)?;
     let b1 = at(1).unwrap_or(0);
     let b2 = at(2).unwrap_or(0);
     let r = op & 7;
     let ri = op & 1;
-    let mut i = Insn { len: 1, text: String::new(), flow: Flow::Next, sets_dptr: None, inc_dptr: false, movx_dptr: None, clobbers_dptr: false };
+    let mut i = Insn {
+        len: 1,
+        text: String::new(),
+        flow: Flow::Next,
+        sets_dptr: None,
+        inc_dptr: false,
+        movx_dptr: None,
+        clobbers_dptr: false,
+    };
     let (len, text): (u16, String) = match op {
         0x00 => (1, "NOP".into()),
         _ if op & 0x1F == 0x01 => {
@@ -219,7 +230,11 @@ fn decode(mem: &[u8], base: u16, pc: u16) -> Option<Insn> {
                 0x70 => "JNZ",
                 _ => "SJMP",
             };
-            i.flow = if op == 0x80 { Flow::Jump(t) } else { Flow::Branch(t) };
+            i.flow = if op == 0x80 {
+                Flow::Jump(t)
+            } else {
+                Flow::Branch(t)
+            };
             (2, format!("{m} {t:04X}h"))
         }
         // The arithmetic/logic rows: ADD 2x, ADDC 3x, ORL 4x, ANL 5x,
@@ -381,7 +396,9 @@ fn parse_addr(s: &str) -> Option<u16> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(path) = args.first() else {
-        eprintln!("usage: rom51 IMAGE [--base ADDR] [--entry ADDR]... [--xref]   (addresses in hex)");
+        eprintln!(
+            "usage: rom51 IMAGE [--base ADDR] [--entry ADDR]... [--xref]   (addresses in hex)"
+        );
         std::process::exit(2);
     };
     let mem = match std::fs::read(path) {
@@ -399,7 +416,9 @@ fn main() {
     while k < args.len() {
         match args[k].as_str() {
             "--inline" if k + 1 < args.len() => {
-                let parsed = args[k + 1].split_once(':').and_then(|(a, n)| Some((parse_addr(a)?, n.parse::<u16>().ok()?)));
+                let parsed = args[k + 1]
+                    .split_once(':')
+                    .and_then(|(a, n)| Some((parse_addr(a)?, n.parse::<u16>().ok()?)));
                 let Some((a, n)) = parsed else {
                     eprintln!("rom51: bad --inline {} (want ADDR:N)", args[k + 1]);
                     std::process::exit(2);
@@ -450,7 +469,9 @@ fn main() {
             if code.contains_key(&pc) {
                 break;
             }
-            let Some(ins) = decode(&mem, base, pc) else { break };
+            let Some(ins) = decode(&mem, base, pc) else {
+                break;
+            };
             let mut next = pc.wrapping_add(ins.len);
             let flow = ins.flow;
             if let Some(v) = ins.sets_dptr {
@@ -475,7 +496,13 @@ fn main() {
             if flow == Flow::Indirect
                 && let Some(t) = dptr
             {
-                let op_at = |a: u16| if inside(a) { Some(mem[(a - base) as usize]) } else { None };
+                let op_at = |a: u16| {
+                    if inside(a) {
+                        Some(mem[(a - base) as usize])
+                    } else {
+                        None
+                    }
+                };
                 let mut found = Vec::new();
                 if op_at(t) == Some(0x02) {
                     let mut e = t;
@@ -544,7 +571,12 @@ fn main() {
         }
         run.clear();
     };
-    println!("; rom51 listing of {path}: {} bytes at {base:04X}h, {} instructions reached from {} entries", mem.len(), code.len(), entries.len());
+    println!(
+        "; rom51 listing of {path}: {} bytes at {base:04X}h, {} instructions reached from {} entries",
+        mem.len(),
+        code.len(),
+        entries.len()
+    );
     while a < end {
         let pc = a as u16;
         match code.get(&pc) {
@@ -555,11 +587,19 @@ fn main() {
                 if labels.contains(&pc) {
                     dptr = None;
                     match callers.get(&pc) {
-                        Some(c) => println!("\nL{pc:04X}:   ; called from {}", c.iter().map(|x| format!("{x:04X}")).collect::<Vec<_>>().join(" ")),
+                        Some(c) => println!(
+                            "\nL{pc:04X}:   ; called from {}",
+                            c.iter()
+                                .map(|x| format!("{x:04X}"))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ),
                         None => println!("L{pc:04X}:"),
                     }
                 }
-                let bytes: Vec<String> = (0..ins.len).map(|o| format!("{:02X}", mem[a - base as usize + o as usize])).collect();
+                let bytes: Vec<String> = (0..ins.len)
+                    .map(|o| format!("{:02X}", mem[a - base as usize + o as usize]))
+                    .collect();
                 let mut note = String::new();
                 if let Some(v) = ins.sets_dptr {
                     dptr = Some(v);
@@ -607,21 +647,48 @@ fn main() {
     }
 
     if xref {
-        println!("\n; ---- MOVX @DPTR with a constant DPTR: address <- instructions (r read, w write, c a call entered with DPTR = the address)");
+        println!(
+            "\n; ---- MOVX @DPTR with a constant DPTR: address <- instructions (r read, w write, c a call entered with DPTR = the address)"
+        );
         let addrs: BTreeSet<u16> = movx.keys().chain(calls_with_dptr.keys()).copied().collect();
         for d in addrs {
-            let mut u: Vec<String> = movx.get(&d).into_iter().flatten().map(|(pc, w)| format!("{pc:04X}{}", if *w { "w" } else { "r" })).collect();
-            u.extend(calls_with_dptr.get(&d).into_iter().flatten().map(|pc| format!("{pc:04X}c")));
+            let mut u: Vec<String> = movx
+                .get(&d)
+                .into_iter()
+                .flatten()
+                .map(|(pc, w)| format!("{pc:04X}{}", if *w { "w" } else { "r" }))
+                .collect();
+            u.extend(
+                calls_with_dptr
+                    .get(&d)
+                    .into_iter()
+                    .flatten()
+                    .map(|pc| format!("{pc:04X}c")),
+            );
             println!("; X:{d:04X}h  {}", u.join(" "));
         }
         println!("\n; ---- call targets <- callers");
         for (t, c) in &callers {
-            println!("; {t:04X}  <- {}", c.iter().map(|x| format!("{x:04X}")).collect::<Vec<_>>().join(" "));
+            println!(
+                "; {t:04X}  <- {}",
+                c.iter()
+                    .map(|x| format!("{x:04X}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
         }
-        println!("\n; ---- JMP @A+DPTR: jump tables followed (entry addresses), and the rest not followed");
+        println!(
+            "\n; ---- JMP @A+DPTR: jump tables followed (entry addresses), and the rest not followed"
+        );
         for pc in &indirect {
             match tables.get(pc) {
-                Some(t) => println!("; {pc:04X} table {}", t.iter().map(|x| format!("{x:04X}")).collect::<Vec<_>>().join(" ")),
+                Some(t) => println!(
+                    "; {pc:04X} table {}",
+                    t.iter()
+                        .map(|x| format!("{x:04X}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
                 None => println!("; {pc:04X} not followed"),
             }
         }

@@ -28,8 +28,10 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::Iq;
-use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE, START_OFF, START_PAGE};
 use sdr_rtl::blocking::{Rtl, RtlStream};
+use sdr_rtl::protocol::{
+    BLK_DROP_COUNTER, PAGE1_0X01_POWER_ON, PAUSE_BIT, PAUSE_OFF, PAUSE_PAGE, START_OFF, START_PAGE,
+};
 
 const DRAIN: Duration = Duration::from_millis(5);
 const RUN_FOR: Duration = Duration::from_millis(500);
@@ -52,14 +54,22 @@ fn step(rtl: &Rtl, s: &mut RtlStream, name: &str, p0_06: u8) -> Result<(), Strin
     let e = |e: sdr_core::Error| e.to_string();
     match name {
         "pause" => {
-            rtl.link().demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT]).map_err(e)?;
+            rtl.link()
+                .demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT])
+                .map_err(e)?;
             std::thread::sleep(DRAIN);
         }
         "usbread" => drop(rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(e)?),
         "stop" => s.stop().map_err(e)?,
         "demodread" => drop(rtl.link().demod_read8(START_PAGE, START_OFF).map_err(e)?),
-        "demodwrite_p0" => rtl.link().demod_write(START_PAGE, START_OFF, &[p0_06]).map_err(e)?,
-        "demodwrite_p1" => rtl.link().demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT]).map_err(e)?,
+        "demodwrite_p0" => rtl
+            .link()
+            .demod_write(START_PAGE, START_OFF, &[p0_06])
+            .map_err(e)?,
+        "demodwrite_p1" => rtl
+            .link()
+            .demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT])
+            .map_err(e)?,
         "wait50" => std::thread::sleep(Duration::from_millis(50)),
         other => return Err(format!("unknown step {other}")),
     }
@@ -71,13 +81,19 @@ fn step(rtl: &Rtl, s: &mut RtlStream, name: &str, p0_06: u8) -> Result<(), Strin
 fn run_once(seq: &str, rate: f64) -> Result<Option<(usize, String)>, String> {
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
-    let p0_06 = rtl.link().demod_read8(START_PAGE, START_OFF).map_err(|e| e.to_string())?;
+    let p0_06 = rtl
+        .link()
+        .demod_read8(START_PAGE, START_OFF)
+        .map_err(|e| e.to_string())?;
     let t = Instant::now();
     while t.elapsed() < RUN_FOR {
-        s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        s.recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
     }
     for (i, name) in steps(seq).iter().enumerate() {
         if let Err(e) = step(&rtl, &mut s, name, p0_06) {
@@ -89,7 +105,12 @@ fn run_once(seq: &str, rate: f64) -> Result<Option<(usize, String)>, String> {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let get = |k: &str| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let rate: f64 = get("--rate").and_then(|v| v.parse().ok()).unwrap_or(1.2e6);
     let runs: u32 = get("--runs").and_then(|v| v.parse().ok()).unwrap_or(10);
     let seqs = get("--seqs").unwrap_or_else(|| "s1,s2,s3,s4,s5,s6,s7,s8".into());
@@ -115,7 +136,10 @@ fn run() -> Result<(), String> {
                 }
             }
         }
-        println!("{{\"seq\":\"{seq}\",\"steps\":{:?},\"rate\":{rate},\"runs\":{runs},\"failures\":{failures},\"first\":{firsts:?}}}", steps(seq));
+        println!(
+            "{{\"seq\":\"{seq}\",\"steps\":{:?},\"rate\":{rate},\"runs\":{runs},\"failures\":{failures},\"first\":{firsts:?}}}",
+            steps(seq)
+        );
     }
     power_cycle()?;
     Ok(())

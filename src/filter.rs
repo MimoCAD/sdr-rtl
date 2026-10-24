@@ -37,15 +37,33 @@ pub struct FilterSetting {
 
 /// Every measured setting, in the records' order.
 pub fn settings() -> Vec<FilterSetting> {
-    let mut v: Vec<FilterSetting> =
-        FILT_CODE_UPPER_3DB.iter().map(|c| FilterSetting { filt_code: c.code, filt_bw: 0, upper_3db_hz: c.upper_3db_hz }).collect();
-    v.extend(FILT_BW_UPPER_3DB.iter().filter(|c| c.code != 0).map(|c| FilterSetting { filt_code: 0, filt_bw: c.code, upper_3db_hz: c.upper_3db_hz }));
+    let mut v: Vec<FilterSetting> = FILT_CODE_UPPER_3DB
+        .iter()
+        .map(|c| FilterSetting {
+            filt_code: c.code,
+            filt_bw: 0,
+            upper_3db_hz: c.upper_3db_hz,
+        })
+        .collect();
+    v.extend(
+        FILT_BW_UPPER_3DB
+            .iter()
+            .filter(|c| c.code != 0)
+            .map(|c| FilterSetting {
+                filt_code: 0,
+                filt_bw: c.code,
+                upper_3db_hz: c.upper_3db_hz,
+            }),
+    );
     v
 }
 
 /// The widest measured setting (FILT_CODE 0000, FILT_BW 00).
 pub fn widest() -> FilterSetting {
-    settings().into_iter().max_by(|a, b| a.upper_3db_hz.total_cmp(&b.upper_3db_hz)).expect("the table is not empty")
+    settings()
+        .into_iter()
+        .max_by(|a, b| a.upper_3db_hz.total_cmp(&b.upper_3db_hz))
+        .expect("the table is not empty")
 }
 
 /// The bandwidth an upper corner admits about the IF: 2 · (corner − IF).
@@ -67,7 +85,10 @@ pub fn setting_for_bandwidth(hz: f64) -> FilterSetting {
 
 /// The corner a (FILT_CODE, FILT_BW) pair was measured at, if it was.
 pub fn corner_of(filt_code: u8, filt_bw: u8) -> Option<f64> {
-    settings().into_iter().find(|s| s.filt_code == filt_code && s.filt_bw == filt_bw).map(|s| s.upper_3db_hz)
+    settings()
+        .into_iter()
+        .find(|s| s.filt_code == filt_code && s.filt_bw == filt_bw)
+        .map(|s| s.upper_3db_hz)
 }
 
 #[cfg(test)]
@@ -78,26 +99,72 @@ mod tests {
     fn nineteen_settings_widest_first() {
         let s = settings();
         assert_eq!(s.len(), 19);
-        assert_eq!(widest(), FilterSetting { filt_code: 0, filt_bw: 0, upper_3db_hz: 10.82e6 });
+        assert_eq!(
+            widest(),
+            FilterSetting {
+                filt_code: 0,
+                filt_bw: 0,
+                upper_3db_hz: 10.82e6
+            }
+        );
         assert_eq!(corner_of(15, 0), Some(7.75e6));
         assert_eq!(corner_of(0, 3), Some(7.28e6));
-        assert_eq!(corner_of(15, 3), None, "unmeasured combinations are not offered");
+        assert_eq!(
+            corner_of(15, 3),
+            None,
+            "unmeasured combinations are not offered"
+        );
     }
 
     #[test]
     fn bandwidth_to_code() {
         // 14.5 MHz needs the widest corner exactly (10.82 = 3.57 + 7.25).
-        assert_eq!(setting_for_bandwidth(14.5e6), FilterSetting { filt_code: 0, filt_bw: 0, upper_3db_hz: 10.82e6 });
+        assert_eq!(
+            setting_for_bandwidth(14.5e6),
+            FilterSetting {
+                filt_code: 0,
+                filt_bw: 0,
+                upper_3db_hz: 10.82e6
+            }
+        );
         // Wider than any corner: clamped to the widest.
         assert_eq!(setting_for_bandwidth(20e6), widest());
         // 8 MHz needs 7.57 MHz: FILT_CODE 15 (7.75), not FILT_BW 11 (7.28).
-        assert_eq!(setting_for_bandwidth(8e6), FilterSetting { filt_code: 15, filt_bw: 0, upper_3db_hz: 7.75e6 });
+        assert_eq!(
+            setting_for_bandwidth(8e6),
+            FilterSetting {
+                filt_code: 15,
+                filt_bw: 0,
+                upper_3db_hz: 7.75e6
+            }
+        );
         // 7 MHz needs 7.07 MHz: the coarse narrowest, 7.28; so does the
         // widest stream output, 2.88 MHz.
-        assert_eq!(setting_for_bandwidth(7e6), FilterSetting { filt_code: 0, filt_bw: 3, upper_3db_hz: 7.28e6 });
-        assert_eq!(setting_for_bandwidth(2.88e6), FilterSetting { filt_code: 0, filt_bw: 3, upper_3db_hz: 7.28e6 });
+        assert_eq!(
+            setting_for_bandwidth(7e6),
+            FilterSetting {
+                filt_code: 0,
+                filt_bw: 3,
+                upper_3db_hz: 7.28e6
+            }
+        );
+        assert_eq!(
+            setting_for_bandwidth(2.88e6),
+            FilterSetting {
+                filt_code: 0,
+                filt_bw: 3,
+                upper_3db_hz: 7.28e6
+            }
+        );
         // 10 MHz needs 8.57 MHz: code 10 (8.68) is the nearest above.
-        assert_eq!(setting_for_bandwidth(10e6), FilterSetting { filt_code: 10, filt_bw: 0, upper_3db_hz: 8.68e6 });
+        assert_eq!(
+            setting_for_bandwidth(10e6),
+            FilterSetting {
+                filt_code: 10,
+                filt_bw: 0,
+                upper_3db_hz: 8.68e6
+            }
+        );
         // Monotonic: a wider request never gets a lower corner.
         let mut last = 0.0;
         let mut hz = 1e6;

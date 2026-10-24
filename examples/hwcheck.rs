@@ -54,16 +54,25 @@ fn tone_fields(x: &[Iq], offset_hz: f64, rate: f64) -> String {
     };
     let med = median(&p);
     let db = |v: f64| 10.0 * (v / med).log10();
-    let peak = (0..FFT_N).filter(|k| !is_dc(*k)).max_by(|a, b| p[*a].total_cmp(&p[*b])).unwrap_or(0);
-    let predicted = ((offset_hz / rate * FFT_N as f64).round() as i64).rem_euclid(FFT_N as i64) as usize;
-    let near = (predicted.saturating_sub(PEAK_TOL_BINS)..=(predicted + PEAK_TOL_BINS).min(FFT_N - 1))
+    let peak = (0..FFT_N)
+        .filter(|k| !is_dc(*k))
+        .max_by(|a, b| p[*a].total_cmp(&p[*b]))
+        .unwrap_or(0);
+    let predicted =
+        ((offset_hz / rate * FFT_N as f64).round() as i64).rem_euclid(FFT_N as i64) as usize;
+    let near = (predicted.saturating_sub(PEAK_TOL_BINS)
+        ..=(predicted + PEAK_TOL_BINS).min(FFT_N - 1))
         .max_by(|a, b| p[*a].total_cmp(&p[*b]))
         .unwrap_or(predicted);
     let mirror = (FFT_N - predicted) % FFT_N;
     // Parabolic interpolation of the peak in log power.
     let l = |k: usize| p[k % FFT_N].max(f64::MIN_POSITIVE).ln();
     let (a, b, c) = (l(peak + FFT_N - 1), l(peak), l(peak + 1));
-    let frac = if a - 2.0 * b + c != 0.0 { 0.5 * (a - c) / (a - 2.0 * b + c) } else { 0.0 };
+    let frac = if a - 2.0 * b + c != 0.0 {
+        0.5 * (a - c) / (a - 2.0 * b + c)
+    } else {
+        0.0
+    };
     let peak_hz = (signed_bin(peak) + frac) / FFT_N as f64 * rate;
     format!(
         "\"offset_hz\":{offset_hz},\"predicted_bin\":{predicted},\"peak_bin\":{peak},\"peak_at_predicted\":{},\"snr_db\":{:.1},\"mirror_db\":{:.1},\"peak_hz\":{peak_hz:.0},\"error_hz\":{:.0},\"clipped\":{:.5}",
@@ -80,24 +89,47 @@ fn emit(check: &str, body: &str) {
 }
 
 fn check_tone(rtl: &mut Rtl, src: &mut Source) -> Result<(), String> {
-    eprintln!("tone: RF {} MHz, the tuner programmed at open, before the start", TONE_RF_HZ / 1e6);
+    eprintln!(
+        "tone: RF {} MHz, the tuner programmed at open, before the start",
+        TONE_RF_HZ / 1e6
+    );
     let rate = rtl.rate().map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     let t = Instant::now();
     s.start().map_err(|e| e.to_string())?;
     let first = capture(&mut s, &mut buf, 1, Duration::from_millis(500))?;
     emit(
         "tone_start",
-        &format!("\"rate_sps\":{rate},\"first_samples_ms\":{:.2},\"got\":{}", t.elapsed().as_secs_f64() * 1e3, first.samples.len()),
+        &format!(
+            "\"rate_sps\":{rate},\"first_samples_ms\":{:.2},\"got\":{}",
+            t.elapsed().as_secs_f64() * 1e3,
+            first.samples.len()
+        ),
     );
     src.off()?;
     let c = spectrum_capture(&mut s, &mut buf)?;
-    emit("tone_off", &format!("{},\"overflows\":{}", tone_fields(&c.samples, TONE_OFFSETS_HZ[0], rate), c.overflows));
+    emit(
+        "tone_off",
+        &format!(
+            "{},\"overflows\":{}",
+            tone_fields(&c.samples, TONE_OFFSETS_HZ[0], rate),
+            c.overflows
+        ),
+    );
     for off in TONE_OFFSETS_HZ {
         src.tone(TONE_RF_HZ + off)?;
         let c = spectrum_capture(&mut s, &mut buf)?;
-        emit("tone", &format!("{},\"overflows\":{}", tone_fields(&c.samples, off, rate), c.overflows));
+        emit(
+            "tone",
+            &format!(
+                "{},\"overflows\":{}",
+                tone_fields(&c.samples, off, rate),
+                c.overflows
+            ),
+        );
     }
     src.off()?;
     Ok(())
@@ -113,9 +145,14 @@ fn measure_rate(s: &mut RtlStream, buf: &mut [Iq]) -> Result<(f64, Capture), Str
 fn check_rate(rtl: &mut Rtl, src: &mut Source) -> Result<(), String> {
     src.tone(TONE_RF_HZ + RATE_TONE_OFFSET_HZ)?;
     for sps in RATES_SPS {
-        eprintln!("rate: {} Msps, a new stream after the last was dropped", sps / 1e6);
+        eprintln!(
+            "rate: {} Msps, a new stream after the last was dropped",
+            sps / 1e6
+        );
         rtl.set_rate(sps).map_err(|e| e.to_string())?;
-        let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+        let mut s = rtl
+            .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+            .map_err(|e| e.to_string())?;
         let mut buf = vec![Iq::default(); s.max_num_samps()];
         s.start().map_err(|e| e.to_string())?;
         let (got, c) = measure_rate(&mut s, &mut buf)?;
@@ -138,7 +175,9 @@ fn check_rate(rtl: &mut Rtl, src: &mut Source) -> Result<(), String> {
 fn check_restart_and_pause(rtl: &mut Rtl, src: &mut Source) -> Result<(), String> {
     src.tone(TONE_RF_HZ + RATE_TONE_OFFSET_HZ)?;
     let rate = rtl.rate().map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
     let (before, _) = measure_rate(&mut s, &mut buf)?;
@@ -184,17 +223,23 @@ fn check_restart_and_pause(rtl: &mut Rtl, src: &mut Source) -> Result<(), String
 
 fn check_tune(rtl: &mut Rtl, src: &mut Source) -> Result<(), String> {
     let rate = rtl.rate().map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
     for step in TUNE_GRID_MHZ {
         let rf = step as f64 * TUNE_STEP_MHZ * 1e6;
         eprintln!("tune: {} MHz", rf / 1e6);
-        let r = rtl.set_freq(&TuneRequest::auto(rf)).map_err(|e| e.to_string())?;
+        let r = rtl
+            .set_freq(&TuneRequest::auto(rf))
+            .map_err(|e| e.to_string())?;
         let st = rtl.tuner_status().map_err(|e| e.to_string())?;
         src.off()?;
         let off = spectrum_capture(&mut s, &mut buf)?;
-        let noise = spectrum(&off.samples).map(|p| 10.0 * median(&p).log10()).unwrap_or(f64::NAN);
+        let noise = spectrum(&off.samples)
+            .map(|p| 10.0 * median(&p).log10())
+            .unwrap_or(f64::NAN);
         src.tone(rf + RATE_TONE_OFFSET_HZ)?;
         let c = spectrum_capture(&mut s, &mut buf)?;
         let nudge = r.actual_rf_freq - rf;
@@ -226,15 +271,21 @@ fn run() -> Result<(), String> {
         match a.as_str() {
             "--source-cmd" => source_cmd = it.next().ok_or("--source-cmd needs a value")?.clone(),
             "--level" => {
-                txvga = it.next().and_then(|v| v.parse().ok()).ok_or("--level TXVGA BACKOFF")?;
-                backoff = it.next().and_then(|v| v.parse().ok()).ok_or("--level TXVGA BACKOFF")?;
+                txvga = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or("--level TXVGA BACKOFF")?;
+                backoff = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or("--level TXVGA BACKOFF")?;
             }
             other => return Err(format!("unknown argument {other}")),
         }
     }
     let mut src = Source::spawn(&source_cmd, txvga, backoff)?;
     let t = Instant::now();
-    let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
+    let mut rtl = Rtl::open(&rtl_spec()).map_err(|e| e.to_string())?;
     let st = rtl.tuner_status().map_err(|e| e.to_string())?;
     emit(
         "open",
@@ -246,7 +297,7 @@ fn run() -> Result<(), String> {
             st.rf_hz,
             st.pll.divider,
             st.pll.vco_indicator,
-                st.pll.locked,
+            st.pll.locked,
             rtl.gain()
         ),
     );

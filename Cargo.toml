@@ -2,6 +2,7 @@
 name = "sdr-rtl"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.99"
 description = "A pure-Rust RTL2832U + R820T/R820T2 receiver driver over nusb, written from the vendor documents and bench records: streams that cannot lose samples unseen, every lost block counted, EEPROM read and write. No libusb, no librtlsdr"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/MimoCAD/sdr-rtl"
@@ -27,6 +28,12 @@ std = ["dep:nusb", "sdr-core/usb"]
 # The request layer exposed (`Rtl::link`, `Rtl::rx_stream`) for the bench
 # programs in examples/.
 bench = ["std"]
+# `fake`: a simulated dongle (register file, paced samples, failing
+# requests on demand) for tests of code built on this driver (native).
+mock = ["std", "sdr-core/mock"]
+
+[dev-dependencies]
+sdr-core = { version = "0.1", default-features = false, features = ["mock"] }
 
 # The bench programs (steps 11-17).
 [[example]]
@@ -39,6 +46,18 @@ required-features = ["bench"]
 
 [[example]]
 name = "vcoedge"
+required-features = ["bench"]
+
+[[example]]
+name = "rangecheck"
+required-features = ["bench"]
+
+[[example]]
+name = "edgecheck"
+required-features = ["bench"]
+
+[[example]]
+name = "soak"
 required-features = ["bench"]
 
 [[example]]
@@ -86,6 +105,10 @@ name = "glitchscan"
 required-features = ["bench"]
 
 [[example]]
+name = "decimcheck"
+required-features = ["bench"]
+
+[[example]]
 name = "eepromread"
 required-features = ["bench"]
 
@@ -99,4 +122,40 @@ required-features = ["bench"]
 
 [[example]]
 name = "fullpacket"
+required-features = ["bench"]
+
+[[example]]
+name = "claimcheck"
+required-features = ["bench"]
+
+[[example]]
+name = "refusalcheck"
+required-features = ["bench"]
+
+[[example]]
+name = "a3loop"
+required-features = ["bench"]
+
+[[example]]
+name = "ifsweep"
+required-features = ["bench"]
+
+[[example]]
+name = "iftest"
+required-features = ["bench"]
+
+[[example]]
+name = "frontsweep"
+required-features = ["bench"]
+
+[[example]]
+name = "gainsweep"
+required-features = ["bench"]
+
+[[example]]
+name = "gapcheck"
+required-features = ["bench"]
+
+[[example]]
+name = "sfreqwatch"
 required-features = ["bench"]

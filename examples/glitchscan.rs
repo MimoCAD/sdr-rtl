@@ -3,7 +3,8 @@
 //! windows, steps ~30-48° about every 256 samples (one 512-byte packet);
 //! at 1.024, 1.1 and 1.152 Msps it never does.
 //!
-//!   glitchscan [--rates a,b,…] [--seconds S]
+//!   glitchscan [--rates a,b,…] [--seconds S] [--source-cmd "<command line>"]
+//!              [--rate-floor SPS]   (rates under the measured span allowed)
 //!
 //! Built with `--features bench`. Per rate, from a power cycle (gains
 //! 8/8/2, 300 MHz): a tone at +300 kHz (or +rate/4 if that is lower), S
@@ -18,9 +19,9 @@ use std::f64::consts::PI;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
 use sdr_rtl::OPEN_RF_HZ;
+use sdr_rtl::Stage;
 use sdr_rtl::blocking::Rtl;
 
 const WIN: usize = 64;
@@ -38,28 +39,39 @@ fn one(src: &mut Source, rate: f64, secs: f64) -> Result<String, String> {
         src.tone(OPEN_RF_HZ + offset)?;
     }
     power_cycle()?;
-    let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
+    let mut rtl = Rtl::open(&rtl_spec()).map_err(|e| e.to_string())?;
     for (stage, code) in [(Stage::Lna, 8), (Stage::Mixer, 8), (Stage::Vga, 2)] {
-        rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
+        rtl.set_stage_level(stage, code)
+            .map_err(|e| e.to_string())?;
     }
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
-    rtl.set_freq(&TuneRequest::auto(OPEN_RF_HZ)).map_err(|e| e.to_string())?;
+    // The rate as the resampler register reads back (`demod::read_f_symbol`).
+    let readback = rtl.rate().map_err(|e| e.to_string())?;
+    rtl.set_freq(&TuneRequest::auto(OPEN_RF_HZ))
+        .map_err(|e| e.to_string())?;
     if !early {
         src.tone(OPEN_RF_HZ + offset)?;
     }
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
     let mut all: Vec<Iq> = Vec::new();
     let t = Instant::now();
     while t.elapsed() < Duration::from_secs_f64(secs) {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         all.extend_from_slice(&buf[..info.n_samples]);
     }
+    let elapsed = t.elapsed().as_secs_f64();
     s.stop().map_err(|e| e.to_string())?;
     let d = s.take_dropped_blocks().map_err(|e| e.to_string())?;
     // The tone from the settled part; the phase from the first sample.
-    let tone = spectrum(&all[SKIP.min(all.len())..]).map(|p| peak_hz(&p, near(&p, bin_of(offset, rate), 32), rate)).unwrap_or(offset);
+    let tone = spectrum(&all[SKIP.min(all.len())..])
+        .map(|p| peak_hz(&p, near(&p, bin_of(offset, rate), 32), rate))
+        .unwrap_or(offset);
     let x = &all[..];
     let early_end = (rate * EARLY_S) as usize;
     let mut early_jumps = 0usize;
@@ -98,9 +110,10 @@ fn one(src: &mut Source, rate: f64, secs: f64) -> Result<String, String> {
     gaps.sort();
     let med = |v: &[usize]| v.get(v.len() / 2).copied().unwrap_or(0);
     Ok(format!(
-        "\"rate\":{rate},\"f_symbol_ratio\":{:.4},\"tone_hz\":{tone:.0},\"samples\":{},\"dropped_blocks\":{},\"windows\":{windows},\"jumps\":{jumps},\"jumps_first_10ms\":{early_jumps},\"jump_deg_median\":{:.0},\"jump_spacing_median\":{}",
+        "\"rate\":{rate},\"rate_readback\":{readback:.1},\"f_symbol_ratio\":{:.4},\"tone_hz\":{tone:.0},\"tone_expected_hz\":{offset:.0},\"samples\":{},\"delivered_ratio\":{:.5},\"dropped_blocks\":{},\"windows\":{windows},\"jumps\":{jumps},\"jumps_first_10ms\":{early_jumps},\"jump_deg_median\":{:.0},\"jump_spacing_median\":{}",
         28.8e6 / (4.0 * rate),
         x.len(),
+        x.len() as f64 / (rate * elapsed),
         d.blocks,
         sizes.get(sizes.len() / 2).copied().unwrap_or(0.0),
         med(&gaps)
@@ -109,14 +122,27 @@ fn one(src: &mut Source, rate: f64, secs: f64) -> Result<String, String> {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let get = |k: &str| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let rates: Vec<f64> = get("--rates")
-        .unwrap_or_else(|| "1024000,1152000,1200000,1440000,1600000,1800000,2048000,2400000,2880000".into())
+        .unwrap_or_else(|| {
+            "1024000,1152000,1200000,1440000,1600000,1800000,2048000,2400000,2880000".into()
+        })
         .split(',')
         .filter_map(|v| v.parse().ok())
         .collect();
     let secs: f64 = get("--seconds").and_then(|v| v.parse().ok()).unwrap_or(3.0);
-    let mut src = Source::spawn(SOURCE_CMD, 0, -15)?;
+    // `--rate-floor SPS`: rates under the driver's measured span accepted,
+    // to measure them as the span's were (`demod::set_bench_rate_floor`).
+    if let Some(f) = get("--rate-floor").and_then(|v| v.parse::<f64>().ok()) {
+        sdr_rtl::demod::set_bench_rate_floor(Some(f));
+    }
+    let cmd = get("--source-cmd").unwrap_or_else(|| SOURCE_CMD.into());
+    let mut src = Source::spawn(&cmd, 0, -15)?;
     for rate in rates {
         match one(&mut src, rate, secs) {
             Ok(body) => println!("{{{body}}}"),

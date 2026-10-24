@@ -20,14 +20,33 @@ fn main() {
         eprintln!("usage: iqlevel FILE.sigmf-data RATE OFFSET_HZ [BW_HZ]");
         std::process::exit(2);
     }
-    let (path, rate, offset) = (&args[0], args[1].parse::<f64>().unwrap_or(2.4e6), args[2].parse::<f64>().unwrap_or(0.0));
-    let bw = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_BW_HZ);
+    let (path, rate, offset) = (
+        &args[0],
+        args[1].parse::<f64>().unwrap_or(2.4e6),
+        args[2].parse::<f64>().unwrap_or(0.0),
+    );
+    let bw = args
+        .get(3)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_BW_HZ);
     let bytes = std::fs::read(path).unwrap_or_else(|e| {
         eprintln!("{path}: {e}");
         std::process::exit(1);
     });
-    let x: Vec<Iq> = bytes.as_chunks::<4>().0.iter().map(|c| Iq { i: i16::from_le_bytes([c[0], c[1]]), q: i16::from_le_bytes([c[2], c[3]]) }).collect();
-    let rms = x.iter().map(|v| (v.i as f64).powi(2) + (v.q as f64).powi(2)).sum::<f64>() / x.len().max(1) as f64;
+    let x: Vec<Iq> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| Iq {
+            i: i16::from_le_bytes([c[0], c[1]]),
+            q: i16::from_le_bytes([c[2], c[3]]),
+        })
+        .collect();
+    let rms = x
+        .iter()
+        .map(|v| (v.i as f64).powi(2) + (v.q as f64).powi(2))
+        .sum::<f64>()
+        / x.len().max(1) as f64;
     let mut acc = vec![0.0; FFT_N];
     let mut blocks = 0usize;
     for chunk in x.as_chunks::<{ FFT_N * SEGMENTS }>().0 {
@@ -40,7 +59,9 @@ fn main() {
     }
     let half = ((bw / 2.0) / rate * FFT_N as f64).round() as i64;
     let centre = bin_of(offset, rate) as i64;
-    let band: Vec<f64> = (-half..=half).map(|d| acc[(centre + d).rem_euclid(FFT_N as i64) as usize]).collect();
+    let band: Vec<f64> = (-half..=half)
+        .map(|d| acc[(centre + d).rem_euclid(FFT_N as i64) as usize])
+        .collect();
     let signal = band.iter().sum::<f64>() / band.len() as f64;
     let noise = median(&acc);
     // The strongest bin in the band, its frequency interpolated: a tone's

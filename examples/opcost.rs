@@ -26,11 +26,11 @@ mod bench;
 use std::time::{Duration, Instant};
 
 use bench::*;
-use sdr_core::gain::Stage;
 use sdr_core::{Iq, TuneRequest};
-use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
 use sdr_rtl::OPEN_RF_HZ;
+use sdr_rtl::Stage;
 use sdr_rtl::blocking::Rtl;
+use sdr_rtl::protocol::{BLK_DROP_COUNTER, PAUSE_OFF, PAUSE_PAGE};
 
 const RETUNE_STEP_HZ: f64 = 100e3;
 const VGA_CODES: [usize; 2] = [2, 3];
@@ -39,10 +39,13 @@ fn one(op: &str, rate: f64, every: Duration, secs: f64, depth: usize) -> Result<
     let cycle = power_cycle()?;
     let mut rtl = Rtl::open("").map_err(|e| e.to_string())?;
     for (stage, code) in [(Stage::Lna, 8), (Stage::Mixer, 8), (Stage::Vga, 2)] {
-        rtl.set_stage_level(stage, code).map_err(|e| e.to_string())?;
+        rtl.set_stage_level(stage, code)
+            .map_err(|e| e.to_string())?;
     }
     rtl.set_rate(rate).map_err(|e| e.to_string())?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, depth).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, depth)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
     s.start().map_err(|e| e.to_string())?;
     let t = Instant::now();
@@ -50,7 +53,9 @@ fn one(op: &str, rate: f64, every: Duration, secs: f64, depth: usize) -> Result<
     let mut next = every;
     let mut error = String::new();
     while t.elapsed().as_secs_f64() < secs {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         n += info.n_samples as u64;
         overflows += info.overflow as usize;
         if op != "none" && error.is_empty() && t.elapsed() >= next {
@@ -58,7 +63,11 @@ fn one(op: &str, rate: f64, every: Duration, secs: f64, depth: usize) -> Result<
             let r = match op {
                 "usbread" => rtl.link().usb_read8(BLK_DROP_COUNTER).map(drop),
                 "demodread" => rtl.link().demod_read8(PAUSE_PAGE, PAUSE_OFF).map(drop),
-                "retune" => rtl.set_freq(&TuneRequest::auto(OPEN_RF_HZ + RETUNE_STEP_HZ * (ops % 2) as f64)).map(drop),
+                "retune" => rtl
+                    .set_freq(&TuneRequest::auto(
+                        OPEN_RF_HZ + RETUNE_STEP_HZ * (ops % 2) as f64,
+                    ))
+                    .map(drop),
                 "gain" => rtl.set_stage_level(Stage::Vga, VGA_CODES[(ops % 2) as usize]),
                 other => return Err(format!("unknown op {other}")),
             };
@@ -76,7 +85,11 @@ fn one(op: &str, rate: f64, every: Duration, secs: f64, depth: usize) -> Result<
     Ok(format!(
         "\"cycle\":\"{cycle}\",\"op\":\"{op}\",\"rate\":{rate},\"depth\":{depth},\"every_ms\":{},\"ops\":{ops},\"op_ms_mean\":{:.3},\"seconds\":{elapsed:.3},\"samples\":{n},\"shortfall\":{:.0},\"overflows\":{overflows},\"dropped_blocks\":{},\"saturated\":{},\"dropped_samples\":{},\"error\":\"{error}\"",
         every.as_millis(),
-        if ops > 0 { op_time.as_secs_f64() * 1e3 / ops as f64 } else { 0.0 },
+        if ops > 0 {
+            op_time.as_secs_f64() * 1e3 / ops as f64
+        } else {
+            0.0
+        },
         rate * elapsed - n as f64,
         d.blocks,
         d.saturated,
@@ -86,12 +99,19 @@ fn one(op: &str, rate: f64, every: Duration, secs: f64, depth: usize) -> Result<
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let get = |k: &str| {
+        args.iter()
+            .position(|a| a == k)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let rate: f64 = get("--rate").and_then(|v| v.parse().ok()).unwrap_or(1.8e6);
     let secs: f64 = get("--seconds").and_then(|v| v.parse().ok()).unwrap_or(5.0);
     let every_ms: Option<u64> = get("--every-ms").and_then(|v| v.parse().ok());
     let ops = get("--ops").unwrap_or_else(|| "none,usbread,demodread,retune,gain".into());
-    let depth: usize = get("--depth").and_then(|v| v.parse().ok()).unwrap_or(QUEUE_DEPTH);
+    let depth: usize = get("--depth")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(QUEUE_DEPTH);
     for op in ops.split(',') {
         let default_ms = if op == "usbread" { 5 } else { 100 };
         let every = Duration::from_millis(every_ms.unwrap_or(default_ms));

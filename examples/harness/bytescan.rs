@@ -58,7 +58,12 @@ impl Opts {
             }
             .map_err(|e| format!("{s}: {e}"))
         };
-        let mut o = Opts { restart: false, limit: None, out: None, from: None };
+        let mut o = Opts {
+            restart: false,
+            limit: None,
+            out: None,
+            from: None,
+        };
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
@@ -81,7 +86,9 @@ impl Opts {
                         i += 1;
                     }
                     if p > 255 || !PAGES.contains(&(p as u8)) || off > 255 || v > 255 {
-                        return Err(format!("--from {p} {off} {v}: page must be one of {PAGES:?}, offset and value 0..=255"));
+                        return Err(format!(
+                            "--from {p} {off} {v}: page must be one of {PAGES:?}, offset and value 0..=255"
+                        ));
                     }
                     o.from = Some((p as u8, off as u8, v as u8));
                 }
@@ -94,7 +101,9 @@ impl Opts {
 
     /// The scratch file if given, else the record `name` under data/.
     pub fn path(&self, name: &str) -> std::path::PathBuf {
-        self.out.clone().unwrap_or_else(|| crate::data_dir().join(name))
+        self.out
+            .clone()
+            .unwrap_or_else(|| crate::data_dir().join(name))
     }
 
     /// True for a candidate before `--from`.
@@ -112,7 +121,11 @@ const CHECK_FIELDS: &str = "bulk_check = [submitted, completed, errored, halts, 
 pub fn field(line: &str, k: &str) -> Option<u32> {
     let key = format!("\"{k}\":");
     let i = line.find(&key)? + key.len();
-    line[i..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+    line[i..]
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// (page, offset, value) of every candidate line (tested or skipped).
@@ -123,7 +136,11 @@ fn done(path: &std::path::Path) -> HashSet<(u8, u8, u8)> {
             if !line.contains("\"kind\":\"candidate\"") && !line.contains("\"kind\":\"skip\"") {
                 continue;
             }
-            if let (Some(p), Some(o), Some(v)) = (field(line, "page"), field(line, "offset_dec"), field(line, "value_dec")) {
+            if let (Some(p), Some(o), Some(v)) = (
+                field(line, "page"),
+                field(line, "offset_dec"),
+                field(line, "value_dec"),
+            ) {
                 set.insert((p as u8, o as u8, v as u8));
             }
         }
@@ -141,9 +158,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
     crate::usb::guard()?;
     let done = done(&path);
     let total = PAGES.len() * 256 * 256;
-    let fresh_file = std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
-    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
-    let w = |out: &mut std::fs::File, j: J| writeln!(out, "{}", j.render()).map_err(|e| e.to_string());
+    let fresh_file = std::fs::metadata(&path)
+        .map(|m| m.len() == 0)
+        .unwrap_or(true);
+    let mut out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    let w =
+        |out: &mut std::fs::File, j: J| writeln!(out, "{}", j.render()).map_err(|e| e.to_string());
     if fresh_file {
         let hdr = crate::header("3-bytescan", "bulk IN bytes after writing one demodulator byte value on top of the baseline")
             .with("kind", "header")
@@ -176,10 +200,22 @@ pub fn run(args: &[String]) -> Result<(), String> {
             );
         w(&mut out, hdr)?;
     }
-    println!("bytescan: {} of {} candidates already logged in {}; limit {:?}", done.len(), total, path.display(), limit);
+    println!(
+        "bytescan: {} of {} candidates already logged in {}; limit {:?}",
+        done.len(),
+        total,
+        path.display(),
+        limit
+    );
 
     let (mut rtl, mut bulk, setup) = step3::fresh_with_baseline(RATE_HZ, &[])?;
-    w(&mut out, setup.with("kind", "setup").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)))?;
+    w(
+        &mut out,
+        setup.with("kind", "setup").with(
+            "detector",
+            usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS),
+        ),
+    )?;
     let start = Instant::now();
     let (mut tested, mut skipped, mut hits) = (0usize, 0usize, 0usize);
     'scan: for page in PAGES {
@@ -235,11 +271,23 @@ pub fn run(args: &[String]) -> Result<(), String> {
                         line.set("bytes_per_s", win.rate());
                         line.set("stale_bytes_discarded", win.stale_bytes);
                         if !win.errors.is_empty() {
-                            line.set("transfer_errors", J::Arr(win.errors.iter().map(|e| J::from(e.as_str())).collect()));
+                            line.set(
+                                "transfer_errors",
+                                J::Arr(win.errors.iter().map(|e| J::from(e.as_str())).collect()),
+                            );
                         }
                         line.set("bulk_check", win.check.compact());
                         if !win.check.clears.is_empty() {
-                            line.set("bulk_halt_clears", J::Arr(win.check.clears.iter().map(|c| J::from(c.as_str())).collect()));
+                            line.set(
+                                "bulk_halt_clears",
+                                J::Arr(
+                                    win.check
+                                        .clears
+                                        .iter()
+                                        .map(|c| J::from(c.as_str()))
+                                        .collect(),
+                                ),
+                            );
                         }
                         let mut streams = step3::streams(win.rate(), RATE_HZ);
                         let any = win.bytes > 0 || win.stale_bytes > 0;
@@ -265,7 +313,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
                         }
                         if streams {
                             hits += 1;
-                            println!("STREAMS: page {page} offset 0x{off:02X} value 0x{value:02X} ({} bytes in {} ms)", win.bytes, WINDOW.as_millis());
+                            println!(
+                                "STREAMS: page {page} offset 0x{off:02X} value 0x{value:02X} ({} bytes in {} ms)",
+                                win.bytes,
+                                WINDOW.as_millis()
+                            );
                         }
                         if !recover && !step3::alive(&rtl) {
                             recover = true;
@@ -273,11 +325,20 @@ pub fn run(args: &[String]) -> Result<(), String> {
                         if !recover {
                             let disturbed = step3::baseline_disturbed(&rtl, RATE_HZ);
                             if !disturbed.is_empty() {
-                                line.set("baseline_disturbed", J::Arr(disturbed.into_iter().map(J::from).collect()));
-                                line.set("baseline_reapplied", step3::apply_baseline(&rtl, RATE_HZ, &[]));
+                                line.set(
+                                    "baseline_disturbed",
+                                    J::Arr(disturbed.into_iter().map(J::from).collect()),
+                                );
+                                line.set(
+                                    "baseline_reapplied",
+                                    step3::apply_baseline(&rtl, RATE_HZ, &[]),
+                                );
                                 let still = step3::baseline_disturbed(&rtl, RATE_HZ);
                                 recover = !still.is_empty();
-                                line.set("baseline_still_disturbed", J::Arr(still.into_iter().map(J::from).collect()));
+                                line.set(
+                                    "baseline_still_disturbed",
+                                    J::Arr(still.into_iter().map(J::from).collect()),
+                                );
                             }
                         }
                     }
@@ -288,8 +349,20 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     drop(bulk);
                     drop(rtl);
                     let (r, b, setup) = step3::fresh_with_baseline(RATE_HZ, &[])?;
-                    let after = J::obj().with("page", page).with("offset", hex8(off)).with("value", hex8(value));
-                    w(&mut out, setup.with("kind", "recovery").with("detector", usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS)).with("after_candidate", after))?;
+                    let after = J::obj()
+                        .with("page", page)
+                        .with("offset", hex8(off))
+                        .with("value", hex8(value));
+                    w(
+                        &mut out,
+                        setup
+                            .with("kind", "recovery")
+                            .with(
+                                "detector",
+                                usb::BulkCounter::describe(step3::BUF_LEN, CHECK_FIELDS),
+                            )
+                            .with("after_candidate", after),
+                    )?;
                     rtl = r;
                     bulk = b;
                     continue;

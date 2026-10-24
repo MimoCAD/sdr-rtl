@@ -149,15 +149,40 @@ pub const DAB_ITEMS: [DabItem; 5] = [
     ("CciOff", 1, &[(0x40, 0x02, 0x00)]),
     ("IncOff", 1, &[(0x5D, 0x01, 0x00)]),
     ("AutoScanOff", 1, &[(0x5F, 0x01, 0x01)]),
-    ("PidPassAll", 0, &[(0x61, 0x40, 0x40), (0x62, 0xFF, 0x00), (0x63, 0xFF, 0x00), (0x64, 0xFF, 0x00), (0x65, 0xFF, 0x00)]),
+    (
+        "PidPassAll",
+        0,
+        &[
+            (0x61, 0x40, 0x40),
+            (0x62, 0xFF, 0x00),
+            (0x63, 0xFF, 0x00),
+            (0x64, 0xFF, 0x00),
+            (0x65, 0xFF, 0x00),
+        ],
+    ),
 ];
 /// Each back-end item's documented meaning, for the record.
 pub const DAB_ITEM_TEXT: [(&str, &str); 5] = [
-    ("AciOff", "AciOff: En_aci page 1 0x15[1] = 0 (Table 6, p. 20: '0: Disable adjacent channel rejection'; 9.3 calls it 'an adjacent channel canceller'). AMBIGUOUS placement: the document puts it in the DDC (9.3, the front half), not the DVB-T back end; turned off here as an itemised choice"),
-    ("CciOff", "CciOff: En_cci page 1 0x40[1] = 0 (Table 8, p. 21: '0: Disable CCI cancellation'; 9.5 co-channel interference rejection)"),
-    ("IncOff", "IncOff: en_inc page 1 0x5D[0] = 0 (Table 9, p. 21: '0: Disable impulse noise cancellation'; 9.6)"),
-    ("AutoScanOff", "AutoScanOff: dis_auto_scan page 1 0x5F[0] = 1 (Table 11, p. 22: '1: Disable auto mode detection'; 9.8 FFT mode detection). The bit's polarity is inverted against the others (1 = off), as printed"),
-    ("PidPassAll", "PidPassAll: the PID filter at its documented pass-all setting (9.11, Table 13, p. 25; Fig. 7): mode_PID page 0 0x61[6] = 1 and en_PID[31:0] page 0 0x62-0x65 = 0 — no individual filter enabled, so the XOR with mode_PID passes every packet ('the default register setting will let all PID transport streams pass through'). The document has no 'filter off' bit other than this; enable_PID is the output gate (not changed, see below)"),
+    (
+        "AciOff",
+        "AciOff: En_aci page 1 0x15[1] = 0 (Table 6, p. 20: '0: Disable adjacent channel rejection'; 9.3 calls it 'an adjacent channel canceller'). AMBIGUOUS placement: the document puts it in the DDC (9.3, the front half), not the DVB-T back end; turned off here as an itemised choice",
+    ),
+    (
+        "CciOff",
+        "CciOff: En_cci page 1 0x40[1] = 0 (Table 8, p. 21: '0: Disable CCI cancellation'; 9.5 co-channel interference rejection)",
+    ),
+    (
+        "IncOff",
+        "IncOff: en_inc page 1 0x5D[0] = 0 (Table 9, p. 21: '0: Disable impulse noise cancellation'; 9.6)",
+    ),
+    (
+        "AutoScanOff",
+        "AutoScanOff: dis_auto_scan page 1 0x5F[0] = 1 (Table 11, p. 22: '1: Disable auto mode detection'; 9.8 FFT mode detection). The bit's polarity is inverted against the others (1 = off), as printed",
+    ),
+    (
+        "PidPassAll",
+        "PidPassAll: the PID filter at its documented pass-all setting (9.11, Table 13, p. 25; Fig. 7): mode_PID page 0 0x61[6] = 1 and en_PID[31:0] page 0 0x62-0x65 = 0 — no individual filter enabled, so the XOR with mode_PID passes every packet ('the default register setting will let all PID transport streams pass through'). The document has no 'filter off' bit other than this; enable_PID is the output gate (not changed, see below)",
+    ),
 ];
 
 /// zero-if-open's tone offsets from RF = LO - 4.57 MHz (the RF the tuner
@@ -196,7 +221,9 @@ impl Baseline {
             "dab-open" => Ok(Baseline::DabOpen),
             "zero-if-open" => Ok(Baseline::ZeroIfOpen),
             "power-on" => Ok(Baseline::PowerOn),
-            _ => Err(format!("--baseline {s}: zero-if | low-if | low-if-open | dab-open | zero-if-open | power-on")),
+            _ => Err(format!(
+                "--baseline {s}: zero-if | low-if | low-if-open | dab-open | zero-if-open | power-on"
+            )),
         }
     }
 
@@ -226,14 +253,19 @@ impl Baseline {
     /// The data path held open by page 0 0x07 bit 7 (the content
     /// detector's baselines).
     pub fn is_open(self) -> bool {
-        matches!(self, Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen)
+        matches!(
+            self,
+            Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen
+        )
     }
 
     /// The sample rate a stream is judged against: the rate the baseline
     /// programs into rsamp_ratio, or the power-on ratio's.
     pub fn rate_hz(self) -> f64 {
         match self {
-            Baseline::ZeroIf | Baseline::LowIf | Baseline::LowIfOpen | Baseline::ZeroIfOpen => step3::RATE_HZ,
+            Baseline::ZeroIf | Baseline::LowIf | Baseline::LowIfOpen | Baseline::ZeroIfOpen => {
+                step3::RATE_HZ
+            }
             Baseline::DabOpen => dab_rate_hz(),
             Baseline::PowerOn => power_on_rate_hz(),
         }
@@ -276,7 +308,10 @@ impl Baseline {
             }
             _ => {
                 for o in crate::confirm_write::TONE_OFFSETS_HZ {
-                    plan.push((format!("tone at the DDC centre RF {o:+} Hz"), Some(self.ddc_centre_rf_hz() + o)));
+                    plan.push((
+                        format!("tone at the DDC centre RF {o:+} Hz"),
+                        Some(self.ddc_centre_rf_hz() + o),
+                    ));
                 }
             }
         }
@@ -297,7 +332,11 @@ impl Baseline {
         match self {
             Baseline::ZeroIf => step3::ITEMS.iter().map(|i| format!("{i:?}")).collect(),
             Baseline::LowIf => LOW_ITEMS.iter().map(|i| format!("{i:?}")).collect(),
-            Baseline::LowIfOpen => LOW_ITEMS.iter().map(|i| format!("{i:?}")).chain([OPEN_PATH_ITEM.to_string()]).collect(),
+            Baseline::LowIfOpen => LOW_ITEMS
+                .iter()
+                .map(|i| format!("{i:?}"))
+                .chain([OPEN_PATH_ITEM.to_string()])
+                .collect(),
             Baseline::DabOpen => LOW_ITEMS
                 .iter()
                 .map(|i| format!("{i:?}"))
@@ -376,13 +415,19 @@ impl Baseline {
                 "dab_example",
                 J::obj()
                     .with("pset_iffreq", DAB_PSET_IFFREQ)
-                    .with("pset_iffreq_bytes", J::Arr(dab_pset_bytes().iter().map(|b| hex8(*b)).collect()))
+                    .with(
+                        "pset_iffreq_bytes",
+                        J::Arr(dab_pset_bytes().iter().map(|b| hex8(*b)).collect()),
+                    )
                     .with("f_if_d_hz", dab_if_hz())
                     .with("rsamp_ratio", hex32(DAB_RSAMP_RATIO))
                     .with("rsamp_ratio_written", hex32(rsamp_ratio(DAB_RATE_HZ)))
                     .with("f_symbol_hz", DAB_RATE_HZ)
                     .with("ddc_centre_rf_hz", self.ddc_centre_rf_hz())
-                    .with("rate_targets_bytes_per_s", J::Arr(DAB_RATE_TARGETS.iter().map(|t| J::from(*t)).collect())),
+                    .with(
+                        "rate_targets_bytes_per_s",
+                        J::Arr(DAB_RATE_TARGETS.iter().map(|t| J::from(*t)).collect()),
+                    ),
             );
         }
         if self == Baseline::ZeroIfOpen {
@@ -398,8 +443,18 @@ impl Baseline {
         def.with("baseline", self.name())
             .with("items", J::Arr(items.iter().map(|s| J::from(*s)).collect()))
             .with("rate_hz_judged_against", self.rate_hz())
-            .with("expected_bytes_per_s", step3::expected_bytes_per_s(self.rate_hz()))
-            .with("streams_criterion", format!("bytes/s within {}% of 2 x {} Hz", step3::TOLERANCE * 100.0, self.rate_hz()))
+            .with(
+                "expected_bytes_per_s",
+                step3::expected_bytes_per_s(self.rate_hz()),
+            )
+            .with(
+                "streams_criterion",
+                format!(
+                    "bytes/s within {}% of 2 x {} Hz",
+                    step3::TOLERANCE * 100.0,
+                    self.rate_hz()
+                ),
+            )
     }
 
     /// Apply the baseline at `rate` without the items named in `skip`; the
@@ -408,7 +463,10 @@ impl Baseline {
     pub fn apply_at(self, rtl: &Rtl, rate: f64, skip: &[String]) -> J {
         match self {
             Baseline::ZeroIf => {
-                let items: Vec<Item> = step3::ITEMS.into_iter().filter(|i| skip.contains(&format!("{i:?}"))).collect();
+                let items: Vec<Item> = step3::ITEMS
+                    .into_iter()
+                    .filter(|i| skip.contains(&format!("{i:?}")))
+                    .collect();
                 step3::apply_baseline(rtl, rate, &items)
             }
             Baseline::LowIf => apply_low_if(rtl, rate, skip, false),
@@ -416,20 +474,42 @@ impl Baseline {
                 let dab = self == Baseline::DabOpen;
                 let mut log = apply_low_if(rtl, rate, skip, dab);
                 if dab {
-                    for (name, page, regs) in DAB_ITEMS.iter().filter(|(n, ..)| !skip.iter().any(|s| s == n)) {
+                    for (name, page, regs) in DAB_ITEMS
+                        .iter()
+                        .filter(|(n, ..)| !skip.iter().any(|s| s == n))
+                    {
                         let mut v = Vec::new();
                         let mut err = None;
                         for &(off, mask, val) in regs.iter() {
                             match rmw_demod(rtl, *page, off, mask, val) {
-                                Ok(j) => v.push(j.with("page", *page).with("offset", hex8(off)).with("mask", hex8(mask)).with("value", hex8(val))),
+                                Ok(j) => v.push(
+                                    j.with("page", *page)
+                                        .with("offset", hex8(off))
+                                        .with("mask", hex8(mask))
+                                        .with("value", hex8(val)),
+                                ),
                                 Err(e) => err = Some(e.to_string()),
                             }
                         }
-                        log.push(J::obj().with("item", *name).with("record", J::Arr(v)).with("error", err));
+                        log.push(
+                            J::obj()
+                                .with("item", *name)
+                                .with("record", J::Arr(v))
+                                .with("error", err),
+                        );
                     }
                 }
                 if !skip.iter().any(|s| s == OPEN_PATH_ITEM) {
-                    let r = step3::step("page 0 0x07[7] = 1: the endpoint data path open (data/step3-confirm-lowif-p0-07-bc.json)", rmw_demod(rtl, OPEN_PATH_PAGE, OPEN_PATH_OFF, OPEN_PATH_BIT, OPEN_PATH_BIT));
+                    let r = step3::step(
+                        "page 0 0x07[7] = 1: the endpoint data path open (data/step3-confirm-lowif-p0-07-bc.json)",
+                        rmw_demod(
+                            rtl,
+                            OPEN_PATH_PAGE,
+                            OPEN_PATH_OFF,
+                            OPEN_PATH_BIT,
+                            OPEN_PATH_BIT,
+                        ),
+                    );
                     log.push(J::obj().with("item", OPEN_PATH_ITEM).with("record", r));
                 }
                 log
@@ -455,7 +535,12 @@ impl Baseline {
                 if dab {
                     for (name, page, regs) in DAB_ITEMS {
                         for &(off, mask, val) in regs.iter() {
-                            if rtl.demod_read8(page, off).ok().map(|v| v & mask == val & mask) != Some(true) {
+                            if rtl
+                                .demod_read8(page, off)
+                                .ok()
+                                .map(|v| v & mask == val & mask)
+                                != Some(true)
+                            {
                                 bad.push(format!("{name} p{page} 0x{off:02X}"));
                             }
                         }
@@ -464,7 +549,12 @@ impl Baseline {
                         bad.push("en_dagc = 0".into());
                     }
                 }
-                if rtl.demod_read8(OPEN_PATH_PAGE, OPEN_PATH_OFF).ok().map(|v| v & OPEN_PATH_BIT != 0) != Some(true) {
+                if rtl
+                    .demod_read8(OPEN_PATH_PAGE, OPEN_PATH_OFF)
+                    .ok()
+                    .map(|v| v & OPEN_PATH_BIT != 0)
+                    != Some(true)
+                {
                     bad.push("page 0 0x07[7] = 1".into());
                 }
                 bad
@@ -477,9 +567,17 @@ impl Baseline {
     /// Power-cycle (unless `--no-cycle`), open, apply; the bulk counter
     /// (transfers of `buf_len` bytes) opened after the baseline as in
     /// `step3::fresh_with_baseline`.
-    pub fn fresh_at(self, rate: f64, skip: &[String], buf_len: usize) -> Result<(Rtl, usb::BulkCounter, J), String> {
+    pub fn fresh_at(
+        self,
+        rate: f64,
+        skip: &[String],
+        buf_len: usize,
+    ) -> Result<(Rtl, usb::BulkCounter, J), String> {
         let cyc = if crate::no_cycle() {
-            J::obj().with("skipped", "--no-cycle: the dongle was opened as found, not power-cycled")
+            J::obj().with(
+                "skipped",
+                "--no-cycle: the dongle was opened as found, not power-cycled",
+            )
         } else {
             usb::power_cycle()?
         };
@@ -493,7 +591,10 @@ impl Baseline {
                 .with("power_cycle", cyc)
                 .with("baseline", self.name())
                 .with("rate_hz", rate)
-                .with("skipped_items", J::Arr(skip.iter().map(|s| J::from(s.as_str())).collect()))
+                .with(
+                    "skipped_items",
+                    J::Arr(skip.iter().map(|s| J::from(s.as_str())).collect()),
+                )
                 .with("baseline_writes", log),
         ))
     }
@@ -511,7 +612,12 @@ impl Baseline {
 /// (window and stale).
 /// With `content`, each window's bytes are kept long enough to compute
 /// its [`Content`]; the bytes are then dropped.
-fn windows_content(bulk: &mut usb::BulkCounter, rate: f64, n: usize, content: bool) -> (J, bool, usize, Vec<Content>) {
+fn windows_content(
+    bulk: &mut usb::BulkCounter,
+    rate: f64,
+    n: usize,
+    content: bool,
+) -> (J, bool, usize, Vec<Content>) {
     let mut ws = J::Arr(Vec::new());
     let (mut any, mut total, mut cs) = (false, 0, Vec::new());
     let mut data = Vec::new();
@@ -537,7 +643,11 @@ fn windows_content(bulk: &mut usb::BulkCounter, rate: f64, n: usize, content: bo
 /// [`LOWIF_RF_HZ`], and ten more windows with the tone on; the source is
 /// unkeyed and closed before the scan. Returns (record, any window
 /// streamed).
-pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, bool, Vec<Content>), String> {
+pub fn solo(
+    b: Baseline,
+    rtl: &Rtl,
+    bulk: &mut usb::BulkCounter,
+) -> Result<(J, bool, Vec<Content>), String> {
     let rate = b.rate_hz();
     let open = b.is_open();
     let (ws, mut streams, total, contents) = windows_content(bulk, rate, 10, open);
@@ -545,7 +655,10 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
     for c in &contents {
         println!("  {}", c.compact().render());
     }
-    let mut rec = J::obj().with("windows", ws).with("bytes_total", total).with("any_window_streams", streams);
+    let mut rec = J::obj()
+        .with("windows", ws)
+        .with("bytes_total", total)
+        .with("any_window_streams", streams);
     // zero-if-open's scan runs with the tone keyed (SCAN_TONE_WHY): its
     // thresholds come from the tone-on windows.
     let mut threshold_basis: Option<Vec<Content>> = None;
@@ -578,7 +691,11 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
                 .with("bytes_after_restore", nr),
         );
     }
-    if matches!(b, Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen) && source::command().is_some() {
+    if matches!(
+        b,
+        Baseline::LowIf | Baseline::LowIfOpen | Baseline::DabOpen | Baseline::ZeroIfOpen
+    ) && source::command().is_some()
+    {
         let start = Instant::now();
         let mut src = Source::open()?;
         let described = src.describe();
@@ -625,19 +742,43 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
                 let nr = nonreplay(&cs);
                 streams |= nr;
                 let n: usize = cs.iter().map(|c| c.bytes).sum();
-                println!("  {name}: {n} B; {}", cs.first().map(|c| c.compact().render()).unwrap_or_default());
-                states.push(J::obj().with("state", name.as_str()).with("rf_hz", hz).with("source", s).with("windows", ws).with("nonreplay_content", nr));
+                println!(
+                    "  {name}: {n} B; {}",
+                    cs.first().map(|c| c.compact().render()).unwrap_or_default()
+                );
+                states.push(
+                    J::obj()
+                        .with("state", name.as_str())
+                        .with("rf_hz", hz)
+                        .with("source", s)
+                        .with("windows", ws)
+                        .with("nonreplay_content", nr),
+                );
                 all.truncate(crate::confirm_write::TONE_KEEP_BYTES);
                 kept.push((name, hz, all));
             }
             src.off()?;
             let lines = crate::confirm_write::tone_lines(&kept);
             println!("tone lines: {}", lines.render());
-            rec.set("tone_sweep", J::obj().with("plan", "Baseline::tone_plan (header baseline_definition.tone_plan)").with("states", states).with("tone_lines", lines));
+            rec.set(
+                "tone_sweep",
+                J::obj()
+                    .with(
+                        "plan",
+                        "Baseline::tone_plan (header baseline_definition.tone_plan)",
+                    )
+                    .with("states", states)
+                    .with("tone_lines", lines),
+            );
         }
         src.quit();
-        let moved = meter::moved(&off, &on, Meter::IfAgcMsbFirst).map(|(a, c, m)| J::obj().with("off", a).with("on", c).with("moved", m));
-        println!("{} with the tone on: {n_on} B in 10 x 100 ms; if_agc_val off -> on: {}", b.name(), moved.as_ref().map(J::render).unwrap_or_default());
+        let moved = meter::moved(&off, &on, Meter::IfAgcMsbFirst)
+            .map(|(a, c, m)| J::obj().with("off", a).with("on", c).with("moved", m));
+        println!(
+            "{} with the tone on: {n_on} B in 10 x 100 ms; if_agc_val off -> on: {}",
+            b.name(),
+            moved.as_ref().map(J::render).unwrap_or_default()
+        );
         streams |= s_on;
         rec.set(
             "positive_control",
@@ -661,28 +802,50 @@ pub fn solo(b: Baseline, rtl: &Rtl, bulk: &mut usb::BulkCounter) -> Result<(J, b
 /// Any window that carried enough bytes to score and is not the replay
 /// (period score below 1 - the detector's margin).
 fn nonreplay(cs: &[Content]) -> bool {
-    cs.iter().any(|c| c.bytes >= content::MIN_BYTES_FOR_PERIOD && c.period_score.is_some_and(|p| p < 1.0 - content::PERIOD_MARGIN))
+    cs.iter().any(|c| {
+        c.bytes >= content::MIN_BYTES_FOR_PERIOD
+            && c.period_score
+                .is_some_and(|p| p < 1.0 - content::PERIOD_MARGIN)
+    })
 }
 
 /// The positive control's level: +10 dB relative, where findings 4c-4e
 /// received the tone at full strength (if_agc_val about -800).
-pub const CONTROL_LEVEL: Level = Level { txvga_db: 10, backoff_db: 0 };
+pub const CONTROL_LEVEL: Level = Level {
+    txvga_db: 10,
+    backoff_db: 0,
+};
 
 pub fn low_if_pll() -> Pll {
-    Pll::program(tuner::lo_for(LOWIF_RF_HZ, tuner::IF_HZ, true), LOWIF_SEL_DIV, tuner::REF_DIV2_BY_DOCUMENT).expect("300 MHz + 4.57 MHz with /8 is inside Nint's range")
+    Pll::program(
+        tuner::lo_for(LOWIF_RF_HZ, tuner::IF_HZ, true),
+        LOWIF_SEL_DIV,
+        tuner::REF_DIV2_BY_DOCUMENT,
+    )
+    .expect("300 MHz + 4.57 MHz with /8 is inside Nint's range")
 }
 
 fn rmw_demod(rtl: &Rtl, page: u8, off: u8, mask: u8, value: u8) -> Result<J, usb::Fail> {
     let (old, back) = rtl.demod_rmw(page, off, mask, value)?;
-    Ok(J::obj().with("before", hex8(old)).with("after", hex8(back)).with("verified", back & mask == value & mask))
+    Ok(J::obj()
+        .with("before", hex8(old))
+        .with("after", hex8(back))
+        .with("verified", back & mask == value & mask))
 }
 
 /// The low-if items; with `dab`, IfFreq is the DAB example's pset_iffreq
 /// and Dagc writes en_dagc = 0 (dab-open's definition).
 fn apply_low_if(rtl: &Rtl, rate: f64, skip: &[String], dab: bool) -> J {
     let mut log = J::Arr(Vec::new());
-    for item in LOW_ITEMS.into_iter().filter(|i| !skip.contains(&format!("{i:?}"))) {
-        log.push(J::obj().with("item", format!("{item:?}")).with("record", low_item(rtl, item, rate, dab)));
+    for item in LOW_ITEMS
+        .into_iter()
+        .filter(|i| !skip.contains(&format!("{i:?}")))
+    {
+        log.push(
+            J::obj()
+                .with("item", format!("{item:?}"))
+                .with("record", low_item(rtl, item, rate, dab)),
+        );
     }
     log
 }
@@ -695,44 +858,119 @@ fn low_item(rtl: &Rtl, item: LowItem, rate: f64, dab: bool) -> J {
         match item {
             LowItem::DemodCtl => step3::step(
                 "DEMOD_CTL |= PLL|ADC_I|ADC_Q|reset-release (Table 15)",
-                step3::rmw_sys8(rtl, DEMOD_CTL, 0, DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE),
+                step3::rmw_sys8(
+                    rtl,
+                    DEMOD_CTL,
+                    0,
+                    DEMOD_CTL_PLL_EN
+                        | DEMOD_CTL_ADC_I_EN
+                        | DEMOD_CTL_ADC_Q_EN
+                        | DEMOD_CTL_RESET_RELEASE,
+                ),
             ),
-            LowItem::TunerPower => step3::step("GPIO3: GPD[3]=0 output, GPOE[3]=1, GPO[3]=0 tuner power on (Tables 16-19)", (|| {
-                let a = step3::rmw_sys8(rtl, GPD, GPIO_TUNER_POWER, 0)?;
-                let b = step3::rmw_sys8(rtl, GPOE, 0, GPIO_TUNER_POWER)?;
-                let c = step3::rmw_sys8(rtl, GPO, GPIO_TUNER_POWER, 0)?;
-                std::thread::sleep(Duration::from_millis(50));
-                Ok(J::obj().with("GPD", a).with("GPOE", b).with("GPO", c).with("settle_ms", 50))
-            })()),
-            LowItem::IicRepeat => step3::step("page 1 0x01[3] = 1 IIC_repeat (Table 3)", rmw_demod(rtl, IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT_TABLE3, IIC_REPEAT_BIT_TABLE3)),
+            LowItem::TunerPower => step3::step(
+                "GPIO3: GPD[3]=0 output, GPOE[3]=1, GPO[3]=0 tuner power on (Tables 16-19)",
+                (|| {
+                    let a = step3::rmw_sys8(rtl, GPD, GPIO_TUNER_POWER, 0)?;
+                    let b = step3::rmw_sys8(rtl, GPOE, 0, GPIO_TUNER_POWER)?;
+                    let c = step3::rmw_sys8(rtl, GPO, GPIO_TUNER_POWER, 0)?;
+                    std::thread::sleep(Duration::from_millis(50));
+                    Ok(J::obj()
+                        .with("GPD", a)
+                        .with("GPOE", b)
+                        .with("GPO", c)
+                        .with("settle_ms", 50))
+                })(),
+            ),
+            LowItem::IicRepeat => step3::step(
+                "page 1 0x01[3] = 1 IIC_repeat (Table 3)",
+                rmw_demod(
+                    rtl,
+                    IIC_REPEAT_PAGE,
+                    IIC_REPEAT_OFF,
+                    IIC_REPEAT_BIT_TABLE3,
+                    IIC_REPEAT_BIT_TABLE3,
+                ),
+            ),
             LowItem::AdEnIf => step3::step(
                 "page 0 0x08[7:6] = 01: AD_EN_reg = 0, AD_EN_reg1 = 1 (Table 4, IF mode 9.1)",
-                rmw_demod(rtl, AD_EN_PAGE, AD_EN_OFF, AD_EN_REG | AD_EN_REG1, AD_EN_REG1),
+                rmw_demod(
+                    rtl,
+                    AD_EN_PAGE,
+                    AD_EN_OFF,
+                    AD_EN_REG | AD_EN_REG1,
+                    AD_EN_REG1,
+                ),
             ),
-            LowItem::EnBbinOff => step3::step("page 1 0xB1[0] = 0 en_bbin (IF mode 9.1)", rmw_demod(rtl, BBIN_PAGE, BBIN_OFF, EN_BBIN, 0)),
+            LowItem::EnBbinOff => step3::step(
+                "page 1 0xB1[0] = 0 en_bbin (IF mode 9.1)",
+                rmw_demod(rtl, BBIN_PAGE, BBIN_OFF, EN_BBIN, 0),
+            ),
             LowItem::IfFreq => {
                 let (b, what) = if dab {
-                    (dab_pset_bytes(), format!("pset_iffreq = {DAB_PSET_IFFREQ} = 0x2FB814, the DAB example (9.3, p. 19)"))
+                    (
+                        dab_pset_bytes(),
+                        format!(
+                            "pset_iffreq = {DAB_PSET_IFFREQ} = 0x2FB814, the DAB example (9.3, p. 19)"
+                        ),
+                    )
                 } else {
-                    (tuner::pset_iffreq_bytes(d.if_hz), format!("pset_iffreq = {} for {} Hz (Table 6, 9.3)", tuner::pset_iffreq(d.if_hz), d.if_hz))
+                    (
+                        tuner::pset_iffreq_bytes(d.if_hz),
+                        format!(
+                            "pset_iffreq = {} for {} Hz (Table 6, 9.3)",
+                            tuner::pset_iffreq(d.if_hz),
+                            d.if_hz
+                        ),
+                    )
                 };
-                step3::step(&what, (|| {
-                    let x = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB, 0x3F, b[0])?;
-                    let y = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 1, 0xFF, b[1])?;
-                    let z = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 2, 0xFF, b[2])?;
-                    Ok(J::Arr(vec![x, y, z]))
-                })())
+                step3::step(
+                    &what,
+                    (|| {
+                        let x = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB, 0x3F, b[0])?;
+                        let y = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 1, 0xFF, b[1])?;
+                        let z = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 2, 0xFF, b[2])?;
+                        Ok(J::Arr(vec![x, y, z]))
+                    })(),
+                )
             }
-            LowItem::SpecInv => step3::step(&format!("page 1 0x15[0] = {} Spec_inv (Table 6, 9.3)", d.spec_inv as u8), rmw_demod(rtl, 1, 0x15, 0x01, d.spec_inv as u8)),
-            LowItem::AgcLoops => step3::step("page 1 0x04[7:5] = 1 1 0: en_if_agc, en_rf_agc, aagc_hold (Table 2)", rmw_demod(rtl, 1, 0x04, 0xE0, 0xC0)),
-            LowItem::Dagc if dab => step3::step("page 1 0x11[0] = 0 en_dagc: '0: Disable DAGC' (Table 10)", rmw_demod(rtl, 1, 0x11, 0x01, 0x00)),
-            LowItem::Dagc => step3::step("page 1 0x11[0] = 1 en_dagc (Table 10)", rmw_demod(rtl, 1, 0x11, 0x01, 0x01)),
+            LowItem::SpecInv => step3::step(
+                &format!(
+                    "page 1 0x15[0] = {} Spec_inv (Table 6, 9.3)",
+                    d.spec_inv as u8
+                ),
+                rmw_demod(rtl, 1, 0x15, 0x01, d.spec_inv as u8),
+            ),
+            LowItem::AgcLoops => step3::step(
+                "page 1 0x04[7:5] = 1 1 0: en_if_agc, en_rf_agc, aagc_hold (Table 2)",
+                rmw_demod(rtl, 1, 0x04, 0xE0, 0xC0),
+            ),
+            LowItem::Dagc if dab => step3::step(
+                "page 1 0x11[0] = 0 en_dagc: '0: Disable DAGC' (Table 10)",
+                rmw_demod(rtl, 1, 0x11, 0x01, 0x00),
+            ),
+            LowItem::Dagc => step3::step(
+                "page 1 0x11[0] = 1 en_dagc (Table 10)",
+                rmw_demod(rtl, 1, 0x11, 0x01, 0x01),
+            ),
             LowItem::AgcPolarity => step3::step(
-                &format!("page 0 0x0E[1:0] = polar_rf_agc {}, polar_if_agc {} (Table 2)", d.polar_rf_agc as u8, d.polar_if_agc as u8),
-                rmw_demod(rtl, 0, 0x0E, 0x03, (d.polar_rf_agc as u8) << 1 | d.polar_if_agc as u8),
+                &format!(
+                    "page 0 0x0E[1:0] = polar_rf_agc {}, polar_if_agc {} (Table 2)",
+                    d.polar_rf_agc as u8, d.polar_if_agc as u8
+                ),
+                rmw_demod(
+                    rtl,
+                    0,
+                    0x0E,
+                    0x03,
+                    (d.polar_rf_agc as u8) << 1 | d.polar_if_agc as u8,
+                ),
             ),
             LowItem::Rsamp => {
-                let all_but: Vec<Item> = step3::ITEMS.into_iter().filter(|i| *i != Item::Rsamp).collect();
+                let all_but: Vec<Item> = step3::ITEMS
+                    .into_iter()
+                    .filter(|i| *i != Item::Rsamp)
+                    .collect();
                 step3::apply_baseline(rtl, rate, &all_but)
             }
             LowItem::TunerImage => {
@@ -744,21 +982,32 @@ fn low_item(rtl: &Rtl, item: LowItem, rate: f64, dab: bool) -> J {
                 std::thread::sleep(Duration::from_millis(10));
                 let lock = tuner::read_status(rtl).map(|s| {
                     let v = s[2] & 0x7F;
-                    J::obj().with("status", tuner::status_record(&s)).with("vco_indicator_in_70_127", VCO_INDICATOR_LOCKED.contains(&v))
+                    J::obj()
+                        .with("status", tuner::status_record(&s))
+                        .with("vco_indicator_in_70_127", VCO_INDICATOR_LOCKED.contains(&v))
                 });
                 J::obj()
-                    .with("write", "tuner image, vagc configuration, 300 MHz RF (findings 4a-4e)")
+                    .with(
+                        "write",
+                        "tuner image, vagc configuration, 300 MHz RF (findings 4a-4e)",
+                    )
                     .with("config", Config::Vagc.name())
                     .with("rf_hz", LOWIF_RF_HZ)
                     .with("front", front.record())
                     .with("pll", pll.record())
                     .with("image", tuner::image_record(&img))
                     .with("applied", applied)
-                    .with("lock_check_after_10_ms", lock.unwrap_or_else(|e| J::from(format!("error: {e}"))))
+                    .with(
+                        "lock_check_after_10_ms",
+                        lock.unwrap_or_else(|e| J::from(format!("error: {e}"))),
+                    )
             }
             LowItem::EpaMaxPkt | LowItem::EpaCfg | LowItem::EpaFifoReset | LowItem::Dma => {
                 let name = format!("{item:?}");
-                let all_but: Vec<Item> = step3::ITEMS.into_iter().filter(|i| format!("{i:?}") != name).collect();
+                let all_but: Vec<Item> = step3::ITEMS
+                    .into_iter()
+                    .filter(|i| format!("{i:?}") != name)
+                    .collect();
                 step3::apply_baseline(rtl, rate, &all_but)
             }
         }
@@ -798,7 +1047,10 @@ pub const ZERO_OPEN_ITEMS: [&str; 16] = [
 /// as zero-if, and the path held open.
 fn apply_zero_if_open(rtl: &Rtl, rate: f64, skip: &[String]) -> J {
     let mut log = J::Arr(Vec::new());
-    for name in ZERO_OPEN_ITEMS.into_iter().filter(|n| !skip.iter().any(|s| s == n)) {
+    for name in ZERO_OPEN_ITEMS
+        .into_iter()
+        .filter(|n| !skip.iter().any(|s| s == n))
+    {
         let rec = match name {
             "DemodCtl" => low_item(rtl, LowItem::DemodCtl, rate, false),
             "TunerPower" => low_item(rtl, LowItem::TunerPower, rate, false),
@@ -815,13 +1067,29 @@ fn apply_zero_if_open(rtl: &Rtl, rate: f64, skip: &[String]) -> J {
             "EpaCfg" => low_item(rtl, LowItem::EpaCfg, rate, false),
             "EpaFifoReset" => low_item(rtl, LowItem::EpaFifoReset, rate, false),
             "Dma" => low_item(rtl, LowItem::Dma, rate, false),
-            _ => step3::step("page 0 0x07[7] = 1: the endpoint data path open (data/step3-confirm-lowif-p0-07-bc.json)", rmw_demod(rtl, OPEN_PATH_PAGE, OPEN_PATH_OFF, OPEN_PATH_BIT, OPEN_PATH_BIT)),
+            _ => step3::step(
+                "page 0 0x07[7] = 1: the endpoint data path open (data/step3-confirm-lowif-p0-07-bc.json)",
+                rmw_demod(
+                    rtl,
+                    OPEN_PATH_PAGE,
+                    OPEN_PATH_OFF,
+                    OPEN_PATH_BIT,
+                    OPEN_PATH_BIT,
+                ),
+            ),
         };
         log.push(J::obj().with("item", name).with("record", rec));
     }
     // Not an item: Spec_inv / En_aci (page 1 0x15) are left as found (the
     // zero-IF baseline does not write them); recorded for the header.
-    log.push(J::obj().with("read_only", "page 1 0x15 (Spec_inv [0], En_aci [1]) as found, not written").with("value", rtl.demod_read8(1, 0x15).ok().map(hex8)));
+    log.push(
+        J::obj()
+            .with(
+                "read_only",
+                "page 1 0x15 (Spec_inv [0], En_aci [1]) as found, not written",
+            )
+            .with("value", rtl.demod_read8(1, 0x15).ok().map(hex8)),
+    );
     log
 }
 
@@ -833,20 +1101,55 @@ fn zero_if_open_disturbed(rtl: &Rtl, rate: f64) -> Vec<String> {
         }
     };
     let want = DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE;
-    check("DEMOD_CTL", rtl.sys_read8(DEMOD_CTL).ok().map(|v| v & want == want));
-    check("AD_EN = 11", rtl.demod_read8(AD_EN_PAGE, AD_EN_OFF).ok().map(|v| v & (AD_EN_REG | AD_EN_REG1) == AD_EN_REG | AD_EN_REG1));
-    check("en_bbin = 1", rtl.demod_read8(BBIN_PAGE, BBIN_OFF).ok().map(|v| v & EN_BBIN == EN_BBIN));
-    check("IIC_repeat", rtl.demod_read8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF).ok().map(|v| v & IIC_REPEAT_BIT_TABLE3 != 0));
-    check("pset_iffreq = 0", rtl.demod_read(IFFREQ_PAGE, IFFREQ_MSB, 3).ok().map(|v| v[0] & 0x3F == 0 && v[1] == 0 && v[2] == 0));
+    check(
+        "DEMOD_CTL",
+        rtl.sys_read8(DEMOD_CTL).ok().map(|v| v & want == want),
+    );
+    check(
+        "AD_EN = 11",
+        rtl.demod_read8(AD_EN_PAGE, AD_EN_OFF)
+            .ok()
+            .map(|v| v & (AD_EN_REG | AD_EN_REG1) == AD_EN_REG | AD_EN_REG1),
+    );
+    check(
+        "en_bbin = 1",
+        rtl.demod_read8(BBIN_PAGE, BBIN_OFF)
+            .ok()
+            .map(|v| v & EN_BBIN == EN_BBIN),
+    );
+    check(
+        "IIC_repeat",
+        rtl.demod_read8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF)
+            .ok()
+            .map(|v| v & IIC_REPEAT_BIT_TABLE3 != 0),
+    );
+    check(
+        "pset_iffreq = 0",
+        rtl.demod_read(IFFREQ_PAGE, IFFREQ_MSB, 3)
+            .ok()
+            .map(|v| v[0] & 0x3F == 0 && v[1] == 0 && v[2] == 0),
+    );
     let word = (rsamp_ratio(rate) & ((1 << RSAMP_BITS) - 1)) << RSAMP_SHIFT;
     let b = word.to_be_bytes();
     let masks = [0x0F, 0xFF, 0xFF, 0xFC];
-    check("rsamp_ratio", rtl.demod_read(RSAMP_PAGE, RSAMP_MSB, 4).ok().map(|v| (0..4).all(|k| v[k] & masks[k] == b[k] & masks[k])));
+    check(
+        "rsamp_ratio",
+        rtl.demod_read(RSAMP_PAGE, RSAMP_MSB, 4)
+            .ok()
+            .map(|v| (0..4).all(|k| v[k] & masks[k] == b[k] & masks[k])),
+    );
     check(
         "tuner R0 = 0x96, R2 in 70..=127",
-        tuner::read_status(rtl).ok().map(|s| s[0] == TUNER_R0_CHECK && VCO_INDICATOR_LOCKED.contains(&(s[2] & 0x7F))),
+        tuner::read_status(rtl)
+            .ok()
+            .map(|s| s[0] == TUNER_R0_CHECK && VCO_INDICATOR_LOCKED.contains(&(s[2] & 0x7F))),
     );
-    check("page 0 0x07[7] = 1", rtl.demod_read8(OPEN_PATH_PAGE, OPEN_PATH_OFF).ok().map(|v| v & OPEN_PATH_BIT != 0));
+    check(
+        "page 0 0x07[7] = 1",
+        rtl.demod_read8(OPEN_PATH_PAGE, OPEN_PATH_OFF)
+            .ok()
+            .map(|v| v & OPEN_PATH_BIT != 0),
+    );
     bad
 }
 
@@ -858,23 +1161,57 @@ fn low_if_disturbed(rtl: &Rtl, rate: f64, dab: bool) -> Vec<String> {
         }
     };
     let want = DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE;
-    check("DEMOD_CTL", rtl.sys_read8(DEMOD_CTL).ok().map(|v| v & want == want));
-    check("AD_EN = 01", rtl.demod_read8(AD_EN_PAGE, AD_EN_OFF).ok().map(|v| v & (AD_EN_REG | AD_EN_REG1) == AD_EN_REG1));
-    check("en_bbin = 0", rtl.demod_read8(BBIN_PAGE, BBIN_OFF).ok().map(|v| v & EN_BBIN == 0));
-    check("IIC_repeat", rtl.demod_read8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF).ok().map(|v| v & IIC_REPEAT_BIT_TABLE3 != 0));
-    check("Spec_inv = 1", rtl.demod_read8(1, 0x15).ok().map(|v| v & 1 == 1));
-    let p = if dab { dab_pset_bytes() } else { tuner::pset_iffreq_bytes(tuner::IF_HZ) };
+    check(
+        "DEMOD_CTL",
+        rtl.sys_read8(DEMOD_CTL).ok().map(|v| v & want == want),
+    );
+    check(
+        "AD_EN = 01",
+        rtl.demod_read8(AD_EN_PAGE, AD_EN_OFF)
+            .ok()
+            .map(|v| v & (AD_EN_REG | AD_EN_REG1) == AD_EN_REG1),
+    );
+    check(
+        "en_bbin = 0",
+        rtl.demod_read8(BBIN_PAGE, BBIN_OFF)
+            .ok()
+            .map(|v| v & EN_BBIN == 0),
+    );
+    check(
+        "IIC_repeat",
+        rtl.demod_read8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF)
+            .ok()
+            .map(|v| v & IIC_REPEAT_BIT_TABLE3 != 0),
+    );
+    check(
+        "Spec_inv = 1",
+        rtl.demod_read8(1, 0x15).ok().map(|v| v & 1 == 1),
+    );
+    let p = if dab {
+        dab_pset_bytes()
+    } else {
+        tuner::pset_iffreq_bytes(tuner::IF_HZ)
+    };
     check(
         "pset_iffreq",
-        rtl.demod_read(IFFREQ_PAGE, IFFREQ_MSB, 3).ok().map(|v| v[0] & 0x3F == p[0] & 0x3F && v[1] == p[1] && v[2] == p[2]),
+        rtl.demod_read(IFFREQ_PAGE, IFFREQ_MSB, 3)
+            .ok()
+            .map(|v| v[0] & 0x3F == p[0] & 0x3F && v[1] == p[1] && v[2] == p[2]),
     );
     let word = (rsamp_ratio(rate) & ((1 << RSAMP_BITS) - 1)) << RSAMP_SHIFT;
     let b = word.to_be_bytes();
     let masks = [0x0F, 0xFF, 0xFF, 0xFC];
-    check("rsamp_ratio", rtl.demod_read(RSAMP_PAGE, RSAMP_MSB, 4).ok().map(|v| (0..4).all(|k| v[k] & masks[k] == b[k] & masks[k])));
+    check(
+        "rsamp_ratio",
+        rtl.demod_read(RSAMP_PAGE, RSAMP_MSB, 4)
+            .ok()
+            .map(|v| (0..4).all(|k| v[k] & masks[k] == b[k] & masks[k])),
+    );
     check(
         "tuner R0 = 0x96, R2 in 70..=127",
-        tuner::read_status(rtl).ok().map(|s| s[0] == TUNER_R0_CHECK && VCO_INDICATOR_LOCKED.contains(&(s[2] & 0x7F))),
+        tuner::read_status(rtl)
+            .ok()
+            .map(|s| s[0] == TUNER_R0_CHECK && VCO_INDICATOR_LOCKED.contains(&(s[2] & 0x7F))),
     );
     bad
 }
@@ -882,25 +1219,64 @@ fn low_if_disturbed(rtl: &Rtl, rate: f64, dab: bool) -> Vec<String> {
 fn apply_power_on(rtl: &Rtl, skip: &[String]) -> J {
     let mut log = J::Arr(Vec::new());
     if !skip.iter().any(|s| s == POWER_ON_ITEMS[0]) {
-        log.push(step3::step("DEMOD_CTL |= PLL enable only (Table 15; findings 1C)", step3::rmw_sys8(rtl, DEMOD_CTL, 0, DEMOD_CTL_PLL_EN)).with("item", POWER_ON_ITEMS[0]));
+        log.push(
+            step3::step(
+                "DEMOD_CTL |= PLL enable only (Table 15; findings 1C)",
+                step3::rmw_sys8(rtl, DEMOD_CTL, 0, DEMOD_CTL_PLL_EN),
+            )
+            .with("item", POWER_ON_ITEMS[0]),
+        );
     }
     if skip.iter().any(|s| s == POWER_ON_ITEMS[1]) {
         return log;
     }
     let (_, ep_addr, mps) = rtl.bulk_in().unwrap_or((0, 0, 0));
     let cfg_mask = EPA_CFG_ENABLE | EPA_CFG_TYPE_MASK | EPA_CFG_NUM_MASK | EPA_CFG_ISO_MASK;
-    let cfg_want = EPA_CFG_ENABLE | EPA_CFG_TYPE_BULK << EPA_CFG_TYPE_SHIFT | (ep_addr as u32 & EPA_CFG_NUM_MASK);
+    let cfg_want = EPA_CFG_ENABLE
+        | EPA_CFG_TYPE_BULK << EPA_CFG_TYPE_SHIFT
+        | (ep_addr as u32 & EPA_CFG_NUM_MASK);
     let regs: [(&str, u16, u32, u32); 4] = [
-        ("USB_SYSCTL[0] DMA = 1 (Table 30)", USB_SYSCTL, USB_SYSCTL_DMA_EN, USB_SYSCTL_DMA_EN),
-        ("USB_EPA_CFG enable, bulk, iso 00, endpoint number (Table 31)", USB_EPA_CFG, cfg_mask, cfg_want),
-        ("USB_EPA_MAXPKT = descriptor wMaxPacketSize (Table 33)", USB_EPA_MAXPKT, EPA_MAXPKT_MASK, mps as u32 & EPA_MAXPKT_MASK),
-        ("USB_EPA_CTL stall = 0 (Table 32)", USB_EPA_CTL, EPA_CTL_STALL, 0),
+        (
+            "USB_SYSCTL[0] DMA = 1 (Table 30)",
+            USB_SYSCTL,
+            USB_SYSCTL_DMA_EN,
+            USB_SYSCTL_DMA_EN,
+        ),
+        (
+            "USB_EPA_CFG enable, bulk, iso 00, endpoint number (Table 31)",
+            USB_EPA_CFG,
+            cfg_mask,
+            cfg_want,
+        ),
+        (
+            "USB_EPA_MAXPKT = descriptor wMaxPacketSize (Table 33)",
+            USB_EPA_MAXPKT,
+            EPA_MAXPKT_MASK,
+            mps as u32 & EPA_MAXPKT_MASK,
+        ),
+        (
+            "USB_EPA_CTL stall = 0 (Table 32)",
+            USB_EPA_CTL,
+            EPA_CTL_STALL,
+            0,
+        ),
     ];
     for (name, off, mask, want) in regs {
         let rec = match rtl.usb_read32(off) {
             Err(e) => J::obj().with("check", name).with("error", e.to_string()),
-            Ok(v) if v & mask == want => J::obj().with("check", name).with("read", hex32(v)).with("as_needed", true).with("written", false),
-            Ok(v) => J::obj().with("check", name).with("read", hex32(v)).with("as_needed", false).with("written", step3::step(name, step3::rmw_usb32(rtl, off, mask, want))),
+            Ok(v) if v & mask == want => J::obj()
+                .with("check", name)
+                .with("read", hex32(v))
+                .with("as_needed", true)
+                .with("written", false),
+            Ok(v) => J::obj()
+                .with("check", name)
+                .with("read", hex32(v))
+                .with("as_needed", false)
+                .with(
+                    "written",
+                    step3::step(name, step3::rmw_usb32(rtl, off, mask, want)),
+                ),
         };
         log.push(rec.with("item", POWER_ON_ITEMS[1]));
     }

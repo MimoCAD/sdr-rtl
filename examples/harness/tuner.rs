@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use crate::json::{J, hex8, hex_bytes};
+use crate::json::{J, hex_bytes, hex8};
 use crate::regs::*;
 use crate::usb::{self, Rtl};
 
@@ -52,12 +52,19 @@ pub fn divider(sel_div: u8) -> Option<u32> {
 /// 71-77 MHz for code 100 and 29-38 MHz for code 101, i.e. an IF below
 /// LOs of 79.2 and 39.6 MHz = f_VCO / 32 and / 64). Codes 110 and 111
 /// answered only at 623-632 MHz (f_VCO / 4) at that Nint and not along
-/// the Nint range in the sweep: not dividers the driver can use.
-pub const MEASURED_DIVIDERS: [(u8, u32); 2] = [(0b100, 32), (0b101, 64)];
+/// the Nint range in the sweep: not dividers the driver can use. Code 011
+/// divides by 16, not the document's /1 (findings 10.5,
+/// data/step10-5-seldiv.json).
+pub const MEASURED_DIVIDERS: [(u8, u32); 3] = [(0b011, 16), (0b100, 32), (0b101, 64)];
 
-/// A documented or measured divider for a code.
+/// A code's divider: the measured one where the bench has measured it
+/// (it overrides the document), else the documented one.
 pub fn divider_any(sel_div: u8) -> Option<u32> {
-    divider(sel_div).or_else(|| MEASURED_DIVIDERS.iter().find(|(c, _)| *c == sel_div).map(|(_, d)| *d))
+    MEASURED_DIVIDERS
+        .iter()
+        .find(|(c, _)| *c == sel_div)
+        .map(|(_, d)| *d)
+        .or_else(|| divider(sel_div))
 }
 
 /// The divider values the PLL sweep tries for an undescribed SEL_DIV code:
@@ -93,7 +100,10 @@ pub const IF_CANDIDATES_HZ: [(&str, f64); 6] = [
     ("ATSC / ISDB-T 6 MHz (rows 1, 7)", 4.063e6),
     ("DVB-T 7 MHz (row 3)", 4.07e6),
     ("DVB-T 7/8 MHz, DTMB (rows 4, 5, 8)", 4.57e6),
-    ("the demodulator's power-on pset_iffreq, 32/7 MHz", 32.0e6 / 7.0),
+    (
+        "the demodulator's power-on pset_iffreq, 32/7 MHz",
+        32.0e6 / 7.0,
+    ),
     ("zero IF (9.3 example)", 0.0),
 ];
 /// The IF used unless a step says otherwise: 4.57 MHz, the IF printed
@@ -134,7 +144,9 @@ impl Pll {
     /// The integer and fractional words for `lo_hz` with a documented or
     /// measured divider code: Nint + Nfra = f_LO * div / (2 f_ref).
     pub fn program(lo_hz: f64, sel_div: u8, ref_div2: bool) -> Result<Pll, String> {
-        let div = divider_any(sel_div).ok_or(format!("SEL_DIV {sel_div:03b} has no documented or measured divider"))?;
+        let div = divider_any(sel_div).ok_or(format!(
+            "SEL_DIV {sel_div:03b} has no documented or measured divider"
+        ))?;
         Pll::program_with(lo_hz, div, sel_div, ref_div2)
     }
 
@@ -154,7 +166,12 @@ impl Pll {
                 f_ref(ref_div2)
             ));
         }
-        Ok(Pll { sel_div, ref_div2, nint: nint as u16, sdm: sdm as u16 })
+        Ok(Pll {
+            sel_div,
+            ref_div2,
+            nint: nint as u16,
+            sdm: sdm as u16,
+        })
     }
 
     /// R16: SEL_DIV[7:5], REF_DIV2[4], fixed 0 1 at [3:2], CAPX[1:0] = 00
@@ -184,6 +201,7 @@ impl Pll {
         J::obj()
             .with("sel_div", self.sel_div)
             .with("divider", divider(self.sel_div))
+            .with("divider_used", divider_any(self.sel_div))
             .with("ref_div2", self.ref_div2)
             .with("f_ref_hz", f_ref(self.ref_div2))
             .with("nint", self.nint)
@@ -376,32 +394,89 @@ pub const FIXED: [(u8, u8, u8); 19] = [
 /// Why each register holds what it holds, for the records. Fixed cells
 /// are Table 1-2's; the rest are choices from Table 1-3's meanings.
 pub const IMAGE_NOTES: [(u8, &str); 27] = [
-    (5, "PWD_LT = 1 loop-through off (the board has no loop-through output; [R820T] Table 1-1 lists it as a standby current); bit 6 fixed 0; PWD_LNA1 = 0 on; LNA_GAIN_MODE, LNA_GAIN per Front"),
-    (6, "PWD_PDET1 (0 on / 1 off) and PWD_PDET3 (0 off / 1 on) per Front; FILT_3DB = 0 (0 dB, no extra filter gain); bits 4:3 fixed 1 0; PW_LNA = 000 max current (the 3.5 dB noise figure is specified at max gain, [R820T] Table 1-2)"),
-    (7, "bit 7 fixed 0; PWD_MIX = 1 on; PW0_MIX = 1 the document's 'normal current'; MIXGAIN_MODE, MIX_GAIN per Front"),
-    (8, "PWD_AMP = 1 mixer buffer on; PW0_AMP = 0 high current (the buffer drives the IF filter); IMR_G = 32, the middle of 0..=63 (no documented value; an image-rejection calibration is a later search)"),
-    (9, "PWD_IFFILT = 0 IF filter on; PW1_IFFILT = 0 high current; IMR_P = 32, the middle of 0..=63"),
-    (10, "PWD_FILT = 1 channel filter on; PW_FILT = 00 highest power; bit 4 fixed 1; FILT_CODE per Front"),
-    (11, "bit 7 fixed 0; FILT_BW per Front; bit 4 fixed 0; HPF per Front"),
-    (12, "bit 7 fixed 1; PWD_VGA = 1 on; bit 5 fixed 1; VGA_MODE, VGA_CODE per Front"),
-    (13, "LNA_VTH_H = 1010 (about 1.34 V), LNA_VTH_L = 0101 (about 0.84 V): a window symmetric about the middle of the documented 0.34-1.94 V range, high above low; used only when LNA gain is auto"),
+    (
+        5,
+        "PWD_LT = 1 loop-through off (the board has no loop-through output; [R820T] Table 1-1 lists it as a standby current); bit 6 fixed 0; PWD_LNA1 = 0 on; LNA_GAIN_MODE, LNA_GAIN per Front",
+    ),
+    (
+        6,
+        "PWD_PDET1 (0 on / 1 off) and PWD_PDET3 (0 off / 1 on) per Front; FILT_3DB = 0 (0 dB, no extra filter gain); bits 4:3 fixed 1 0; PW_LNA = 000 max current (the 3.5 dB noise figure is specified at max gain, [R820T] Table 1-2)",
+    ),
+    (
+        7,
+        "bit 7 fixed 0; PWD_MIX = 1 on; PW0_MIX = 1 the document's 'normal current'; MIXGAIN_MODE, MIX_GAIN per Front",
+    ),
+    (
+        8,
+        "PWD_AMP = 1 mixer buffer on; PW0_AMP = 0 high current (the buffer drives the IF filter); IMR_G = 32, the middle of 0..=63 (no documented value; an image-rejection calibration is a later search)",
+    ),
+    (
+        9,
+        "PWD_IFFILT = 0 IF filter on; PW1_IFFILT = 0 high current; IMR_P = 32, the middle of 0..=63",
+    ),
+    (
+        10,
+        "PWD_FILT = 1 channel filter on; PW_FILT = 00 highest power; bit 4 fixed 1; FILT_CODE per Front",
+    ),
+    (
+        11,
+        "bit 7 fixed 0; FILT_BW per Front; bit 4 fixed 0; HPF per Front",
+    ),
+    (
+        12,
+        "bit 7 fixed 1; PWD_VGA = 1 on; bit 5 fixed 1; VGA_MODE, VGA_CODE per Front",
+    ),
+    (
+        13,
+        "LNA_VTH_H = 1010 (about 1.34 V), LNA_VTH_L = 0101 (about 0.84 V): a window symmetric about the middle of the documented 0.34-1.94 V range, high above low; used only when LNA gain is auto",
+    ),
     (14, "MIX_VTH_H = 1010, MIX_VTH_L = 0101, as R13"),
-    (15, "bits 7:5 fixed 0 0 1; CLK_OUT_ENB = 0 clock output on: writing 1 (clock output off) made the dongle stop answering every USB request until a power cycle (data/step4-meter-run1-aborted-at-R15.json: R5-R14 accepted, R15 and everything after kIOReturnNotResponding), so on this board the demodulator is clocked from the tuner's clock output ([R820T] 6.3 'Share Crystal'; [RTL2832U] 9.10 'oscillator output should be connected to the XI pin'); confirmed by harness clkout-check; bits 3:2 fixed 1 0; CLK_AGC_ENB = 0 internal AGC clock on (the detectors need it in auto mode); bit 0 fixed 0"),
-    (16, "SEL_DIV, REF_DIV2 per Pll; bits 3:2 fixed 0 1; CAPX = 00 no internal crystal capacitance (the crystal's load is on the board, [R820T] Table 6-1)"),
-    (17, "PW_LDO_A = 10 (2.0 V, the middle of the three documented voltages); bits 5:0 fixed 0 0 0 0 1 1"),
-    (18, "bit 7 fixed 1; bits 6:4 fixed 0; PW_SDM per Front (undescribed; 0 unless a sweep says otherwise); bits 2:0 fixed 0"),
+    (
+        15,
+        "bits 7:5 fixed 0 0 1; CLK_OUT_ENB = 0 clock output on: writing 1 (clock output off) made the dongle stop answering every USB request until a power cycle (data/step4-meter-run1-aborted-at-R15.json: R5-R14 accepted, R15 and everything after kIOReturnNotResponding), so on this board the demodulator is clocked from the tuner's clock output ([R820T] 6.3 'Share Crystal'; [RTL2832U] 9.10 'oscillator output should be connected to the XI pin'); confirmed by harness clkout-check; bits 3:2 fixed 1 0; CLK_AGC_ENB = 0 internal AGC clock on (the detectors need it in auto mode); bit 0 fixed 0",
+    ),
+    (
+        16,
+        "SEL_DIV, REF_DIV2 per Pll; bits 3:2 fixed 0 1; CAPX = 00 no internal crystal capacitance (the crystal's load is on the board, [R820T] Table 6-1)",
+    ),
+    (
+        17,
+        "PW_LDO_A = 10 (2.0 V, the middle of the three documented voltages); bits 5:0 fixed 0 0 0 0 1 1",
+    ),
+    (
+        18,
+        "bit 7 fixed 1; bits 6:4 fixed 0; PW_SDM per Front (undescribed; 0 unless a sweep says otherwise); bits 2:0 fixed 0",
+    ),
     (19, "all cells fixed 0"),
     (20, "SI2C[7:6], NI2C[5:0] from Nint (Pll)"),
     (21, "SDM_IN[8:1] (Pll)"),
     (22, "SDM_IN[16:9] (Pll)"),
-    (23, "PW_LDO_D = 00 (1.8 V, 8 mA: the lower documented voltage at the higher current; 11 is off); bits 5:4 fixed 1 1; OPEN_D = 0 High-Z (not driving an undescribed open-drain pin); bits 2:0 fixed 1 0 0"),
+    (
+        23,
+        "PW_LDO_D = 00 (1.8 V, 8 mA: the lower documented voltage at the higher current; 11 is off); bits 5:4 fixed 1 1; OPEN_D = 0 High-Z (not driving an undescribed open-drain pin); bits 2:0 fixed 1 0 0",
+    ),
     (24, "bits 7:6 fixed 0 1; the unspecified cells 0"),
-    (25, "PWD_RFFILT = 1 RF filter on; bits 6:5 fixed 0 0; SW_AGC = 0 agc_in; bits 3:2 fixed 1 1; the unspecified cells 0"),
-    (26, "RFMUX per Front; bits 5:4 fixed 1 0; PLL_AUTO_CLK = 00 128 kHz (the fastest documented auto-tune clock); RFFILT per Front"),
+    (
+        25,
+        "PWD_RFFILT = 1 RF filter on; bits 6:5 fixed 0 0; SW_AGC = 0 agc_in; bits 3:2 fixed 1 1; the unspecified cells 0",
+    ),
+    (
+        26,
+        "RFMUX per Front; bits 5:4 fixed 1 0; PLL_AUTO_CLK = 00 128 kHz (the fastest documented auto-tune clock); RFFILT per Front",
+    ),
     (27, "TF_NCH, TF_LP per Front"),
-    (28, "PDET3_GAIN = 0111, the middle of 0 highest ..= 15 lowest; bits 3:2 fixed 0 1; bit 1 unspecified 0; bit 0 fixed 0"),
-    (29, "bits 7:6 fixed 1 1; PDET1_GAIN = 011 (the middle of the 3-bit field printed 0 highest .. 15 lowest); PDET2_GAIN = 100 (the middle of 0 lowest ..= 7 highest)"),
-    (30, "bit 7 fixed 0 (Table 1-2); bit 6 per Front (Table 1-2 fixes 1, Table 1-3 reads FILTER_EXT); PDET_CLK = 000000, the minimum in both the 5-bit and the 6-bit reading of the contradiction"),
+    (
+        28,
+        "PDET3_GAIN = 0111, the middle of 0 highest ..= 15 lowest; bits 3:2 fixed 0 1; bit 1 unspecified 0; bit 0 fixed 0",
+    ),
+    (
+        29,
+        "bits 7:6 fixed 1 1; PDET1_GAIN = 011 (the middle of the 3-bit field printed 0 highest .. 15 lowest); PDET2_GAIN = 100 (the middle of 0 lowest ..= 7 highest)",
+    ),
+    (
+        30,
+        "bit 7 fixed 0 (Table 1-2); bit 6 per Front (Table 1-2 fixes 1, Table 1-3 reads FILTER_EXT); PDET_CLK = 000000, the minimum in both the 5-bit and the 6-bit reading of the contradiction",
+    ),
     (31, "bits 7:2 fixed 1 1 0 0 0 0; the unspecified cells 0"),
 ];
 
@@ -445,14 +520,24 @@ pub fn fixed_violations(img: &[u8; 32]) -> Vec<String> {
     FIXED
         .iter()
         .filter(|&&(reg, mask, value)| img[reg as usize] & mask != value)
-        .map(|&(reg, mask, value)| format!("R{reg}: 0x{:02X} & 0x{mask:02X} != 0x{value:02X}", img[reg as usize]))
+        .map(|&(reg, mask, value)| {
+            format!(
+                "R{reg}: 0x{:02X} & 0x{mask:02X} != 0x{value:02X}",
+                img[reg as usize]
+            )
+        })
         .collect()
 }
 
 pub fn image_record(img: &[u8; 32]) -> J {
     let mut regs = J::Arr(Vec::new());
     for (reg, note) in IMAGE_NOTES {
-        regs.push(J::obj().with("reg", reg).with("value", hex8(img[reg as usize])).with("why", note));
+        regs.push(
+            J::obj()
+                .with("reg", reg)
+                .with("value", hex8(img[reg as usize]))
+                .with("why", note),
+        );
     }
     J::obj()
         .with("source", "[R820T2] Table 1-2 fixed cells as printed; every other field a stated choice from Table 1-3")
@@ -486,7 +571,11 @@ pub fn write_image(rtl: &Rtl, img: &[u8; 32]) -> Vec<String> {
 
 /// `len` bytes from register 0, each bit-reversed ([R820T] p. 17).
 pub fn read_regs(rtl: &Rtl, len: u16) -> usb::R<Vec<u8>> {
-    Ok(rtl.tuner_get(TUNER_I2C_WRITE as u16, len)?.into_iter().map(u8::reverse_bits).collect())
+    Ok(rtl
+        .tuner_get(TUNER_I2C_WRITE as u16, len)?
+        .into_iter()
+        .map(u8::reverse_bits)
+        .collect())
 }
 
 /// R0-R4: the check byte, R1 and R4 (unspecified), R2 VCO_INDICATOR,
@@ -521,16 +610,33 @@ pub fn apply_image(rtl: &Rtl, img: &[u8; 32]) -> J {
     let back32 = read_regs(rtl, 32);
     let (readback, matches) = match &back32 {
         Ok(b) => {
-            let m: Vec<u8> = (5u8..READBACK_REGS).filter(|&r| b[r as usize] != img[r as usize]).collect();
+            let m: Vec<u8> = (5u8..READBACK_REGS)
+                .filter(|&r| b[r as usize] != img[r as usize])
+                .collect();
             let wraps = b[..16] == b[16..];
-            (hex_bytes(b), Some(J::obj().with("r5_to_r15_differ_at", J::Arr(m.into_iter().map(J::from).collect())).with("bytes_16_to_31_repeat_0_to_15", wraps)))
+            (
+                hex_bytes(b),
+                Some(
+                    J::obj()
+                        .with(
+                            "r5_to_r15_differ_at",
+                            J::Arr(m.into_iter().map(J::from).collect()),
+                        )
+                        .with("bytes_16_to_31_repeat_0_to_15", wraps),
+                ),
+            )
         }
         Err(e) => (J::from(format!("32-byte read: {e}")), None),
     };
-    let status = read_status(rtl).map(|s| status_record(&s)).unwrap_or_else(|e| J::from(format!("error: {e}")));
+    let status = read_status(rtl)
+        .map(|s| status_record(&s))
+        .unwrap_or_else(|e| J::from(format!("error: {e}")));
     J::obj()
         .with("image", hex_bytes(&img[5..]))
-        .with("write_errors", J::Arr(errors.into_iter().map(J::from).collect()))
+        .with(
+            "write_errors",
+            J::Arr(errors.into_iter().map(J::from).collect()),
+        )
         .with("readback_32", readback)
         .with("readback_check", matches)
         .with("status", status)
@@ -553,7 +659,12 @@ pub struct DemodIf {
 
 impl std::default::Default for DemodIf {
     fn default() -> DemodIf {
-        DemodIf { if_hz: IF_HZ, spec_inv: true, polar_if_agc: false, polar_rf_agc: false }
+        DemodIf {
+            if_hz: IF_HZ,
+            spec_inv: true,
+            polar_if_agc: false,
+            polar_rf_agc: false,
+        }
     }
 }
 
@@ -562,7 +673,10 @@ impl DemodIf {
         J::obj()
             .with("if_hz", self.if_hz)
             .with("pset_iffreq", pset_iffreq(self.if_hz))
-            .with("pset_iffreq_bytes", hex_bytes(&pset_iffreq_bytes(self.if_hz)))
+            .with(
+                "pset_iffreq_bytes",
+                hex_bytes(&pset_iffreq_bytes(self.if_hz)),
+            )
             .with("spec_inv", self.spec_inv)
             .with("polar_if_agc", self.polar_if_agc)
             .with("polar_rf_agc", self.polar_rf_agc)
@@ -591,7 +705,10 @@ fn rmw_sys8(rtl: &Rtl, off: u16, clear: u8, set: u8) -> Result<J, usb::Fail> {
 
 fn rmw_demod(rtl: &Rtl, page: u8, off: u8, mask: u8, value: u8) -> Result<J, usb::Fail> {
     let (old, back) = rtl.demod_rmw(page, off, mask, value)?;
-    Ok(J::obj().with("before", hex8(old)).with("after", hex8(back)).with("verified", back & mask == value & mask))
+    Ok(J::obj()
+        .with("before", hex8(old))
+        .with("after", hex8(back))
+        .with("verified", back & mask == value & mask))
 }
 
 fn step(name: &str, r: Result<J, usb::Fail>) -> J {
@@ -610,52 +727,119 @@ pub fn setup_demod(rtl: &Rtl, d: &DemodIf) -> J {
     // the tuner path needs; the ADCs feed the demodulator).
     log.push(step(
         "DEMOD_CTL |= PLL|ADC_I|ADC_Q|reset-release (Table 15)",
-        rmw_sys8(rtl, DEMOD_CTL, 0, DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE),
+        rmw_sys8(
+            rtl,
+            DEMOD_CTL,
+            0,
+            DEMOD_CTL_PLL_EN | DEMOD_CTL_ADC_I_EN | DEMOD_CTL_ADC_Q_EN | DEMOD_CTL_RESET_RELEASE,
+        ),
     ));
     // Tables 16-19, p. 29: GPIO3 output, driven 0 = tuner power on.
-    log.push(step("GPIO3: GPD[3]=0 output, GPOE[3]=1, GPO[3]=0 tuner power on (Tables 16-19)", (|| {
-        let a = rmw_sys8(rtl, GPD, GPIO_TUNER_POWER, 0)?;
-        let b = rmw_sys8(rtl, GPOE, 0, GPIO_TUNER_POWER)?;
-        let c = rmw_sys8(rtl, GPO, GPIO_TUNER_POWER, 0)?;
-        std::thread::sleep(Duration::from_millis(50));
-        Ok(J::obj().with("GPD", a).with("GPOE", b).with("GPO", c).with("settle_ms", 50))
-    })()));
+    log.push(step(
+        "GPIO3: GPD[3]=0 output, GPOE[3]=1, GPO[3]=0 tuner power on (Tables 16-19)",
+        (|| {
+            let a = rmw_sys8(rtl, GPD, GPIO_TUNER_POWER, 0)?;
+            let b = rmw_sys8(rtl, GPOE, 0, GPIO_TUNER_POWER)?;
+            let c = rmw_sys8(rtl, GPO, GPIO_TUNER_POWER, 0)?;
+            std::thread::sleep(Duration::from_millis(50));
+            Ok(J::obj()
+                .with("GPD", a)
+                .with("GPOE", b)
+                .with("GPO", c)
+                .with("settle_ms", 50))
+        })(),
+    ));
     // Table 3: IIC_repeat, the path to the tuner (step 2).
-    log.push(step("page 1 0x01[3] = 1 IIC_repeat (Table 3)", rmw_demod(rtl, IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT_TABLE3, IIC_REPEAT_BIT_TABLE3)));
+    log.push(step(
+        "page 1 0x01[3] = 1 IIC_repeat (Table 3)",
+        rmw_demod(
+            rtl,
+            IIC_REPEAT_PAGE,
+            IIC_REPEAT_OFF,
+            IIC_REPEAT_BIT_TABLE3,
+            IIC_REPEAT_BIT_TABLE3,
+        ),
+    ));
     // 9.1 IF mode: AD_EN_reg1 = 1, AD_EN_reg0 = 0, en_bbin = 0.
     log.push(step(
         "page 0 0x08[7:6] = 01: AD_EN_reg = 0, AD_EN_reg1 = 1 (Table 4, IF mode 9.1)",
-        rmw_demod(rtl, AD_EN_PAGE, AD_EN_OFF, AD_EN_REG | AD_EN_REG1, AD_EN_REG1),
+        rmw_demod(
+            rtl,
+            AD_EN_PAGE,
+            AD_EN_OFF,
+            AD_EN_REG | AD_EN_REG1,
+            AD_EN_REG1,
+        ),
     ));
-    log.push(step("page 1 0xB1[0] = 0 en_bbin (IF mode 9.1)", rmw_demod(rtl, BBIN_PAGE, BBIN_OFF, EN_BBIN, 0)));
+    log.push(step(
+        "page 1 0xB1[0] = 0 en_bbin (IF mode 9.1)",
+        rmw_demod(rtl, BBIN_PAGE, BBIN_OFF, EN_BBIN, 0),
+    ));
     // 9.3: the DDC at the IF, the spectrum inverted for a high-side LO.
     let b = pset_iffreq_bytes(d.if_hz);
-    log.push(step(&format!("pset_iffreq = {} for {} Hz (Table 6, 9.3)", pset_iffreq(d.if_hz), d.if_hz), (|| {
-        let a = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB, 0x3F, b[0])?;
-        let c = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 1, 0xFF, b[1])?;
-        let e = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 2, 0xFF, b[2])?;
-        Ok(J::Arr(vec![a, c, e]))
-    })()));
-    log.push(step(&format!("page 1 0x15[0] = {} Spec_inv (Table 6, 9.3)", d.spec_inv as u8), rmw_demod(rtl, 1, 0x15, 0x01, d.spec_inv as u8)));
+    log.push(step(
+        &format!(
+            "pset_iffreq = {} for {} Hz (Table 6, 9.3)",
+            pset_iffreq(d.if_hz),
+            d.if_hz
+        ),
+        (|| {
+            let a = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB, 0x3F, b[0])?;
+            let c = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 1, 0xFF, b[1])?;
+            let e = rmw_demod(rtl, IFFREQ_PAGE, IFFREQ_MSB + 2, 0xFF, b[2])?;
+            Ok(J::Arr(vec![a, c, e]))
+        })(),
+    ));
+    log.push(step(
+        &format!(
+            "page 1 0x15[0] = {} Spec_inv (Table 6, 9.3)",
+            d.spec_inv as u8
+        ),
+        rmw_demod(rtl, 1, 0x15, 0x01, d.spec_inv as u8),
+    ));
     // Table 7: the 8 MHz bandwidth's ratio (the reset value, written so
     // the state is known).
     let word = (RSAMP_8MHZ & ((1 << RSAMP_BITS) - 1)) << RSAMP_SHIFT;
     let rb = word.to_be_bytes();
     let masks = [0x0F, 0xFF, 0xFF, 0xFC];
-    log.push(step("rsamp_ratio = 0xC99999, 8 MHz bandwidth (Table 7)", (|| {
-        let mut v = Vec::new();
-        for k in 0..4 {
-            v.push(rmw_demod(rtl, RSAMP_PAGE, RSAMP_MSB + k as u8, masks[k], rb[k])?);
-        }
-        Ok(J::Arr(v))
-    })()));
+    log.push(step(
+        "rsamp_ratio = 0xC99999, 8 MHz bandwidth (Table 7)",
+        (|| {
+            let mut v = Vec::new();
+            for k in 0..4 {
+                v.push(rmw_demod(
+                    rtl,
+                    RSAMP_PAGE,
+                    RSAMP_MSB + k as u8,
+                    masks[k],
+                    rb[k],
+                )?);
+            }
+            Ok(J::Arr(v))
+        })(),
+    ));
     // Table 2: both analog AGC loops enabled, not held; Table 10: DAGC
     // enabled (its gain is dagc_val); Table 2: the pins' polarity.
-    log.push(step("page 1 0x04[7:5] = 1 1 0: en_if_agc, en_rf_agc, aagc_hold (Table 2)", rmw_demod(rtl, 1, 0x04, 0xE0, 0xC0)));
-    log.push(step("page 1 0x11[0] = 1 en_dagc (Table 10)", rmw_demod(rtl, 1, 0x11, 0x01, 0x01)));
     log.push(step(
-        &format!("page 0 0x0E[1:0] = polar_rf_agc {}, polar_if_agc {} (Table 2)", d.polar_rf_agc as u8, d.polar_if_agc as u8),
-        rmw_demod(rtl, 0, 0x0E, 0x03, (d.polar_rf_agc as u8) << 1 | d.polar_if_agc as u8),
+        "page 1 0x04[7:5] = 1 1 0: en_if_agc, en_rf_agc, aagc_hold (Table 2)",
+        rmw_demod(rtl, 1, 0x04, 0xE0, 0xC0),
+    ));
+    log.push(step(
+        "page 1 0x11[0] = 1 en_dagc (Table 10)",
+        rmw_demod(rtl, 1, 0x11, 0x01, 0x01),
+    ));
+    log.push(step(
+        &format!(
+            "page 0 0x0E[1:0] = polar_rf_agc {}, polar_if_agc {} (Table 2)",
+            d.polar_rf_agc as u8, d.polar_if_agc as u8
+        ),
+        rmw_demod(
+            rtl,
+            0,
+            0x0E,
+            0x03,
+            (d.polar_rf_agc as u8) << 1 | d.polar_if_agc as u8,
+        ),
     ));
     log
 }
@@ -664,7 +848,10 @@ pub fn setup_demod(rtl: &Rtl, d: &DemodIf) -> J {
 pub fn set_ddc(rtl: &Rtl, if_hz: f64, spec_inv: bool) -> Vec<String> {
     let b = pset_iffreq_bytes(if_hz);
     let mut errors = Vec::new();
-    for (k, (mask, v)) in [(0x3F, b[0]), (0xFF, b[1]), (0xFF, b[2])].into_iter().enumerate() {
+    for (k, (mask, v)) in [(0x3F, b[0]), (0xFF, b[1]), (0xFF, b[2])]
+        .into_iter()
+        .enumerate()
+    {
         match rtl.demod_rmw(IFFREQ_PAGE, IFFREQ_MSB + k as u8, mask, v) {
             Ok((_, back)) if back & mask == v & mask => {}
             Ok((_, back)) => errors.push(format!("pset_iffreq byte {k} read back 0x{back:02X}")),
@@ -681,7 +868,10 @@ pub fn set_ddc(rtl: &Rtl, if_hz: f64, spec_inv: bool) -> Vec<String> {
 /// mode and the tuner image written; the record of all of it.
 pub fn fresh(d: &DemodIf, front: &Front, pll: &Pll) -> Result<(Rtl, J), String> {
     let cyc = if crate::no_cycle() {
-        J::obj().with("skipped", "--no-cycle: the dongle was opened as found, not power-cycled")
+        J::obj().with(
+            "skipped",
+            "--no-cycle: the dongle was opened as found, not power-cycled",
+        )
     } else {
         usb::power_cycle()?
     };
@@ -692,7 +882,10 @@ pub fn fresh(d: &DemodIf, front: &Front, pll: &Pll) -> Result<(Rtl, J), String> 
     // Table 1-2: PLL locking time 5 ms max.
     std::thread::sleep(Duration::from_millis(10));
     if rtl.sys_read8(DEMOD_CTL).is_err() {
-        return Err(format!("the dongle stopped answering after the tuner image was written: {}", applied.render()));
+        return Err(format!(
+            "the dongle stopped answering after the tuner image was written: {}",
+            applied.render()
+        ));
     }
     let rec = J::obj()
         .with("power_cycle", cyc)
@@ -708,32 +901,48 @@ pub fn fresh(d: &DemodIf, front: &Front, pll: &Pll) -> Result<(Rtl, J), String> 
 /// Retune the PLL only (R16, R20-R22), wait the documented 5 ms lock
 /// time twice over, read the status; errors listed.
 pub fn retune(rtl: &Rtl, pll: &Pll) -> (Vec<String>, Option<[u8; 5]>) {
-    let errors = write_regs(rtl, &[(16, pll.r16()), (20, pll.r20()), (21, pll.r21()), (22, pll.r22())]);
+    let errors = write_regs(
+        rtl,
+        &[
+            (16, pll.r16()),
+            (20, pll.r20()),
+            (21, pll.r21()),
+            (22, pll.r22()),
+        ],
+    );
     std::thread::sleep(Duration::from_millis(10));
     (errors, read_status(rtl).ok())
 }
 
 /// The LO for an RF with the IF on the chosen side.
 pub fn lo_for(rf_hz: f64, if_hz: f64, high_side: bool) -> f64 {
-    if high_side { rf_hz + if_hz } else { rf_hz - if_hz }
+    if high_side {
+        rf_hz + if_hz
+    } else {
+        rf_hz - if_hz
+    }
 }
 
 /// Choose a SEL_DIV for an LO from [`VCO_RANGE_HZ`]: the smallest
-/// divider whose VCO lands inside it, the documented codes first, then
-/// the measured ones (/32, /64) for the low band. With the VCO at
-/// 1.70-3.65 GHz the LOs reachable are 26.6-57 (/64), 53-114 (/32),
-/// 212-456 (/8), 425-912 (/4), 850-1825 (/2), 1700-3650 MHz (/1):
-/// **114-212 MHz is unreachable** (no code gives /16; data/step4-lo-find-*).
+/// divider whose VCO lands inside it (the driver's rule, src/pll.rs
+/// `usable_codes`). With the VCO at 1.70-3.65 GHz the LOs reachable are
+/// 26.6-57 (/64), 53-114 (/32), 106-228 (/16), 212-456 (/8), 425-912
+/// (/4), 850-1825 MHz (/2). Until findings 10.5 code 011 was taken as the
+/// document's /1, and 114-212 MHz was unreachable (step 4d); the step 4f
+/// band table's first run skipped it for that reason.
 pub fn choose_div(lo_hz: f64, ref_div2: bool) -> Result<u8, String> {
-    let (lo, hi) = VCO_RANGE_HZ.ok_or("the VCO range is not measured yet (run pll-sweep); pass --div CODE")?;
-    for code in [0b011u8, 0b000, 0b001, 0b010, 0b100, 0b101] {
+    let (lo, hi) =
+        VCO_RANGE_HZ.ok_or("the VCO range is not measured yet (run pll-sweep); pass --div CODE")?;
+    for code in [0b000u8, 0b001, 0b010, 0b011, 0b100, 0b101] {
         let div = divider_any(code).unwrap_or(1);
         let vco = lo_hz * div as f64;
         if vco >= lo && vco <= hi && Pll::program(lo_hz, code, ref_div2).is_ok() {
             return Ok(code);
         }
     }
-    Err(format!("no documented or measured divider puts {lo_hz} Hz x div inside the VCO range {lo}..{hi} Hz"))
+    Err(format!(
+        "no documented or measured divider puts {lo_hz} Hz x div inside the VCO range {lo}..{hi} Hz"
+    ))
 }
 
 #[cfg(test)]
@@ -744,7 +953,11 @@ mod tests {
     fn default_image_keeps_every_fixed_cell() {
         let p = Pll::program(300e6 + IF_HZ, 0b000, true).unwrap();
         let img = image(&Front::default(), &p);
-        assert!(fixed_violations(&img).is_empty(), "{:?}", fixed_violations(&img));
+        assert!(
+            fixed_violations(&img).is_empty(),
+            "{:?}",
+            fixed_violations(&img)
+        );
         for c in [Config::Manual, Config::Vagc, Config::Auto] {
             assert!(fixed_violations(&image(&c.front(), &p)).is_empty());
         }
@@ -759,7 +972,12 @@ mod tests {
         assert!((lo - 304.57e6).abs() < 28.8e6 / 65536.0, "{lo}");
         // Nint = 4*Ni2c + Si2c + 13 packs into R20.
         assert_eq!(p.r20(), ((21 - 13) % 4) << 6 | (21 - 13) / 4);
-        assert!(Pll::program(100e6, 0b011, true).is_err());
+        // 011 is /16 (findings 10.5): 154.57 MHz is Nint 85 and back.
+        let p = Pll::program(154.57e6, 0b011, true).unwrap();
+        assert_eq!(p.nint, 85);
+        assert!((p.lo_hz().unwrap() - 154.57e6).abs() < 28.8e6 / 65536.0);
+        assert_eq!(choose_div(154.57e6, true), Ok(0b011));
+        assert!(Pll::program(10e6, 0b011, true).is_err());
         assert!(Pll::program(1e6, 0b100, true).is_err());
     }
 

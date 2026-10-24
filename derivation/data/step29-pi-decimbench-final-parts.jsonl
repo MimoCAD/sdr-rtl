@@ -1,0 +1,9 @@
+{"kind":"part","k":2,"part":"convert","ns_per_input":0.94}
+{"kind":"part","k":2,"part":"outputs","isa":"Portable","ns_per_input":21.47,"checksum":-1353118104}
+{"kind":"part","k":2,"part":"outputs","isa":"Neon","ns_per_input":11.23,"checksum":-1353113712}
+{"kind":"part","k":3,"part":"convert","ns_per_input":0.94}
+{"kind":"part","k":3,"part":"outputs","isa":"Portable","ns_per_input":19.64,"checksum":-897658920}
+{"kind":"part","k":3,"part":"outputs","isa":"Neon","ns_per_input":9.19,"checksum":-897657456}
+{"kind":"part","k":4,"part":"convert","ns_per_input":0.94}
+{"kind":"part","k":4,"part":"outputs","isa":"Portable","ns_per_input":17.69,"checksum":-631808232}
+{"kind":"part","k":4,"part":"outputs","isa":"Neon","ns_per_input":8.43,"checksum":-631808232}

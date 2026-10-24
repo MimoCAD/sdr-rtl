@@ -9,21 +9,32 @@
 //!
 //! Every request is async: awaited in a browser (WebUSB), completed in
 //! place natively (nusb's native requests block), see `complete!`.
+//!
+//! The requests go through a [`Transport`]: nusb's device
+//! ([`NusbTransport`]) on hardware, or a simulated dongle in tests
+//! (`fake`), so every error path can be exercised without one.
 
+use core::future::Future;
+use core::pin::Pin;
 use core::time::Duration;
+use std::boxed::Box;
 use std::fmt::Display;
 use std::string::{String, ToString};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::vec::Vec;
 
-use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
+use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Recipient, TransferError};
 use sdr_core::sync::Lock;
 use sdr_core::time::{Instant, sleep};
+use sdr_core::usb_stream::BoxedBulkIn;
 use sdr_core::{Error, Result};
 
 use crate::BACKEND;
-use crate::eeprom::{EEPROM_ADDRESS_SPACE, EEPROM_BLOCK, EEPROM_I2C_ADDRESS, EEPROM_REQUEST_MAX, EEPROM_WRITE_CHUNK, block0_addresses_eeprom, wvalue_eeprom};
+use crate::eeprom::{
+    EEPROM_ADDRESS_SPACE, EEPROM_BLOCK, EEPROM_I2C_ADDRESS, EEPROM_REQUEST_MAX, EEPROM_WRITE_CHUNK,
+    block0_addresses_eeprom, wvalue_eeprom,
+};
 use crate::image::{CLK_OUT_ENB, R15};
 use crate::protocol::*;
 
@@ -38,6 +49,12 @@ pub const STALL_RETRIES: u32 = 3;
 pub const STALL_RETRY_WAIT: Duration = Duration::from_millis(1);
 /// The refused requests kept for [`Link::refusals`], the most recent.
 pub const REFUSALS_KEPT: usize = 64;
+/// A demodulator write is refused unless a control read was accepted
+/// shortly before it (findings 21: on one Linux host, any block's read
+/// 280 ms before let it through, 320 ms did not; USB and system writes
+/// were never refused). A demodulator write with no read for this long
+/// is preceded by `Link::wake_read`; one refused is retried after it.
+pub const DEMOD_WRITE_READ_WITHIN: Duration = Duration::from_millis(100);
 
 /// One request the chip refused (STALL) and that was tried again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,12 +70,143 @@ pub struct Refusal {
     pub took: Duration,
 }
 
+/// A future a [`Transport`] hands back: `Send` natively, where the
+/// receiver crosses threads.
+#[cfg(not(target_arch = "wasm32"))]
+pub type TransportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+/// A future a [`Transport`] hands back.
+#[cfg(target_arch = "wasm32")]
+pub type TransportFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+/// `Send + Sync` natively; nothing in a browser.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait TransportBounds: Send + Sync {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync> TransportBounds for T {}
+/// `Send + Sync` natively; nothing in a browser.
+#[cfg(target_arch = "wasm32")]
+pub trait TransportBounds {}
+#[cfg(target_arch = "wasm32")]
+impl<T> TransportBounds for T {}
+
+/// What the driver needs of the USB device: the vendor control requests
+/// of [RTL2832U] Table 27 (bmRequestType 0xC0 / 0x40, bRequest 0) and the
+/// bulk IN endpoint the samples arrive on.
+pub trait Transport: TransportBounds {
+    /// A vendor Get: `len` bytes for (wValue, wIndex).
+    fn control_in(
+        &self,
+        value: u16,
+        index: u16,
+        len: u16,
+    ) -> TransportFuture<'_, core::result::Result<Vec<u8>, TransferError>>;
+    /// A vendor Set: `data` in the data stage.
+    fn control_out<'a>(
+        &'a self,
+        value: u16,
+        index: u16,
+        data: &'a [u8],
+    ) -> TransportFuture<'a, core::result::Result<(), TransferError>>;
+    /// Claim the stream's interface (detaching a kernel driver bound to it
+    /// where the OS has one) and open its bulk IN endpoint.
+    fn open_bulk_in(&self) -> TransportFuture<'_, Result<BoxedBulkIn>>;
+}
+
+/// The [`Transport`] of a dongle opened through nusb. It holds the stream's
+/// interface claimed for its whole life (review A3, A4): the claim is
+/// exclusive, so a second process opening a dongle this one holds is
+/// refused before it writes a register (it would otherwise stop this
+/// one's stream with its bring-up), and on Linux the kernel's DVB driver
+/// is detached once, at open, instead of rebinding — and reprogramming the
+/// chip — whenever a stream ends.
+pub struct NusbTransport {
+    // Kept with the interface: the device the claim was made on.
+    #[allow(dead_code)]
+    dev: nusb::Device,
+    iface: nusb::Interface,
+}
+
+impl NusbTransport {
+    /// Claim the stream's interface (nusb's `detach_and_claim_interface`:
+    /// on Linux a kernel driver bound to it is detached first). Claiming
+    /// here rather than at the stream's start was A/B'd on the bench
+    /// (2026-10-11, hwcheck back to back): the same tone level either way.
+    pub async fn claim(dev: nusb::Device) -> Result<NusbTransport> {
+        let iface = crate::complete!(dev.detach_and_claim_interface(crate::stream::BULK_INTERFACE)).map_err(|e| Error::Usb {
+            backend: BACKEND,
+            context: "claim interface",
+            message: format!("{e} (another program — or another receiver in this one — may have the dongle open)"),
+        })?;
+        Ok(NusbTransport { dev, iface })
+    }
+}
+
+impl Transport for NusbTransport {
+    fn control_in(
+        &self,
+        value: u16,
+        index: u16,
+        len: u16,
+    ) -> TransportFuture<'_, core::result::Result<Vec<u8>, TransferError>> {
+        let req = ControlIn {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: BREQUEST,
+            value,
+            index,
+            length: len,
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        return Box::pin(core::future::ready(nusb::MaybeFuture::wait(
+            self.dev.control_in(req, CONTROL_TIMEOUT),
+        )));
+        #[cfg(target_arch = "wasm32")]
+        return Box::pin(async move { self.dev.control_in(req, CONTROL_TIMEOUT).await });
+    }
+
+    fn control_out<'a>(
+        &'a self,
+        value: u16,
+        index: u16,
+        data: &'a [u8],
+    ) -> TransportFuture<'a, core::result::Result<(), TransferError>> {
+        let req = ControlOut {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: BREQUEST,
+            value,
+            index,
+            data,
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        return Box::pin(core::future::ready(nusb::MaybeFuture::wait(
+            self.dev.control_out(req, CONTROL_TIMEOUT),
+        )));
+        #[cfg(target_arch = "wasm32")]
+        return Box::pin(async move { self.dev.control_out(req, CONTROL_TIMEOUT).await });
+    }
+
+    /// The bulk endpoint on the interface claimed at open.
+    fn open_bulk_in(&self) -> TransportFuture<'_, Result<BoxedBulkIn>> {
+        let ep = self
+            .iface
+            .endpoint::<Bulk, In>(crate::stream::BULK_IN_ENDPOINT)
+            .map(|ep| Box::new(ep) as BoxedBulkIn)
+            .map_err(|e| Error::Usb {
+                backend: BACKEND,
+                context: "open bulk endpoint",
+                message: e.to_string(),
+            });
+        Box::pin(core::future::ready(ep))
+    }
+}
+
 /// An open dongle's control pipe. Clones share the device and the state
 /// below: the receiver and its stream each hold one, possibly on two
 /// threads (or two tasks in a browser).
 #[derive(Clone)]
 pub struct Link {
-    dev: nusb::Device,
+    transport: Arc<dyn Transport>,
     shared: Arc<Shared>,
 }
 
@@ -74,14 +222,29 @@ struct Shared {
     stall_retries: AtomicU64,
     /// Which they were, the last [`REFUSALS_KEPT`].
     refusals: Mutex<Vec<Refusal>>,
+    /// When a Get was last accepted ([`DEMOD_WRITE_READ_WITHIN`]).
+    last_read: Mutex<Option<Instant>>,
+    /// Reads sent only to let a demodulator write through.
+    wake_reads: AtomicU64,
+    /// The bench turned them off (`Link::set_wake_reads`), to measure
+    /// the refusals they prevent.
+    wake_off: AtomicBool,
 }
 
 fn usb_error(context: &'static str, e: impl Display) -> Error {
-    Error::Usb { backend: BACKEND, context, message: e.to_string() }
+    Error::Usb {
+        backend: BACKEND,
+        context,
+        message: e.to_string(),
+    }
 }
 
 fn device_error(context: &'static str, message: String) -> Error {
-    Error::Device { backend: BACKEND, context, message }
+    Error::Device {
+        backend: BACKEND,
+        context,
+        message,
+    }
 }
 
 /// Every request passes here first: block 0 addressed to the EEPROM's
@@ -102,17 +265,87 @@ fn refuse_block0_eeprom(value: u16, index: u16, context: &'static str) -> Result
 }
 
 impl Link {
-    pub fn new(dev: nusb::Device) -> Link {
-        Link { dev, shared: Arc::new(Shared { rmw: Lock::new(()), stream_open: AtomicBool::new(false), stall_retries: AtomicU64::new(0), refusals: Mutex::new(Vec::new()) }) }
+    pub fn new(transport: Arc<dyn Transport>) -> Link {
+        Link {
+            transport,
+            shared: Arc::new(Shared {
+                rmw: Lock::new(()),
+                stream_open: AtomicBool::new(false),
+                stall_retries: AtomicU64::new(0),
+                refusals: Mutex::new(Vec::new()),
+                last_read: Mutex::new(None),
+                wake_reads: AtomicU64::new(0),
+                wake_off: AtomicBool::new(false),
+            }),
+        }
     }
 
-    pub fn device(&self) -> &nusb::Device {
-        &self.dev
+    /// Bench only: send the wake reads (the default) or not.
+    #[cfg(feature = "bench")]
+    pub fn set_wake_reads(&self, on: bool) {
+        self.shared.wake_off.store(!on, Ordering::Relaxed);
+    }
+
+    fn wake_reads_on(&self) -> bool {
+        !self.shared.wake_off.load(Ordering::Relaxed)
+    }
+
+    fn mark_read(&self) {
+        *self
+            .shared
+            .last_read
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
+    }
+
+    fn read_within(&self, d: Duration) -> bool {
+        self.shared
+            .last_read
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some_and(|t| t.elapsed() < d)
+    }
+
+    /// One read of DEMOD_CTL, sent only so the demodulator write after it
+    /// is not refused ([`DEMOD_WRITE_READ_WITHIN`]); counted
+    /// ([`Link::wake_reads`]).
+    async fn wake_read(&self) -> core::result::Result<(), TransferError> {
+        self.shared.wake_reads.fetch_add(1, Ordering::Relaxed);
+        self.transport
+            .control_in(wvalue_sys(DEMOD_CTL), windex(BLOCK_SYS, ACCESS_GET, 0), 1)
+            .await?;
+        self.mark_read();
+        Ok(())
+    }
+
+    /// Send the wake read now if the next demodulator write would need
+    /// one, so a caller timing that write (a break's quiet) does not time
+    /// the read with it.
+    pub async fn ready_demod_write(&self) -> Result<()> {
+        if self.wake_reads_on() && !self.read_within(DEMOD_WRITE_READ_WITHIN) {
+            self.wake_read()
+                .await
+                .map_err(|e| usb_error("wake read", e))?;
+        }
+        Ok(())
+    }
+
+    /// Reads sent only to let a demodulator write through, since open.
+    pub fn wake_reads(&self) -> u64 {
+        self.shared.wake_reads.load(Ordering::Relaxed)
+    }
+
+    /// The stream's bulk IN endpoint ([`Transport::open_bulk_in`]).
+    pub async fn open_bulk_in(&self) -> Result<BoxedBulkIn> {
+        self.transport.open_bulk_in().await
     }
 
     /// Mark a stream as existing; false when one already does.
     pub fn claim_stream(&self) -> bool {
-        self.shared.stream_open.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
+        self.shared
+            .stream_open
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 
     /// The stream is gone.
@@ -127,34 +360,49 @@ impl Link {
 
     /// A vendor Get: bmRequestType 0xC0 (vendor, device, IN), bRequest
     /// don't care, wLength = bytes to read (Table 27). A block 0 request
-    /// to the EEPROM's slave is refused ([`refuse_block0_eeprom`]).
-    pub async fn get(&self, value: u16, index: u16, len: u16, context: &'static str) -> Result<Vec<u8>> {
+    /// to the EEPROM's slave is refused (`refuse_block0_eeprom`).
+    pub async fn get(
+        &self,
+        value: u16,
+        index: u16,
+        len: u16,
+        context: &'static str,
+    ) -> Result<Vec<u8>> {
         refuse_block0_eeprom(value, index, context)?;
         let v = self
             .retry_stall(value, index, false, context, || {
-                self.dev.control_in(
-                    ControlIn { control_type: ControlType::Vendor, recipient: Recipient::Device, request: BREQUEST, value, index, length: len },
-                    CONTROL_TIMEOUT,
-                )
+                self.transport.control_in(value, index, len)
             })
             .await
             .map_err(|e| usb_error(context, e))?;
+        self.mark_read();
         if v.len() != len as usize {
-            return Err(usb_error(context, format!("short read: {} of {len} bytes", v.len())));
+            return Err(usb_error(
+                context,
+                format!("short read: {} of {len} bytes", v.len()),
+            ));
         }
         Ok(v)
     }
 
     /// A vendor Set: bmRequestType 0x40 (vendor, device, OUT), the bytes
     /// in the data stage (Table 27). A block 0 request to the EEPROM's
-    /// slave is refused ([`refuse_block0_eeprom`]).
-    pub async fn set(&self, value: u16, index: u16, data: &[u8], context: &'static str) -> Result<()> {
+    /// slave is refused (`refuse_block0_eeprom`).
+    /// A demodulator write with no read accepted for
+    /// [`DEMOD_WRITE_READ_WITHIN`] is preceded by `Link::wake_read`.
+    pub async fn set(
+        &self,
+        value: u16,
+        index: u16,
+        data: &[u8],
+        context: &'static str,
+    ) -> Result<()> {
         refuse_block0_eeprom(value, index, context)?;
+        if block_of(index) == BLOCK_DEMOD {
+            self.ready_demod_write().await?;
+        }
         self.retry_stall(value, index, true, context, || {
-            self.dev.control_out(
-                ControlOut { control_type: ControlType::Vendor, recipient: Recipient::Device, request: BREQUEST, value, index, data },
-                CONTROL_TIMEOUT,
-            )
+            self.transport.control_out(value, index, data)
         })
         .await
         .map_err(|e| usb_error(context, e))
@@ -166,26 +414,47 @@ impl Link {
     /// safe to repeat: reads, writes of whole values, and read-modify-
     /// writes judged by their read-back. Each retry is counted
     /// ([`Link::stall_retries`]) and kept ([`Link::refusals`]).
-    async fn retry_stall<T, F>(&self, value: u16, index: u16, set: bool, context: &'static str, mut request: impl FnMut() -> F) -> core::result::Result<T, TransferError>
-    where
-        F: nusb::MaybeFuture<Output = core::result::Result<T, TransferError>>,
-    {
+    async fn retry_stall<'a, T>(
+        &self,
+        value: u16,
+        index: u16,
+        set: bool,
+        context: &'static str,
+        mut request: impl FnMut() -> TransportFuture<'a, core::result::Result<T, TransferError>>,
+    ) -> core::result::Result<T, TransferError> {
         let mut tries = 0;
         loop {
             let at = Instant::now();
-            match crate::complete!(request()) {
+            match request().await {
                 Err(TransferError::Stall) if tries < STALL_RETRIES => {
                     let took = at.elapsed();
                     tries += 1;
                     self.shared.stall_retries.fetch_add(1, Ordering::Relaxed);
                     {
-                        let mut kept = self.shared.refusals.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut kept = self
+                            .shared
+                            .refusals
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
                         if kept.len() == REFUSALS_KEPT {
                             kept.remove(0);
                         }
-                        kept.push(Refusal { value, index, set, context, at, took });
+                        kept.push(Refusal {
+                            value,
+                            index,
+                            set,
+                            context,
+                            at,
+                            took,
+                        });
                     }
                     sleep(STALL_RETRY_WAIT).await;
+                    // A refused demodulator write goes through after a
+                    // read (findings 21); a failed read leaves the retry
+                    // to be refused or not on its own.
+                    if set && block_of(index) == BLOCK_DEMOD && self.wake_reads_on() {
+                        let _ = self.wake_read().await;
+                    }
                 }
                 r => return r,
             }
@@ -199,17 +468,34 @@ impl Link {
 
     /// Which requests those were, the last [`REFUSALS_KEPT`], oldest first.
     pub fn refusals(&self) -> Vec<Refusal> {
-        self.shared.refusals.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.shared
+            .refusals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     // ---- System block: wValue = 0x3000 + offset (findings step 1A) ----
 
     pub async fn sys_read8(&self, off: u16) -> Result<u8> {
-        Ok(self.get(wvalue_sys(off), windex(BLOCK_SYS, ACCESS_GET, 0), 1, "system register read").await?[0])
+        Ok(self
+            .get(
+                wvalue_sys(off),
+                windex(BLOCK_SYS, ACCESS_GET, 0),
+                1,
+                "system register read",
+            )
+            .await?[0])
     }
 
     async fn sys_write8(&self, off: u16, v: u8) -> Result<()> {
-        self.set(wvalue_sys(off), windex(BLOCK_SYS, ACCESS_SET, 0), &[v], "system register write").await
+        self.set(
+            wvalue_sys(off),
+            windex(BLOCK_SYS, ACCESS_SET, 0),
+            &[v],
+            "system register write",
+        )
+        .await
     }
 
     /// Read-modify-write one system byte: clear `clear`, set `set`, then
@@ -226,7 +512,10 @@ impl Link {
         if back & mask != new & mask {
             return Err(device_error(
                 "system register read-back",
-                format!("0x{:04X}: wrote 0x{new:02X}, read 0x{back:02X} (mask 0x{mask:02X})", wvalue_sys(off)),
+                format!(
+                    "0x{:04X}: wrote 0x{new:02X}, read 0x{back:02X} (mask 0x{mask:02X})",
+                    wvalue_sys(off)
+                ),
             ));
         }
         Ok(back)
@@ -251,7 +540,10 @@ impl Link {
         if back & !not_read_back != v & !not_read_back {
             return Err(device_error(
                 "system register read-back",
-                format!("0x{:04X}: wrote 0x{v:02X}, read 0x{back:02X}", wvalue_sys(off)),
+                format!(
+                    "0x{:04X}: wrote 0x{v:02X}, read 0x{back:02X}",
+                    wvalue_sys(off)
+                ),
             ));
         }
         Ok(())
@@ -260,7 +552,14 @@ impl Link {
     // ---- USB block: wValue = 0x2000 + offset (findings step 1A) ----
 
     pub async fn usb_read8(&self, off: u16) -> Result<u8> {
-        Ok(self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), 1, "USB register read").await?[0])
+        Ok(self
+            .get(
+                wvalue_usb(off),
+                windex(BLOCK_USB, ACCESS_GET, 0),
+                1,
+                "USB register read",
+            )
+            .await?[0])
     }
 
     /// One USB-block byte written. Offset 0x1C is refused: it is the
@@ -268,24 +567,51 @@ impl Link {
     /// (derivation/HAZARD-usb-0x1C.md).
     pub async fn usb_write8(&self, off: u16, v: u8) -> Result<()> {
         if off == USB_HAZARD_OFF {
-            return Err(device_error("USB register write", format!("USB block 0x{off:03X} is the test-mode register; never written")));
+            return Err(device_error(
+                "USB register write",
+                format!("USB block 0x{off:03X} is the test-mode register; never written"),
+            ));
         }
-        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), &[v], "USB register write").await
+        self.set(
+            wvalue_usb(off),
+            windex(BLOCK_USB, ACCESS_SET, 0),
+            &[v],
+            "USB register write",
+        )
+        .await
     }
 
     /// `len` USB-block bytes from `off` (a 32-bit register reads
     /// little-endian, findings step 1A).
     pub async fn usb_read_n(&self, off: u16, len: u16) -> Result<Vec<u8>> {
-        self.get(wvalue_usb(off), windex(BLOCK_USB, ACCESS_GET, 0), len, "USB register read").await
+        self.get(
+            wvalue_usb(off),
+            windex(BLOCK_USB, ACCESS_GET, 0),
+            len,
+            "USB register read",
+        )
+        .await
     }
 
     /// USB-block bytes written from `off`; refused if they would cover
     /// offset 0x1C (derivation/HAZARD-usb-0x1C.md).
     pub async fn usb_write_n(&self, off: u16, data: &[u8]) -> Result<()> {
         if (off..off + data.len() as u16).contains(&USB_HAZARD_OFF) {
-            return Err(device_error("USB register write", format!("0x{off:03X}+{}: covers the test-mode register 0x01C; never written", data.len())));
+            return Err(device_error(
+                "USB register write",
+                format!(
+                    "0x{off:03X}+{}: covers the test-mode register 0x01C; never written",
+                    data.len()
+                ),
+            ));
         }
-        self.set(wvalue_usb(off), windex(BLOCK_USB, ACCESS_SET, 0), data, "USB register write").await
+        self.set(
+            wvalue_usb(off),
+            windex(BLOCK_USB, ACCESS_SET, 0),
+            data,
+            "USB register write",
+        )
+        .await
     }
 
     // ---- Demodulator: wValue = offset << 8 | 0x20 (findings step 1B/1C) ----
@@ -293,7 +619,13 @@ impl Link {
     /// `len` bytes from `off` on `page`; multi-byte reads auto-increment
     /// (findings step 1D).
     pub async fn demod_read(&self, page: u8, off: u8, len: u16) -> Result<Vec<u8>> {
-        self.get(wvalue_demod(off), windex(BLOCK_DEMOD, ACCESS_GET, page as u16), len, "demodulator register read").await
+        self.get(
+            wvalue_demod(off),
+            windex(BLOCK_DEMOD, ACCESS_GET, page as u16),
+            len,
+            "demodulator register read",
+        )
+        .await
     }
 
     pub async fn demod_read8(&self, page: u8, off: u8) -> Result<u8> {
@@ -309,7 +641,13 @@ impl Link {
     /// and the rsamp_ratio pairs (findings 9b; the harness's `demod_write`,
     /// `examples/harness/usb.rs`).
     pub async fn demod_write(&self, page: u8, off: u8, data: &[u8]) -> Result<()> {
-        self.set(wvalue_demod(off), windex(BLOCK_DEMOD, ACCESS_SET, page as u16), data, "demodulator register write").await
+        self.set(
+            wvalue_demod(off),
+            windex(BLOCK_DEMOD, ACCESS_SET, page as u16),
+            data,
+            "demodulator register write",
+        )
+        .await
     }
 
     /// [`Link::demod_write`], then the same registers read back in one
@@ -340,7 +678,9 @@ impl Link {
         if back & mask != new & mask {
             return Err(device_error(
                 "demodulator register read-back",
-                format!("page {page} 0x{off:02X}: wrote 0x{new:02X}, read 0x{back:02X} (mask 0x{mask:02X})"),
+                format!(
+                    "page {page} 0x{off:02X}: wrote 0x{new:02X}, read 0x{back:02X} (mask 0x{mask:02X})"
+                ),
             ));
         }
         Ok(back)
@@ -352,9 +692,20 @@ impl Link {
     /// (one I²C transaction, eeprom.md §1, §8), within the 256 offsets.
     pub async fn eeprom_read(&self, offset: u8, len: usize) -> Result<Vec<u8>> {
         if len == 0 || len > EEPROM_REQUEST_MAX || offset as usize + len > EEPROM_ADDRESS_SPACE {
-            return Err(device_error("EEPROM read", format!("0x{offset:02X}+{len}: 1-{EEPROM_REQUEST_MAX} bytes within the {EEPROM_ADDRESS_SPACE} offsets")));
+            return Err(device_error(
+                "EEPROM read",
+                format!(
+                    "0x{offset:02X}+{len}: 1-{EEPROM_REQUEST_MAX} bytes within the {EEPROM_ADDRESS_SPACE} offsets"
+                ),
+            ));
         }
-        self.get(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_GET, 0), len as u16, "EEPROM read").await
+        self.get(
+            wvalue_eeprom(offset),
+            windex(EEPROM_BLOCK, ACCESS_GET, 0),
+            len as u16,
+            "EEPROM read",
+        )
+        .await
     }
 
     /// EEPROM bytes written from `offset`: one block 3 Set, unverified
@@ -367,13 +718,24 @@ impl Link {
     /// before the next request.
     pub async fn eeprom_write(&self, offset: u8, data: &[u8]) -> Result<()> {
         let start = offset as usize;
-        if data.is_empty() || start / EEPROM_WRITE_CHUNK != (start + data.len() - 1) / EEPROM_WRITE_CHUNK {
+        if data.is_empty()
+            || start / EEPROM_WRITE_CHUNK != (start + data.len() - 1) / EEPROM_WRITE_CHUNK
+        {
             return Err(device_error(
                 "EEPROM write",
-                format!("0x{offset:02X}+{}: 1-{EEPROM_WRITE_CHUNK} bytes inside one {EEPROM_WRITE_CHUNK}-byte-aligned chunk", data.len()),
+                format!(
+                    "0x{offset:02X}+{}: 1-{EEPROM_WRITE_CHUNK} bytes inside one {EEPROM_WRITE_CHUNK}-byte-aligned chunk",
+                    data.len()
+                ),
             ));
         }
-        self.set(wvalue_eeprom(offset), windex(EEPROM_BLOCK, ACCESS_SET, 0), data, "EEPROM write").await
+        self.set(
+            wvalue_eeprom(offset),
+            windex(EEPROM_BLOCK, ACCESS_SET, 0),
+            data,
+            "EEPROM write",
+        )
+        .await
     }
 
     // ---- Tuner: wValue (reg << 8) | 0x34 to write, 0x0034 to read (step 2) ----
@@ -386,9 +748,17 @@ impl Link {
     /// the state the pause bit was measured from (findings 10.2c) and
     /// the vendor driver kept (findings 9a).
     pub async fn with_tuner<T>(&self, f: impl AsyncFnOnce(&Link) -> Result<T>) -> Result<T> {
-        self.demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, IIC_REPEAT_BIT).await?;
+        self.demod_rmw8(
+            IIC_REPEAT_PAGE,
+            IIC_REPEAT_OFF,
+            IIC_REPEAT_BIT,
+            IIC_REPEAT_BIT,
+        )
+        .await?;
         let r = f(self).await;
-        let closed = self.demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, 0).await;
+        let closed = self
+            .demod_rmw8(IIC_REPEAT_PAGE, IIC_REPEAT_OFF, IIC_REPEAT_BIT, 0)
+            .await;
         let v = r?;
         closed?;
         Ok(v)
@@ -411,7 +781,13 @@ impl Link {
                 ),
             ));
         }
-        self.set(wvalue_tuner_write(reg), windex(BLOCK_TUNER, ACCESS_SET, 0), &[v], "tuner register write").await
+        self.set(
+            wvalue_tuner_write(reg),
+            windex(BLOCK_TUNER, ACCESS_SET, 0),
+            &[v],
+            "tuner register write",
+        )
+        .await
     }
 
     /// `len` bytes from register 0, each bit-reversed ([R820T] p. 17).
@@ -419,7 +795,12 @@ impl Link {
     /// distinct registers come back.
     pub async fn tuner_read(&self, len: u16) -> Result<Vec<u8>> {
         Ok(self
-            .get(wvalue_tuner_read(), windex(BLOCK_TUNER, ACCESS_GET, 0), len, "tuner register read")
+            .get(
+                wvalue_tuner_read(),
+                windex(BLOCK_TUNER, ACCESS_GET, 0),
+                len,
+                "tuner register read",
+            )
             .await?
             .into_iter()
             .map(tuner_read_byte)
@@ -433,7 +814,10 @@ impl Link {
         if v[0] != TUNER_R0_CHECK {
             return Err(device_error(
                 "tuner check byte",
-                format!("R0 read 0x{:02X}, expected 0x{TUNER_R0_CHECK:02X} ([R820T] p. 17)", v[0]),
+                format!(
+                    "R0 read 0x{:02X}, expected 0x{TUNER_R0_CHECK:02X} ([R820T] p. 17)",
+                    v[0]
+                ),
             ));
         }
         Ok([v[0], v[1], v[2], v[3], v[4]])
@@ -453,11 +837,19 @@ impl Link {
     pub async fn tuner_verify(&self, img: &[u8; 32]) -> Result<()> {
         let back = self.tuner_read(crate::image::READBACK_REGS as u16).await?;
         if back[0] != TUNER_R0_CHECK {
-            return Err(device_error("tuner check byte", format!("R0 read 0x{:02X}", back[0])));
+            return Err(device_error(
+                "tuner check byte",
+                format!("R0 read 0x{:02X}", back[0]),
+            ));
         }
         let differ: Vec<String> = (crate::image::IMAGE_FIRST_REG..crate::image::READBACK_REGS)
             .filter(|&r| back[r as usize] != img[r as usize])
-            .map(|r| format!("R{r}: wrote 0x{:02X}, read 0x{:02X}", img[r as usize], back[r as usize]))
+            .map(|r| {
+                format!(
+                    "R{r}: wrote 0x{:02X}, read 0x{:02X}",
+                    img[r as usize], back[r as usize]
+                )
+            })
             .collect();
         if !differ.is_empty() {
             return Err(device_error("tuner register read-back", differ.join("; ")));

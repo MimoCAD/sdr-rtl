@@ -8,7 +8,10 @@ use crate::usb;
 pub const CYCLES: usize = 3;
 
 pub fn run() -> Result<(), String> {
-    let mut rec = crate::header("0", "power-cycle recovery: device count before, after vbus off, after vbus on");
+    let mut rec = crate::header(
+        "0",
+        "power-cycle recovery: device count before, after vbus off, after vbus on",
+    );
     rec.set("candidate_space", "none (a procedure check)");
     rec.set("cycles", CYCLES);
     // Refuse unless exactly one accepted device is attached.
@@ -45,5 +48,9 @@ pub fn run() -> Result<(), String> {
     }
     rec.set("recovery_works", ok);
     crate::write_record("step0-recovery.json", &rec);
-    if ok { Ok(()) } else { Err("recovery did not work; stop".into()) }
+    if ok {
+        Ok(())
+    } else {
+        Err("recovery did not work; stop".into())
+    }
 }

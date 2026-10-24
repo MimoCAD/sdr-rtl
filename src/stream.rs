@@ -46,7 +46,8 @@ use std::vec::Vec;
 use sdr_core::usb_stream::{BulkIqStream, WireSample};
 use sdr_core::{Iq, RecvInfo, Result};
 
-use crate::demod::{DDC_IF_HZ, output_rate_of_ratio, pset_iffreq_bytes, rsamp_transfers};
+use crate::clockwatch::ClockWatch;
+use crate::demod::{output_rate_of_ratio, pset_iffreq_bytes, rsamp_transfers};
 use crate::protocol::*;
 use crate::taps::TAP_REGS;
 use crate::usb::Link;
@@ -85,28 +86,44 @@ pub enum Space {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Write {
     /// One system byte; `not_read_back` masks bits that never read back.
-    Sys { off: u16, value: u8, not_read_back: u8 },
+    Sys {
+        off: u16,
+        value: u8,
+        not_read_back: u8,
+    },
     /// Consecutive demodulator registers from `reg`, one transfer.
     Demod { page: u8, reg: u8, data: Vec<u8> },
 }
 
 impl Write {
     fn demod(page: u8, reg: u8, data: &[u8]) -> Write {
-        Write::Demod { page, reg, data: data.to_vec() }
+        Write::Demod {
+            page,
+            reg,
+            data: data.to_vec(),
+        }
     }
 
     /// Every byte the transfer writes: (space, register, value).
     pub fn bytes(&self) -> Vec<(Space, u16, u8)> {
         match self {
             Write::Sys { off, value, .. } => vec![(Space::Sys, *off, *value)],
-            Write::Demod { page, reg, data } => data.iter().enumerate().map(|(k, &v)| (Space::Page(*page), *reg as u16 + k as u16, v)).collect(),
+            Write::Demod { page, reg, data } => data
+                .iter()
+                .enumerate()
+                .map(|(k, &v)| (Space::Page(*page), *reg as u16 + k as u16, v))
+                .collect(),
         }
     }
 
     /// Make the transfer and read it back.
     pub async fn apply(&self, link: &Link) -> Result<()> {
         match self {
-            Write::Sys { off, value, not_read_back } => link.sys_write8_verified(*off, *value, *not_read_back).await,
+            Write::Sys {
+                off,
+                value,
+                not_read_back,
+            } => link.sys_write8_verified(*off, *value, *not_read_back).await,
             Write::Demod { page, reg, data } => link.demod_write_verified(*page, *reg, data).await,
         }
     }
@@ -117,21 +134,25 @@ impl Write {
 pub enum Item {
     /// 1. DEMOD_CTL ← 0xE8: PLL, both ADCs, reset released.
     AdcEnable,
-    /// 2. Page 1 0x16-0x17 ← 00 00, 0x18 ← 00: the frequency offset zeroed.
+    /// 2. Page 1 0x3E-0x3F ← 00 00: the timing loop no longer steers the
+    ///    resampler (findings 29).
+    TimingSteerOff,
+    /// 3. Page 1 0x16-0x17 ← 00 00, 0x18 ← 00: the frequency offset zeroed.
     FreqOffset,
-    /// 3. pset_iffreq, page 1 0x19-0x1A then 0x1B: the IF.
+    /// 4. pset_iffreq, page 1 0x19-0x1A then 0x1B: the IF.
     IfFreq,
-    /// 4. Page 1 0x15 ← 0x01: Spec_inv.
+    /// 5. Page 1 0x15 ← 0x01: Spec_inv.
     SpecInv,
-    /// 5. rsamp_ratio, page 1 0x9F-0xA0 then 0xA1-0xA2: the rate.
+    /// 6. rsamp_ratio, page 1 0x9F-0xA0 then 0xA1-0xA2: the rate.
     Rsamp,
-    /// 6. The 20 tap registers, page 1 0x1C-0x2F, one byte each, ascending.
+    /// 7. The 20 tap registers, page 1 0x1C-0x2F, one byte each, ascending.
     Taps,
-    /// 7. Page 0 0x19 ← 0x25: the stream's enable.
+    /// 8. Page 0 0x19 ← 0x05: the stream's enable, the FIR's ×8 clear
+    ///    (findings 23; observed 0x25).
     StreamEnable,
-    /// 8. Page 1 0x93 ← 0xF0: a steady rate.
+    /// 9. Page 1 0x93 ← 0xF0: a steady rate.
     RateSteady,
-    /// 9. Page 0 0x06 ← 0x80: the start.
+    /// 10. Page 0 0x06 ← 0x80: the start.
     Start,
 }
 
@@ -146,31 +167,135 @@ pub struct Step {
 /// 10.4's nine items in the order measured as one plan (the bench's
 /// `Plan::driver`, `examples/harness/stream_confirm.rs`), with the
 /// transfers grouped as findings 9b observed and the bench repeated.
-/// The IF is [`DDC_IF_HZ`]; the tuner's LO is placed for it by
-/// `Rtl::set_freq`.
+/// The IF is [`crate::demod::if_hz`] ([`crate::demod::DDC_IF_HZ`] but on the bench); the
+/// tuner's LO is placed for it by `Rtl::set_freq`.
 pub fn start_sequence(ratio: u32, taps: &[u8; TAP_REGS]) -> Vec<Step> {
-    let iff = pset_iffreq_bytes(DDC_IF_HZ);
+    let iff = pset_iffreq_bytes(crate::demod::if_hz());
     let rs = rsamp_transfers(ratio);
     let cleared = [FREQ_OFFSET_CLEARED; (FREQ_OFFSET_LAST - FREQ_OFFSET_FIRST) as usize];
-    vec![
-        Step { item: Item::AdcEnable, writes: vec![Write::Sys { off: DEMOD_CTL, value: DEMOD_CTL_STREAM, not_read_back: DEMOD_CTL_NOT_READ_BACK }] },
+    #[allow(unused_mut)]
+    let mut steps = vec![
+        Step {
+            item: Item::AdcEnable,
+            writes: vec![Write::Sys {
+                off: DEMOD_CTL,
+                value: DEMOD_CTL_STREAM,
+                not_read_back: DEMOD_CTL_NOT_READ_BACK,
+            }],
+        },
+        Step {
+            item: Item::TimingSteerOff,
+            writes: vec![Write::demod(
+                TIMING_STEER_PAGE,
+                TIMING_STEER_FIRST,
+                &TIMING_STEER_OFF,
+            )],
+        },
         Step {
             item: Item::FreqOffset,
-            writes: vec![Write::demod(FREQ_OFFSET_PAGE, FREQ_OFFSET_FIRST, &cleared), Write::demod(FREQ_OFFSET_PAGE, FREQ_OFFSET_LAST, &[FREQ_OFFSET_CLEARED])],
+            writes: vec![
+                Write::demod(FREQ_OFFSET_PAGE, FREQ_OFFSET_FIRST, &cleared),
+                Write::demod(FREQ_OFFSET_PAGE, FREQ_OFFSET_LAST, &[FREQ_OFFSET_CLEARED]),
+            ],
         },
-        Step { item: Item::IfFreq, writes: vec![Write::demod(IFFREQ_PAGE, IFFREQ_MSB, &iff[..2]), Write::demod(IFFREQ_PAGE, IFFREQ_MSB + 2, &iff[2..])] },
-        Step { item: Item::SpecInv, writes: vec![Write::demod(SPEC_INV_PAGE, SPEC_INV_OFF, &[SPEC_INV_STREAM])] },
-        Step { item: Item::Rsamp, writes: rs.iter().map(|(reg, pair)| Write::demod(RSAMP_PAGE, *reg, pair)).collect() },
-        Step { item: Item::Taps, writes: taps.iter().enumerate().map(|(k, &v)| Write::demod(TAP_PAGE, TAP_FIRST + k as u8, &[v])).collect() },
-        Step { item: Item::StreamEnable, writes: vec![Write::demod(STREAM_ENABLE_PAGE, STREAM_ENABLE_OFF, &[STREAM_ENABLE_VALUE])] },
-        Step { item: Item::RateSteady, writes: vec![Write::demod(RATE_STEADY_PAGE, RATE_STEADY_OFF, &[RATE_STEADY_VALUE])] },
-        Step { item: Item::Start, writes: vec![restart_write()] },
-    ]
+        Step {
+            item: Item::IfFreq,
+            writes: vec![
+                Write::demod(IFFREQ_PAGE, IFFREQ_MSB, &iff[..2]),
+                Write::demod(IFFREQ_PAGE, IFFREQ_MSB + 2, &iff[2..]),
+            ],
+        },
+        Step {
+            item: Item::SpecInv,
+            writes: vec![Write::demod(
+                SPEC_INV_PAGE,
+                SPEC_INV_OFF,
+                &[SPEC_INV_STREAM],
+            )],
+        },
+        Step {
+            item: Item::Rsamp,
+            writes: rs
+                .iter()
+                .map(|(reg, pair)| Write::demod(RSAMP_PAGE, *reg, pair))
+                .collect(),
+        },
+        Step {
+            item: Item::Taps,
+            writes: taps
+                .iter()
+                .enumerate()
+                .map(|(k, &v)| Write::demod(TAP_PAGE, TAP_FIRST + k as u8, &[v]))
+                .collect(),
+        },
+        Step {
+            item: Item::StreamEnable,
+            writes: vec![Write::demod(
+                STREAM_ENABLE_PAGE,
+                STREAM_ENABLE_OFF,
+                &[STREAM_ENABLE_VALUE],
+            )],
+        },
+        Step {
+            item: Item::RateSteady,
+            writes: vec![Write::demod(
+                RATE_STEADY_PAGE,
+                RATE_STEADY_OFF,
+                &[RATE_STEADY_VALUE],
+            )],
+        },
+        Step {
+            item: Item::Start,
+            writes: vec![restart_write()],
+        },
+    ];
+    // Bench only: extra demodulator writes just before the start, for
+    // registers that take no effect in a running stream (findings 21).
+    #[cfg(feature = "bench")]
+    {
+        let extra = bench_start_writes();
+        if !extra.is_empty() {
+            let start = steps.pop().expect("the start is the last item");
+            steps
+                .last_mut()
+                .expect("items before the start")
+                .writes
+                .extend(
+                    extra
+                        .iter()
+                        .map(|&(page, reg, value)| Write::demod(page, reg, &[value])),
+                );
+            steps.push(start);
+        }
+    }
+    steps
+}
+
+/// Bench only: (page, register, value) demodulator writes every stream
+/// started from now on makes just before its start bit.
+#[cfg(feature = "bench")]
+static BENCH_START_WRITES: std::sync::Mutex<Vec<(u8, u8, u8)>> = std::sync::Mutex::new(Vec::new());
+
+/// Bench only: set the extra start-sequence writes (empty for none).
+#[cfg(feature = "bench")]
+pub fn set_bench_start_writes(writes: &[(u8, u8, u8)]) {
+    *BENCH_START_WRITES.lock().unwrap_or_else(|p| p.into_inner()) = writes.to_vec();
+}
+
+#[cfg(feature = "bench")]
+fn bench_start_writes() -> Vec<(u8, u8, u8)> {
+    BENCH_START_WRITES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
 }
 
 /// Every byte of a sequence in write order.
 pub fn flatten(steps: &[Step]) -> Vec<(Space, u16, u8)> {
-    steps.iter().flat_map(|s| s.writes.iter().flat_map(Write::bytes)).collect()
+    steps
+        .iter()
+        .flat_map(|s| s.writes.iter().flat_map(Write::bytes))
+        .collect()
 }
 
 /// The start bit alone: the write that restarts a stopped stream
@@ -189,24 +314,42 @@ pub struct BitWrite {
 }
 
 impl BitWrite {
-    /// The byte the register holds after the write, from what it held.
+    /// The byte the register holds after the write, from what it held
+    /// (tests only).
+    #[cfg(test)]
     pub const fn applied_to(self, current: u8) -> u8 {
         (current & !self.mask) | (self.value & self.mask)
     }
 
     /// Make the write, read back and checked on the mask.
     pub async fn apply(self, link: &Link) -> Result<u8> {
-        link.demod_rmw8(self.page, self.reg, self.mask, self.value).await
+        link.demod_rmw8(self.page, self.reg, self.mask, self.value)
+            .await
     }
 }
 
 /// Stop: page 0 0x06 bit 7 cleared, the rest kept (findings 10.4: 0
 /// bytes; the bench's stop was this read-modify-write).
-pub const STOP: BitWrite = BitWrite { page: START_PAGE, reg: START_OFF, mask: START_BIT, value: 0 };
+pub const STOP: BitWrite = BitWrite {
+    page: START_PAGE,
+    reg: START_OFF,
+    mask: START_BIT,
+    value: 0,
+};
 /// Pause: page 1 0x01 bit 2 set (findings 10.2c: 0x10 → 0x14).
-pub const PAUSE: BitWrite = BitWrite { page: PAUSE_PAGE, reg: PAUSE_OFF, mask: PAUSE_BIT, value: PAUSE_BIT };
+pub const PAUSE: BitWrite = BitWrite {
+    page: PAUSE_PAGE,
+    reg: PAUSE_OFF,
+    mask: PAUSE_BIT,
+    value: PAUSE_BIT,
+};
 /// Resume: page 1 0x01 bit 2 cleared (findings 10.2c: 0x14 → 0x10).
-pub const RESUME: BitWrite = BitWrite { page: PAUSE_PAGE, reg: PAUSE_OFF, mask: PAUSE_BIT, value: 0 };
+pub const RESUME: BitWrite = BitWrite {
+    page: PAUSE_PAGE,
+    reg: PAUSE_OFF,
+    mask: PAUSE_BIT,
+    value: 0,
+};
 
 /// While running, [`RtlStream::take_dropped_blocks`] clears the counter
 /// only from here up: half its range, so it never reaches 255 between
@@ -262,6 +405,9 @@ pub struct RtlStream {
     /// Start in full-packet mode ([`SYSCTL_FULL_PACKET`]); bench programs
     /// may turn it off.
     full_packet: bool,
+    /// The sample clock against the host's ([`ClockWatch`], findings 27):
+    /// loss neither the chip's counter nor the engine's ledger sees.
+    watch: ClockWatch,
 }
 
 impl RtlStream {
@@ -269,7 +415,43 @@ impl RtlStream {
     /// link must have been claimed for the stream (`Link::claim_stream`);
     /// dropping the stream releases it.
     pub fn new(inner: BulkIqStream, link: Link, ratio: u32, taps: [u8; TAP_REGS]) -> RtlStream {
-        RtlStream { inner, link, ratio, taps, state: State::Idle, paused: false, drop_mark: 0, full_packet: true }
+        RtlStream {
+            inner,
+            link,
+            ratio,
+            taps,
+            state: State::Idle,
+            paused: false,
+            drop_mark: 0,
+            full_packet: true,
+            watch: ClockWatch::new(output_rate_of_ratio(ratio)),
+        }
+    }
+
+    /// Samples the sample clock fell behind the host's clock by, beyond its
+    /// drift, since the stream was made ([`ClockWatch`], findings 27): loss
+    /// the chip's counter and the engine's ledger do not see. In the chip's
+    /// samples.
+    pub fn clock_lost_samples(&self) -> u64 {
+        self.watch.lost()
+    }
+
+    /// The watch's reading of one receive: loss judged now marks it
+    /// `overflow`.
+    fn watched(&mut self, mut info: RecvInfo) -> RecvInfo {
+        if let Some(l) = info.link
+            && self.watch.feed(l.completed_at_us, l.ledger_deficit_samples) > 0
+        {
+            info.overflow = true;
+        }
+        info
+    }
+
+    /// Samples the engine's ledger inferred lost on the host side since
+    /// the stream was made (the device's clock against what came off the
+    /// wire, `BulkIqStream::inferred_lost_total`).
+    pub fn host_lost_samples(&self) -> u64 {
+        self.inner.inferred_lost_total()
     }
 
     /// Whether the next start sets full-packet mode (the default), for
@@ -312,7 +494,10 @@ impl RtlStream {
     pub async fn start(&mut self) -> Result<()> {
         let writes: Vec<Write> = match self.state {
             State::Running => return Ok(()),
-            State::Idle => start_sequence(self.ratio, &self.taps).into_iter().flat_map(|s| s.writes).collect(),
+            State::Idle => start_sequence(self.ratio, &self.taps)
+                .into_iter()
+                .flat_map(|s| s.writes)
+                .collect(),
             State::Stopped => vec![restart_write()],
         };
         // Nothing flows yet: the FIFO reset (whatever an earlier run left
@@ -322,6 +507,7 @@ impl RtlStream {
         self.link.usb_write8(BLK_DROP_COUNTER, 0).await?;
         self.drop_mark = 0;
         self.set_packing(self.full_packet).await?;
+        self.watch.rebase();
         self.inner.start()?;
         for w in &writes {
             if let Err(e) = w.apply(&self.link).await {
@@ -363,7 +549,11 @@ impl RtlStream {
     pub async fn take_dropped_blocks(&mut self) -> Result<DroppedBlocks> {
         let now = self.link.usb_read8(BLK_DROP_COUNTER).await?;
         // Below the mark only if something else cleared it: count from 0.
-        let blocks = if now >= self.drop_mark { now - self.drop_mark } else { now };
+        let blocks = if now >= self.drop_mark {
+            now - self.drop_mark
+        } else {
+            now
+        };
         // Stopped or paused nothing flows, and the clear costs nothing.
         let quiet = self.state != State::Running || self.paused;
         let clear = now != 0 && (quiet || now >= BLK_DROP_CLEAR_AT);
@@ -371,7 +561,10 @@ impl RtlStream {
             self.link.usb_write8(BLK_DROP_COUNTER, 0).await?;
         }
         self.drop_mark = if clear { 0 } else { now };
-        Ok(DroppedBlocks { blocks, saturated: now == BLK_DROP_COUNTER_SATURATED })
+        Ok(DroppedBlocks {
+            blocks,
+            saturated: now == BLK_DROP_COUNTER_SATURATED,
+        })
     }
 
     /// Pause: page 1 0x01 bit 2 set ([`PAUSE`]); the endpoint goes quiet
@@ -399,40 +592,54 @@ impl RtlStream {
     /// closed again by every `Link::with_tuner`), and nothing else here
     /// writes it.
     pub async fn pause_blind(&mut self) -> Result<()> {
-        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT]).await?;
+        self.link
+            .demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON | PAUSE_BIT])
+            .await?;
         self.paused = true;
         Ok(())
     }
 
     /// Resume with one write: page 1 0x01 ← [`PAGE1_0X01_POWER_ON`].
     pub async fn resume_blind(&mut self) -> Result<()> {
-        self.link.demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON]).await?;
+        self.link
+            .demod_write(PAUSE_PAGE, PAUSE_OFF, &[PAGE1_0X01_POWER_ON])
+            .await?;
         self.paused = false;
         Ok(())
     }
 
-    /// Pulse USB_EPA_CTL's FIFO reset (bit 9 set, then the register as it
-    /// was), discarding what the endpoint FIFO holds. Only with the output
-    /// paused or stopped: findings 16.6.
+    /// Pulse USB_EPA_CTL's FIFO reset (bit 9 set, then released with the
+    /// stall cleared too), discarding what the endpoint FIFO holds. Only
+    /// with the output paused or stopped: findings 16.6. The release is
+    /// not the register as it was: a dongle Linux's kernel driver let go of
+    /// holds 0x0210, reset and stall (findings 21).
     pub async fn reset_fifo(&mut self) -> Result<()> {
         let v = self.link.usb_read_n(USB_EPA_CTL, 2).await?;
         let was = u16::from_le_bytes([v[0], v[1]]);
-        self.link.usb_write_n(USB_EPA_CTL, &(was | EPA_CTL_FIFO_RESET).to_le_bytes()).await?;
-        self.link.usb_write_n(USB_EPA_CTL, &was.to_le_bytes()).await
+        self.link
+            .usb_write_n(USB_EPA_CTL, &(was | EPA_CTL_FIFO_RESET).to_le_bytes())
+            .await?;
+        self.link
+            .usb_write_n(USB_EPA_CTL, &(was & !EPA_CTL_RELEASE_CLEARS).to_le_bytes())
+            .await
     }
 
     /// Halt the output with one write of the start register: page 0 0x06
     /// ← 0 (the sequence writes it whole, [`START_VALUE`]). The stream's
     /// state stays running; [`RtlStream::restart_blind`] starts it again.
     pub async fn halt_blind(&mut self) -> Result<()> {
-        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE & !START_BIT]).await?;
+        self.link
+            .demod_write(START_PAGE, START_OFF, &[START_VALUE & !START_BIT])
+            .await?;
         self.paused = true;
         Ok(())
     }
 
     /// Start the output again with one write: page 0 0x06 ← [`START_VALUE`].
     pub async fn restart_blind(&mut self) -> Result<()> {
-        self.link.demod_write(START_PAGE, START_OFF, &[START_VALUE]).await?;
+        self.link
+            .demod_write(START_PAGE, START_OFF, &[START_VALUE])
+            .await?;
         self.paused = false;
         Ok(())
     }
@@ -446,6 +653,9 @@ impl RtlStream {
     /// The engine's release ([`BulkIqStream::release`]): call before the
     /// output resumes.
     pub fn release(&mut self) -> Result<()> {
+        // Time and samples part at a break by design: the watch starts a
+        // new line.
+        self.watch.rebase();
         self.inner.release()
     }
 
@@ -462,13 +672,19 @@ impl RtlStream {
     /// Samples into `buf`, widened (`WireSample::OffsetU8`); at most
     /// `timeout_secs` waiting. Start the stream first.
     pub async fn recv_into(&mut self, buf: &mut [Iq], timeout_secs: f64) -> Result<RecvInfo> {
-        self.inner.recv_into_async(buf, timeout_secs).await
+        let info = self.inner.recv_into_async(buf, timeout_secs).await?;
+        Ok(self.watched(info))
     }
 
     /// The wire bytes as the chip sends them ([`WIRE_FORMAT`]: unsigned
     /// 8-bit I then Q): the engine's [`BulkIqStream::recv_bytes_async`].
-    pub async fn recv_bytes(&mut self, buf: &mut [u8], timeout_secs: f64) -> Result<(usize, RecvInfo)> {
-        self.inner.recv_bytes_async(buf, timeout_secs).await
+    pub async fn recv_bytes(
+        &mut self,
+        buf: &mut [u8],
+        timeout_secs: f64,
+    ) -> Result<(usize, RecvInfo)> {
+        let (n, info) = self.inner.recv_bytes_async(buf, timeout_secs).await?;
+        Ok((n, self.watched(info)))
     }
 
     /// Keep receiving for `span` into the engine's backlog
@@ -505,10 +721,17 @@ mod tests {
 
     /// Findings 10.4's driver sequence at 2.048 Msps (rsamp_ratio
     /// 0xE10000, the bench's), byte by byte in write order:
-    /// 1. DEMOD_CTL ← 0xE8; 2. page 1 0x16-0x17 ← 00 00, 0x18 ← 00;
-    /// 3. pset_iffreq 0x19-0x1B ← 38 11 12; 4. 0x15 ← 0x01;
-    /// 5. 0x9F-0xA2 ← 03 84 00 00; 6. the taps at 0x1C-0x2F;
-    /// 7. page 0 0x19 ← 0x25; 8. page 1 0x93 ← 0xF0; 9. page 0 0x06 ← 0x80.
+    /// 1. DEMOD_CTL ← 0xE8
+    /// 2. page 1 0x3E-0x3F ← 00 00 (findings 29)
+    /// 3. 0x16-0x17 ← 00 00, 0x18 ← 00
+    /// 4. pset_iffreq 0x19-0x1B ← 38 11 12
+    /// 5. 0x15 ← 0x01
+    /// 6. 0x9F-0xA2 ← 03 84 00 00
+    /// 7. the taps at 0x1C-0x2F
+    /// 8. page 0 0x19 ← 0x05 (findings 10.4's 0x25 less the FIR's ×8,
+    ///    findings 23)
+    /// 9. page 1 0x93 ← 0xF0
+    /// 10. page 0 0x06 ← 0x80
     #[test]
     fn the_start_sequence_is_findings_10s_driver_plan() {
         let taps = design_registers();
@@ -516,12 +739,25 @@ mod tests {
         let items: Vec<Item> = seq.iter().map(|s| s.item).collect();
         assert_eq!(
             items,
-            [Item::AdcEnable, Item::FreqOffset, Item::IfFreq, Item::SpecInv, Item::Rsamp, Item::Taps, Item::StreamEnable, Item::RateSteady, Item::Start]
+            [
+                Item::AdcEnable,
+                Item::TimingSteerOff,
+                Item::FreqOffset,
+                Item::IfFreq,
+                Item::SpecInv,
+                Item::Rsamp,
+                Item::Taps,
+                Item::StreamEnable,
+                Item::RateSteady,
+                Item::Start
+            ]
         );
         let p1 = Space::Page(1);
         let p0 = Space::Page(0);
         let mut want = vec![
             (Space::Sys, 0x0000, 0xE8),
+            (p1, 0x3E, 0x00),
+            (p1, 0x3F, 0x00),
             (p1, 0x16, 0x00),
             (p1, 0x17, 0x00),
             (p1, 0x18, 0x00),
@@ -534,8 +770,12 @@ mod tests {
             (p1, 0xA1, 0x00),
             (p1, 0xA2, 0x00),
         ];
-        want.extend(taps.iter().enumerate().map(|(k, &v)| (p1, 0x1C + k as u16, v)));
-        want.extend([(p0, 0x19, 0x25), (p1, 0x93, 0xF0), (p0, 0x06, 0x80)]);
+        want.extend(
+            taps.iter()
+                .enumerate()
+                .map(|(k, &v)| (p1, 0x1C + k as u16, v)),
+        );
+        want.extend([(p0, 0x19, 0x05), (p1, 0x93, 0xF0), (p0, 0x06, 0x80)]);
         assert_eq!(flatten(&seq), want);
         // The last write is the start, alone in its item.
         assert_eq!(seq.last().unwrap().writes, vec![restart_write()]);
@@ -559,9 +799,30 @@ mod tests {
                     .collect()
             })
             .collect();
-        assert_eq!(lens, vec![vec![1], vec![2, 1], vec![2, 1], vec![1], vec![2, 2], vec![1; TAP_REGS], vec![1], vec![1], vec![1]]);
-        assert_eq!(seq[0].writes[0], Write::Sys { off: DEMOD_CTL, value: 0xE8, not_read_back: 1 << 2 });
-        assert_eq!(flatten(&seq).len(), 1 + 3 + 3 + 1 + 4 + TAP_REGS + 3);
+        assert_eq!(
+            lens,
+            vec![
+                vec![1],
+                vec![2],
+                vec![2, 1],
+                vec![2, 1],
+                vec![1],
+                vec![2, 2],
+                vec![1; TAP_REGS],
+                vec![1],
+                vec![1],
+                vec![1]
+            ]
+        );
+        assert_eq!(
+            seq[0].writes[0],
+            Write::Sys {
+                off: DEMOD_CTL,
+                value: 0xE8,
+                not_read_back: 1 << 2
+            }
+        );
+        assert_eq!(flatten(&seq).len(), 1 + 2 + 3 + 3 + 1 + 4 + TAP_REGS + 3);
     }
 
     /// The rate enters only through rsamp_ratio: 2.4 Msps writes
@@ -575,10 +836,17 @@ mod tests {
         let differ = |sps: f64| -> Vec<(Space, u16, u8)> {
             let b = flatten(&start_sequence(ratio_for_output_rate(sps).unwrap(), &taps));
             assert_eq!(a.len(), b.len());
-            a.iter().zip(&b).filter(|(x, y)| x != y).map(|(_, y)| *y).collect()
+            a.iter()
+                .zip(&b)
+                .filter(|(x, y)| x != y)
+                .map(|(_, y)| *y)
+                .collect()
         };
         assert_eq!(differ(2.4e6), vec![(Space::Page(1), 0xA0, 0x00)]);
-        assert_eq!(differ(1.024e6), vec![(Space::Page(1), 0x9F, 0x07), (Space::Page(1), 0xA0, 0x08)]);
+        assert_eq!(
+            differ(1.024e6),
+            vec![(Space::Page(1), 0x9F, 0x07), (Space::Page(1), 0xA0, 0x08)]
+        );
     }
 
     /// The dropped-block counter (findings 16): USB_EPA_FIFO_CFG's fourth
@@ -588,9 +856,15 @@ mod tests {
         // USB_EPA_FIFO_CFG's fourth byte, nowhere near the hazard.
         assert_eq!(BLK_DROP_COUNTER, 0x163);
         assert_ne!(BLK_DROP_COUNTER, USB_HAZARD_OFF);
-        let d = DroppedBlocks { blocks: 10, saturated: false };
+        let d = DroppedBlocks {
+            blocks: 10,
+            saturated: false,
+        };
         assert_eq!((d.bytes(), d.samples()), (1880, 940));
-        let s = DroppedBlocks { blocks: BLK_DROP_COUNTER_SATURATED, saturated: true };
+        let s = DroppedBlocks {
+            blocks: BLK_DROP_COUNTER_SATURATED,
+            saturated: true,
+        };
         assert_eq!(s.samples(), 255 * 94);
     }
 
@@ -622,6 +896,9 @@ mod tests {
         // The stop keeps the other bits of page 0 0x06 (opt_adc_iq at 0).
         assert_eq!(STOP.applied_to(0xB0), 0x30);
         assert_eq!((STOP.page, STOP.reg), (0, 0x06));
-        assert_eq!((PAUSE.page, PAUSE.reg, RESUME.page, RESUME.reg), (1, 0x01, 1, 0x01));
+        assert_eq!(
+            (PAUSE.page, PAUSE.reg, RESUME.page, RESUME.reg),
+            (1, 0x01, 1, 0x01)
+        );
     }
 }

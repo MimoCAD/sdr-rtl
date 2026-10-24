@@ -268,7 +268,10 @@ impl Strings {
 }
 
 fn refused(what: String) -> Error {
-    Error::Unsupported { backend: BACKEND, what }
+    Error::Unsupported {
+        backend: BACKEND,
+        what,
+    }
 }
 
 /// A string descriptor's characters: UTF-16LE after the two-byte header
@@ -301,7 +304,11 @@ const fn chars_in(bytes: usize) -> usize {
 /// round: nothing is then written above 0x7F, where a 128-byte part's
 /// addresses would wrap onto its header.
 pub fn part_size(raw: &[u8]) -> usize {
-    if raw.len() == EEPROM_ADDRESS_SPACE && raw[..EEPROM_SMALL_PART] == raw[EEPROM_SMALL_PART..] { EEPROM_SMALL_PART } else { raw.len() }
+    if raw.len() == EEPROM_ADDRESS_SPACE && raw[..EEPROM_SMALL_PART] == raw[EEPROM_SMALL_PART..] {
+        EEPROM_SMALL_PART
+    } else {
+        raw.len()
+    }
 }
 
 /// An image of the whole part, 128 or 256 bytes.
@@ -327,18 +334,30 @@ impl Eeprom {
     /// ([`part_size`]).
     pub fn from_read(raw: &[u8]) -> Result<Eeprom> {
         if raw.len() != EEPROM_ADDRESS_SPACE {
-            return Err(refused(format!("an EEPROM read is all {EEPROM_ADDRESS_SPACE} offsets; got {} bytes", raw.len())));
+            return Err(refused(format!(
+                "an EEPROM read is all {EEPROM_ADDRESS_SPACE} offsets; got {} bytes",
+                raw.len()
+            )));
         }
-        Ok(Eeprom { bytes: raw[..part_size(raw)].to_vec(), patch_list_allowed: false })
+        Ok(Eeprom {
+            bytes: raw[..part_size(raw)].to_vec(),
+            patch_list_allowed: false,
+        })
     }
 
     /// An image of a part as given (a backup file, a test vector): 128 or
     /// 256 bytes, no size detection.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Eeprom> {
         if bytes.len() != EEPROM_SMALL_PART && bytes.len() != EEPROM_ADDRESS_SPACE {
-            return Err(refused(format!("an EEPROM image is {EEPROM_SMALL_PART} or {EEPROM_ADDRESS_SPACE} bytes; got {}", bytes.len())));
+            return Err(refused(format!(
+                "an EEPROM image is {EEPROM_SMALL_PART} or {EEPROM_ADDRESS_SPACE} bytes; got {}",
+                bytes.len()
+            )));
         }
-        Ok(Eeprom { bytes, patch_list_allowed: false })
+        Ok(Eeprom {
+            bytes,
+            patch_list_allowed: false,
+        })
     }
 
     /// The part's size in bytes, 128 or 256.
@@ -359,7 +378,8 @@ impl Eeprom {
     /// Byte 0 = 0x12 or byte 1 = 0x34: the firmware would run its test
     /// record (eeprom.md §6).
     pub fn is_test_record(&self) -> bool {
-        self.bytes[SIGNATURE_OFF] == TEST_RECORD_BYTE0 || self.bytes[SIGNATURE_OFF + 1] == TEST_RECORD_BYTE1
+        self.bytes[SIGNATURE_OFF] == TEST_RECORD_BYTE0
+            || self.bytes[SIGNATURE_OFF + 1] == TEST_RECORD_BYTE1
     }
 
     /// The image with bytes 0-1 set to the signature and nothing else
@@ -374,7 +394,8 @@ impl Eeprom {
     /// The patch list's length in bytes as the firmware takes it (capped
     /// at 178, eeprom.md §5), or None without the marker at 0x4E.
     pub fn patch_list_len(&self) -> Option<usize> {
-        (self.bytes[PATCH_MARKER_OFF] == PATCH_MARKER).then(|| (self.bytes[PATCH_LENGTH_OFF] as usize).min(PATCH_LENGTH_CAP))
+        (self.bytes[PATCH_MARKER_OFF] == PATCH_MARKER)
+            .then(|| (self.bytes[PATCH_LENGTH_OFF] as usize).min(PATCH_LENGTH_CAP))
     }
 
     /// The same image, cleared to be written with a patch-list marker at
@@ -414,9 +435,16 @@ impl Eeprom {
     fn strings(&self) -> Result<Strings> {
         let b = &self.bytes;
         let at = |name: &str, start: usize| -> Result<Range<usize>> {
-            let len = *b.get(start).ok_or_else(|| refused(format!("the {name} descriptor would start at 0x{start:02X}, past the {}-byte part", b.len())))? as usize;
+            let len = *b.get(start).ok_or_else(|| {
+                refused(format!(
+                    "the {name} descriptor would start at 0x{start:02X}, past the {}-byte part",
+                    b.len()
+                ))
+            })? as usize;
             if len < DESCRIPTOR_HEADER {
-                return Err(refused(format!("the {name} descriptor at 0x{start:02X} has bLength {len}; a descriptor is at least {DESCRIPTOR_HEADER}")));
+                return Err(refused(format!(
+                    "the {name} descriptor at 0x{start:02X} has bLength {len}; a descriptor is at least {DESCRIPTOR_HEADER}"
+                )));
             }
             Ok(start..start + len)
         };
@@ -433,7 +461,10 @@ impl Eeprom {
         let serial = if b[SERIAL_FLAG_OFF] == SERIAL_PRESENT {
             let s = at("serial", product.end)?;
             if s.len() > SERIAL_MAX {
-                return Err(refused(format!("the serial descriptor is {} bytes; the firmware takes at most {SERIAL_MAX} (ROM 0x0CE5-0x0CEA)", s.len())));
+                return Err(refused(format!(
+                    "the serial descriptor is {} bytes; the firmware takes at most {SERIAL_MAX} (ROM 0x0CE5-0x0CEA)",
+                    s.len()
+                )));
             }
             Some(s)
         } else {
@@ -441,7 +472,11 @@ impl Eeprom {
         };
         // Within the limits every descriptor ends by 0x77, inside any part
         // (the assertion beside SERIAL_MAX).
-        Ok(Strings { manufacturer, product, serial })
+        Ok(Strings {
+            manufacturer,
+            product,
+            serial,
+        })
     }
 
     /// The offset just past the last string descriptor.
@@ -487,7 +522,11 @@ impl Eeprom {
                 config: EepromConfig(b[CONFIG_OFF] | EepromConfig::DEFAULTS_FORCED),
                 manufacturer: ROM_MANUFACTURER.into(),
                 product: ROM_PRODUCT.into(),
-                serial: if serial_present { ROM_SERIAL.into() } else { String::new() },
+                serial: if serial_present {
+                    ROM_SERIAL.into()
+                } else {
+                    String::new()
+                },
             }
         })
     }
@@ -562,7 +601,11 @@ impl Eeprom {
         b[STRINGS_OFF..end].copy_from_slice(&strings);
         b[end..].fill(0);
 
-        let kept = if changes.allow_patch_list { self.patch_list_len() } else { None };
+        let kept = if changes.allow_patch_list {
+            self.patch_list_len()
+        } else {
+            None
+        };
         if let Some(n) = kept {
             if end > PATCH_MARKER_OFF {
                 return Err(refused(format!(
@@ -577,7 +620,10 @@ impl Eeprom {
                 "the strings put 0x{PATCH_MARKER:02X} at 0x{PATCH_MARKER_OFF:02X}, the patch-list marker: the firmware would run the bytes after it as register patches at boot (findings 17, eeprom.md §5); a character U+5C00-U+5CFF lands there — move or replace it"
             )));
         }
-        Ok(Eeprom { bytes: b, patch_list_allowed: kept.is_some() })
+        Ok(Eeprom {
+            bytes: b,
+            patch_list_allowed: kept.is_some(),
+        })
     }
 }
 
@@ -637,32 +683,59 @@ pub(crate) async fn write(link: &crate::usb::Link, new: &Eeprom) -> Result<Eepro
             return Err(Error::Device {
                 backend: BACKEND,
                 context: "EEPROM write",
-                message: format!("chunk 0x{off:02X} ({} of {}, the ones before it written): {e}", i + 1, chunks.len()),
+                message: format!(
+                    "chunk 0x{off:02X} ({} of {}, the ones before it written): {e}",
+                    i + 1,
+                    chunks.len()
+                ),
             });
         }
         sdr_core::time::sleep(EEPROM_WRITE_CYCLE).await;
     }
     let back = read_raw(link).await?;
-    let differ: Vec<String> = (0..new.size()).filter(|&i| back[i] != new.bytes[i]).map(|i| format!("0x{i:02X}: wrote 0x{:02X}, read 0x{:02X}", new.bytes[i], back[i])).collect();
+    let differ: Vec<String> = (0..new.size())
+        .filter(|&i| back[i] != new.bytes[i])
+        .map(|i| {
+            format!(
+                "0x{i:02X}: wrote 0x{:02X}, read 0x{:02X}",
+                new.bytes[i], back[i]
+            )
+        })
+        .collect();
     if !differ.is_empty() {
-        return Err(Error::Device { backend: BACKEND, context: "EEPROM read-back", message: format!("{} bytes differ: {}", differ.len(), differ.join("; ")) });
+        return Err(Error::Device {
+            backend: BACKEND,
+            context: "EEPROM read-back",
+            message: format!("{} bytes differ: {}", differ.len(), differ.join("; ")),
+        });
     }
-    let bytes_changed = (0..new.size()).filter(|&i| before.bytes[i] != new.bytes[i]).count();
-    Ok(EepromWriteReport { before, chunks, bytes_changed })
+    let bytes_changed = (0..new.size())
+        .filter(|&i| before.bytes[i] != new.bytes[i])
+        .count();
+    Ok(EepromWriteReport {
+        before,
+        chunks,
+        bytes_changed,
+    })
 }
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
-    use alloc::string::ToString;
     use super::*;
     use crate::protocol::{ACCESS_GET, ACCESS_SET, windex};
+    use alloc::string::ToString;
 
     fn blank(size: usize) -> Eeprom {
         Eeprom::from_bytes(vec![0xFF; size]).unwrap()
     }
 
     fn changes(m: Option<&str>, p: Option<&str>, s: Option<&str>) -> EepromChanges {
-        EepromChanges { manufacturer: m.map(Into::into), product: p.map(Into::into), serial: s.map(Into::into), ..Default::default() }
+        EepromChanges {
+            manufacturer: m.map(Into::into),
+            product: p.map(Into::into),
+            serial: s.map(Into::into),
+            ..Default::default()
+        }
     }
 
     /// Findings 17's bench record with neutral strings of its strings'
@@ -670,8 +743,23 @@ mod tests {
     /// 0x16, "Example" / "Product" / "SN1".
     fn bench_record() -> Eeprom {
         let mut b = vec![0u8; EEPROM_SMALL_PART];
-        b[..9].copy_from_slice(&[0x28, 0x32, 0xDA, 0x0B, 0x38, 0x28, SERIAL_PRESENT, 0x16, 0x00]);
-        let strings = [descriptor("Example"), descriptor("Product"), descriptor("SN1")].concat();
+        b[..9].copy_from_slice(&[
+            0x28,
+            0x32,
+            0xDA,
+            0x0B,
+            0x38,
+            0x28,
+            SERIAL_PRESENT,
+            0x16,
+            0x00,
+        ]);
+        let strings = [
+            descriptor("Example"),
+            descriptor("Product"),
+            descriptor("SN1"),
+        ]
+        .concat();
         b[STRINGS_OFF..STRINGS_OFF + strings.len()].copy_from_slice(&strings);
         Eeprom::from_bytes(b).unwrap()
     }
@@ -690,11 +778,26 @@ mod tests {
     /// block 0 at the demodulator's 0x20 are not.
     #[test]
     fn block0_to_the_eeprom_is_recognised() {
-        assert!(block0_addresses_eeprom(0x00A0, windex(BLOCK_DEMOD, ACCESS_GET, 0)));
-        assert!(block0_addresses_eeprom(0x10A1, windex(BLOCK_DEMOD, ACCESS_SET, 3)));
-        assert!(!block0_addresses_eeprom(wvalue_eeprom(0), windex(EEPROM_BLOCK, ACCESS_GET, 0)));
-        assert!(!block0_addresses_eeprom(wvalue_eeprom(0), windex(EEPROM_BLOCK, ACCESS_SET, 0)));
-        assert!(!block0_addresses_eeprom(0x0120, windex(BLOCK_DEMOD, ACCESS_SET, 1)));
+        assert!(block0_addresses_eeprom(
+            0x00A0,
+            windex(BLOCK_DEMOD, ACCESS_GET, 0)
+        ));
+        assert!(block0_addresses_eeprom(
+            0x10A1,
+            windex(BLOCK_DEMOD, ACCESS_SET, 3)
+        ));
+        assert!(!block0_addresses_eeprom(
+            wvalue_eeprom(0),
+            windex(EEPROM_BLOCK, ACCESS_GET, 0)
+        ));
+        assert!(!block0_addresses_eeprom(
+            wvalue_eeprom(0),
+            windex(EEPROM_BLOCK, ACCESS_SET, 0)
+        ));
+        assert!(!block0_addresses_eeprom(
+            0x0120,
+            windex(BLOCK_DEMOD, ACCESS_SET, 1)
+        ));
     }
 
     /// Findings 17: a 128-byte part repeats in 0x80-0xFF.
@@ -706,9 +809,21 @@ mod tests {
         assert_eq!(Eeprom::from_read(&mirrored).unwrap(), bench_record());
         let mut distinct = mirrored.clone();
         distinct[0xC0] ^= 1;
-        assert_eq!(Eeprom::from_read(&distinct).unwrap().size(), EEPROM_ADDRESS_SPACE);
-        assert_eq!(Eeprom::from_read(&[0xFF; EEPROM_ADDRESS_SPACE]).unwrap().size(), EEPROM_SMALL_PART, "equal halves: the safe size");
-        assert!(Eeprom::from_read(&low).is_err(), "a read is all 256 offsets");
+        assert_eq!(
+            Eeprom::from_read(&distinct).unwrap().size(),
+            EEPROM_ADDRESS_SPACE
+        );
+        assert_eq!(
+            Eeprom::from_read(&[0xFF; EEPROM_ADDRESS_SPACE])
+                .unwrap()
+                .size(),
+            EEPROM_SMALL_PART,
+            "equal halves: the safe size"
+        );
+        assert!(
+            Eeprom::from_read(&low).is_err(),
+            "a read is all 256 offsets"
+        );
         assert!(Eeprom::from_bytes(vec![0; 100]).is_err());
     }
 
@@ -719,10 +834,22 @@ mod tests {
         let id = e.identity().unwrap();
         assert_eq!((id.vid, id.pid), (0x0BDA, 0x2838));
         assert!(id.serial_present);
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("Example", "Product", "SN1"));
+        assert_eq!(
+            (
+                id.manufacturer.as_str(),
+                id.product.as_str(),
+                id.serial.as_str()
+            ),
+            ("Example", "Product", "SN1")
+        );
         assert_eq!(id.config, EepromConfig(0x16));
-        assert!(id.config.second_interface() && id.config.gpio_setup() && !id.config.remote_wakeup());
-        assert!(!id.config.demod_ctl_1_set() && !id.config.demod_ctl_1_bit1_clear(), "bit 4 alone acts only with bit 3");
+        assert!(
+            id.config.second_interface() && id.config.gpio_setup() && !id.config.remote_wakeup()
+        );
+        assert!(
+            !id.config.demod_ctl_1_set() && !id.config.demod_ctl_1_bit1_clear(),
+            "bit 4 alone acts only with bit 3"
+        );
         // 0x09 + 16 + 16 + 8 (findings 17: "chained by bLength exactly").
         assert_eq!(e.strings_end().unwrap(), 0x31);
         assert_eq!(e.served_identity(), id);
@@ -737,12 +864,19 @@ mod tests {
         let broken = Eeprom::from_bytes(b).unwrap();
         assert!(!broken.is_valid());
         assert_eq!(broken.served_identity(), EepromIdentity::rom_defaults());
-        assert_eq!(broken.identity().unwrap(), bench_record().identity().unwrap(), "the record is still readable");
+        assert_eq!(
+            broken.identity().unwrap(),
+            bench_record().identity().unwrap(),
+            "the record is still readable"
+        );
         let repaired = broken.with_signature();
         assert!(repaired.is_valid());
         assert_eq!(repaired, bench_record());
         // Composing with no change does the same.
-        assert_eq!(broken.compose(&EepromChanges::default()).unwrap(), bench_record());
+        assert_eq!(
+            broken.compose(&EepromChanges::default()).unwrap(),
+            bench_record()
+        );
     }
 
     #[test]
@@ -750,30 +884,63 @@ mod tests {
         let e = bench_record();
         let new = e.compose(&changes(None, None, Some("SN2"))).unwrap();
         let id = new.identity().unwrap();
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("Example", "Product", "SN2"));
-        assert_eq!((id.vid, id.pid, id.config), (0x0BDA, 0x2838, EepromConfig(0x16)));
+        assert_eq!(
+            (
+                id.manufacturer.as_str(),
+                id.product.as_str(),
+                id.serial.as_str()
+            ),
+            ("Example", "Product", "SN2")
+        );
+        assert_eq!(
+            (id.vid, id.pid, id.config),
+            (0x0BDA, 0x2838, EepromConfig(0x16))
+        );
         assert_eq!(new.bytes()[..STRINGS_OFF], e.bytes()[..STRINGS_OFF]);
         assert_eq!(changed_chunks(&e, &new), vec![0x28]);
 
-        let ids = e.compose(&EepromChanges { vid: Some(0x1234), pid: Some(0x5678), ..Default::default() }).unwrap();
-        assert_eq!(&ids.bytes()[VID_OFF..PID_OFF + 2], &[0x34, 0x12, 0x78, 0x56]);
+        let ids = e
+            .compose(&EepromChanges {
+                vid: Some(0x1234),
+                pid: Some(0x5678),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            &ids.bytes()[VID_OFF..PID_OFF + 2],
+            &[0x34, 0x12, 0x78, 0x56]
+        );
         assert_eq!(ids.identity().unwrap().serial, "SN1");
 
-        let all = e.compose(&changes(Some("Ägypten"), Some("Ω"), Some("123"))).unwrap();
+        let all = e
+            .compose(&changes(Some("Ägypten"), Some("Ω"), Some("123")))
+            .unwrap();
         let id = all.identity().unwrap();
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), ("Ägypten", "Ω", "123"));
+        assert_eq!(
+            (
+                id.manufacturer.as_str(),
+                id.product.as_str(),
+                id.serial.as_str()
+            ),
+            ("Ägypten", "Ω", "123")
+        );
         assert_eq!(all.bytes()[STRINGS_OFF + 1], STRING_DESCRIPTOR_TYPE);
     }
 
     #[test]
     fn an_empty_serial_removes_it() {
-        let new = bench_record().compose(&changes(None, None, Some(""))).unwrap();
+        let new = bench_record()
+            .compose(&changes(None, None, Some("")))
+            .unwrap();
         assert_eq!(new.bytes()[SERIAL_FLAG_OFF], SERIAL_ABSENT);
         let id = new.identity().unwrap();
         assert!(!id.serial_present);
         assert_eq!(id.serial, "");
         assert_eq!(new.strings_end().unwrap(), 0x29);
-        assert!(new.bytes()[0x29..].iter().all(|&b| b == 0), "the old serial is zeroed");
+        assert!(
+            new.bytes()[0x29..].iter().all(|&b| b == 0),
+            "the old serial is zeroed"
+        );
         // And back.
         let again = new.compose(&changes(None, None, Some("SN1"))).unwrap();
         assert_eq!(again, bench_record());
@@ -792,7 +959,10 @@ mod tests {
             let end = new.strings_end().unwrap();
             assert_eq!(end, 0x2D);
             assert_eq!(new.size(), size);
-            assert!(new.bytes()[end..].iter().all(|&b| b == 0), "{size}-byte part");
+            assert!(
+                new.bytes()[end..].iter().all(|&b| b == 0),
+                "{size}-byte part"
+            );
         }
     }
 
@@ -808,15 +978,33 @@ mod tests {
         assert!(new.is_valid());
         let id = new.identity().unwrap();
         assert_eq!((id.vid, id.pid), (ROM_VID, ROM_PID));
-        assert_eq!((id.manufacturer.as_str(), id.product.as_str(), id.serial.as_str()), (ROM_MANUFACTURER, ROM_PRODUCT, "SN2"));
-        assert_eq!(id.config, EepromConfig(EepromConfig::REMOTE_WAKEUP | EepromConfig::GPIO_SETUP));
+        assert_eq!(
+            (
+                id.manufacturer.as_str(),
+                id.product.as_str(),
+                id.serial.as_str()
+            ),
+            (ROM_MANUFACTURER, ROM_PRODUCT, "SN2")
+        );
+        assert_eq!(
+            id.config,
+            EepromConfig(EepromConfig::REMOTE_WAKEUP | EepromConfig::GPIO_SETUP)
+        );
         assert_eq!(new.bytes()[TEST_SLAVE_OFF], 0xFF, "byte 8 is kept");
         // The ROM's own descriptors are 16 and 18 bytes (0x0E40, 0x0E50)
         // and the default serial 36 (0x0E62's 17 characters).
         assert_eq!(descriptor(ROM_MANUFACTURER).len(), 16);
         assert_eq!(descriptor(ROM_PRODUCT).len(), 18);
         assert_eq!(descriptor(ROM_SERIAL).len(), 36);
-        assert!(blank(EEPROM_SMALL_PART).compose(&EepromChanges::default()).unwrap().identity().unwrap().serial == ROM_SERIAL);
+        assert!(
+            blank(EEPROM_SMALL_PART)
+                .compose(&EepromChanges::default())
+                .unwrap()
+                .identity()
+                .unwrap()
+                .serial
+                == ROM_SERIAL
+        );
     }
 
     /// A valid record whose strings break the limits is served with its
@@ -829,29 +1017,65 @@ mod tests {
         assert!(e.identity().is_err());
         let served = e.served_identity();
         assert_eq!((served.vid, served.pid), (0x0BDA, 0x2838));
-        assert_eq!(served.config, EepromConfig(0x16 | EepromConfig::DEFAULTS_FORCED));
-        assert_eq!((served.manufacturer.as_str(), served.serial.as_str()), (ROM_MANUFACTURER, ROM_SERIAL));
+        assert_eq!(
+            served.config,
+            EepromConfig(0x16 | EepromConfig::DEFAULTS_FORCED)
+        );
+        assert_eq!(
+            (served.manufacturer.as_str(), served.serial.as_str()),
+            (ROM_MANUFACTURER, ROM_SERIAL)
+        );
     }
 
     #[test]
     fn the_firmwares_limits_are_refused_by_name() {
         let e = bench_record();
         // 70 bytes of manufacturer + product: 33 characters in all.
-        let at_limit = e.compose(&changes(Some(&"M".repeat(16)), Some(&"P".repeat(17)), None)).unwrap();
+        let at_limit = e
+            .compose(&changes(Some(&"M".repeat(16)), Some(&"P".repeat(17)), None))
+            .unwrap();
         assert_eq!(at_limit.identity().unwrap().product.len(), 17);
-        let over = e.compose(&changes(Some(&"M".repeat(17)), Some(&"P".repeat(17)), None)).unwrap_err().to_string();
-        assert!(over.contains("at most 70") && over.contains("33 characters"), "{over}");
+        let over = e
+            .compose(&changes(Some(&"M".repeat(17)), Some(&"P".repeat(17)), None))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            over.contains("at most 70") && over.contains("33 characters"),
+            "{over}"
+        );
         // 40 bytes of serial: 19 characters.
-        assert!(e.compose(&changes(None, None, Some(&"S".repeat(19)))).is_ok());
-        let over = e.compose(&changes(None, None, Some(&"S".repeat(20)))).unwrap_err().to_string();
-        assert!(over.contains("at most 40") && over.contains("19 characters"), "{over}");
+        assert!(
+            e.compose(&changes(None, None, Some(&"S".repeat(19))))
+                .is_ok()
+        );
+        let over = e
+            .compose(&changes(None, None, Some(&"S".repeat(20))))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            over.contains("at most 40") && over.contains("19 characters"),
+            "{over}"
+        );
         // The longest identity ends at 0x77, inside a 128-byte part.
-        let longest = blank(EEPROM_SMALL_PART).compose(&changes(Some(&"M".repeat(16)), Some(&"P".repeat(17)), Some(&"S".repeat(19)))).unwrap();
+        let longest = blank(EEPROM_SMALL_PART)
+            .compose(&changes(
+                Some(&"M".repeat(16)),
+                Some(&"P".repeat(17)),
+                Some(&"S".repeat(19)),
+            ))
+            .unwrap();
         assert_eq!(longest.strings_end().unwrap(), 0x77);
         // A descriptor shorter than its own header is refused on parse.
         let mut b = bench_record().bytes().to_vec();
         b[0x19] = 0;
-        assert!(Eeprom::from_bytes(b).unwrap().identity().unwrap_err().to_string().contains("bLength 0"));
+        assert!(
+            Eeprom::from_bytes(b)
+                .unwrap()
+                .identity()
+                .unwrap_err()
+                .to_string()
+                .contains("bLength 0")
+        );
     }
 
     /// A string byte can land on 0x4E as 0x5C only as the high byte of a
@@ -859,15 +1083,25 @@ mod tests {
     /// one-character manufacturer (0x09 + 4 + 2 + 2·31 + 1 = 0x4E).
     #[test]
     fn a_marker_from_the_strings_is_refused() {
-        let product: String = std::iter::repeat_n('P', 31).chain(std::iter::once('\u{5C41}')).collect();
+        let product: String = std::iter::repeat_n('P', 31)
+            .chain(std::iter::once('\u{5C41}'))
+            .collect();
         let c = changes(Some("A"), Some(&product), Some(""));
         let err = bench_record().compose(&c).unwrap_err().to_string();
         assert!(err.contains("0x4E") && err.contains("0x5C"), "{err}");
-        let c = EepromChanges { allow_patch_list: true, ..c };
-        assert!(bench_record().compose(&c).is_err(), "the strings are never a patch list");
+        let c = EepromChanges {
+            allow_patch_list: true,
+            ..c
+        };
+        assert!(
+            bench_record().compose(&c).is_err(),
+            "the strings are never a patch list"
+        );
         // The same length with an ASCII character is fine: its high byte is 0.
         let product: String = "P".repeat(32);
-        let ok = bench_record().compose(&changes(Some("A"), Some(&product), Some(""))).unwrap();
+        let ok = bench_record()
+            .compose(&changes(Some("A"), Some(&product), Some("")))
+            .unwrap();
         assert_eq!(ok.bytes()[PATCH_MARKER_OFF], 0x00);
         assert!(ok.check_writable().is_ok());
     }
@@ -884,23 +1118,54 @@ mod tests {
         let with_list = Eeprom::from_bytes(b).unwrap();
         assert_eq!(with_list.patch_list_len(), Some(3));
         assert!(with_list.check_writable().is_err());
-        assert!(with_list.clone().allowing_patch_list().check_writable().is_ok());
+        assert!(
+            with_list
+                .clone()
+                .allowing_patch_list()
+                .check_writable()
+                .is_ok()
+        );
 
-        let removed = with_list.compose(&changes(None, None, Some("SN2"))).unwrap();
+        let removed = with_list
+            .compose(&changes(None, None, Some("SN2")))
+            .unwrap();
         assert_eq!(removed.patch_list_len(), None);
         assert!(removed.bytes()[0x31..].iter().all(|&b| b == 0));
 
-        let kept = with_list.compose(&EepromChanges { serial: Some("SN2".into()), allow_patch_list: true, ..Default::default() }).unwrap();
-        assert_eq!(&kept.bytes()[PATCH_MARKER_OFF..PATCH_RECORDS_OFF + 3], &[PATCH_MARKER, 3, 0x30, 0x03, 0x01]);
+        let kept = with_list
+            .compose(&EepromChanges {
+                serial: Some("SN2".into()),
+                allow_patch_list: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            &kept.bytes()[PATCH_MARKER_OFF..PATCH_RECORDS_OFF + 3],
+            &[PATCH_MARKER, 3, 0x30, 0x03, 0x01]
+        );
         assert_eq!(kept.bytes()[0x60], 0, "past the list the tail is zeroed");
         assert!(kept.check_writable().is_ok());
         // Strings reaching 0x4E would overwrite the list kept.
-        let long = EepromChanges { manufacturer: Some("M".repeat(16)), product: Some("P".repeat(17)), allow_patch_list: true, ..Default::default() };
-        assert!(with_list.compose(&long).unwrap_err().to_string().contains("patch list kept"));
+        let long = EepromChanges {
+            manufacturer: Some("M".repeat(16)),
+            product: Some("P".repeat(17)),
+            allow_patch_list: true,
+            ..Default::default()
+        };
+        assert!(
+            with_list
+                .compose(&long)
+                .unwrap_err()
+                .to_string()
+                .contains("patch list kept")
+        );
         // The cap: a length byte over 178 counts as 178 (eeprom.md §5).
         let mut b = with_list.bytes().to_vec();
         b[PATCH_LENGTH_OFF] = 0xFF;
-        assert_eq!(Eeprom::from_bytes(b).unwrap().patch_list_len(), Some(PATCH_LENGTH_CAP));
+        assert_eq!(
+            Eeprom::from_bytes(b).unwrap().patch_list_len(),
+            Some(PATCH_LENGTH_CAP)
+        );
     }
 
     /// eeprom.md §6: a driver keeps byte 0 ≠ 0x12 and byte 1 ≠ 0x34.
@@ -911,9 +1176,20 @@ mod tests {
             b[i] = v;
             let e = Eeprom::from_bytes(b).unwrap();
             assert!(e.is_test_record());
-            assert!(e.check_writable().unwrap_err().to_string().contains("test record"));
+            assert!(
+                e.check_writable()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("test record")
+            );
             assert_eq!(e.served_identity(), EepromIdentity::rom_defaults());
-            assert!(e.compose(&EepromChanges::default()).unwrap().check_writable().is_ok(), "compose writes the signature");
+            assert!(
+                e.compose(&EepromChanges::default())
+                    .unwrap()
+                    .check_writable()
+                    .is_ok(),
+                "compose writes the signature"
+            );
         }
     }
 
@@ -928,6 +1204,10 @@ mod tests {
         let b = Eeprom::from_bytes(b).unwrap();
         assert_eq!(changed_chunks(&a, &b), vec![0x10, 0x18, 0x78]);
         assert!(changed_chunks(&a, &a).is_empty());
-        assert!(changed_chunks(&a, &b).iter().all(|off| off % EEPROM_WRITE_CHUNK == 0 && off + EEPROM_WRITE_CHUNK <= b.size()));
+        assert!(
+            changed_chunks(&a, &b)
+                .iter()
+                .all(|off| off % EEPROM_WRITE_CHUNK == 0 && off + EEPROM_WRITE_CHUNK <= b.size())
+        );
     }
 }

@@ -34,11 +34,15 @@ use std::time::{Duration, Instant};
 
 use bench::*;
 use sdr_core::Iq;
-use sdr_rtl::protocol::{ACCESS_GET, ACCESS_SET, BLK_DROP_COUNTER, BLOCK_USB, USB_EPA_FIFO_CFG, windex, wvalue_usb};
 use sdr_rtl::OPEN_RF_HZ;
 use sdr_rtl::blocking::{Rtl, RtlStream};
+use sdr_rtl::protocol::{
+    ACCESS_GET, ACCESS_SET, BLK_DROP_COUNTER, BLOCK_USB, USB_EPA_FIFO_CFG, windex, wvalue_usb,
+};
 
-const CANDIDATES: [u8; 13] = [0x05, 0x0A, 0x14, 0x18, 0x1C, 0x1F, 0x20, 0x28, 0x30, 0x40, 0x60, 0x80, 0xFF];
+const CANDIDATES: [u8; 13] = [
+    0x05, 0x0A, 0x14, 0x18, 0x1C, 0x1F, 0x20, 0x28, 0x30, 0x40, 0x60, 0x80, 0xFF,
+];
 /// The output rate unless `--rate` says otherwise.
 const DEFAULT_RATE_SPS: f64 = 2.4e6;
 const OFFSET_HZ: f64 = 300e3;
@@ -50,12 +54,27 @@ const CLEAN: Duration = Duration::from_secs(1);
 const TONE_TOL_BINS: usize = 16;
 
 fn read_cfg(rtl: &Rtl) -> Result<[u8; 4], String> {
-    let v = rtl.link().get(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_GET, 0), 4, "USB_EPA_FIFO_CFG read").map_err(|e| e.to_string())?;
+    let v = rtl
+        .link()
+        .get(
+            wvalue_usb(USB_EPA_FIFO_CFG),
+            windex(BLOCK_USB, ACCESS_GET, 0),
+            4,
+            "USB_EPA_FIFO_CFG read",
+        )
+        .map_err(|e| e.to_string())?;
     Ok([v[0], v[1], v[2], v[3]])
 }
 
 fn write_cfg(rtl: &Rtl, b: [u8; 4]) -> Result<(), String> {
-    rtl.link().set(wvalue_usb(USB_EPA_FIFO_CFG), windex(BLOCK_USB, ACCESS_SET, 0), &b, "USB_EPA_FIFO_CFG write").map_err(|e| e.to_string())
+    rtl.link()
+        .set(
+            wvalue_usb(USB_EPA_FIFO_CFG),
+            windex(BLOCK_USB, ACCESS_SET, 0),
+            &b,
+            "USB_EPA_FIFO_CFG write",
+        )
+        .map_err(|e| e.to_string())
 }
 
 fn wrap(a: f64) -> f64 {
@@ -82,7 +101,10 @@ impl Phase {
                 let e = wrap(s - self.step);
                 if e.abs() > JUMP_RAD {
                     self.jumps += 1;
-                    if self.last_poll.is_some_and(|lp| self.n >= lp && self.n - lp <= self.near_window) {
+                    if self
+                        .last_poll
+                        .is_some_and(|lp| self.n >= lp && self.n - lp <= self.near_window)
+                    {
                         self.near += 1;
                     }
                 } else {
@@ -104,18 +126,32 @@ fn one(src: &mut Source, value: u8, polls: u32, rate: f64) -> Result<String, Str
     write_cfg(&rtl, wrote)?;
     let back = read_cfg(&rtl)?;
     src.tone(OPEN_RF_HZ + OFFSET_HZ)?;
-    let mut s = rtl.rx_stream(TRANSFER_BYTES, QUEUE_DEPTH).map_err(|e| e.to_string())?;
+    let mut s = rtl
+        .rx_stream(TRANSFER_BYTES, QUEUE_DEPTH)
+        .map_err(|e| e.to_string())?;
     let mut buf = vec![Iq::default(); s.max_num_samps()];
-    let mut ph = Phase { prev: None, step: 2.0 * PI * OFFSET_HZ / rate, n: 0, jumps: 0, near: 0, last_poll: None, near_window: (rate * NEAR_POLL_S) as u64 };
+    let mut ph = Phase {
+        prev: None,
+        step: 2.0 * PI * OFFSET_HZ / rate,
+        n: 0,
+        jumps: 0,
+        near: 0,
+        last_poll: None,
+        near_window: (rate * NEAR_POLL_S) as u64,
+    };
     if let Err(e) = s.start() {
-        return Ok(format!("\"cycle\":\"{cycle}\",\"before\":{before:?},\"wrote\":{wrote:?},\"read_back\":{back:?},\"start_error\":\"{e}\""));
+        return Ok(format!(
+            "\"cycle\":\"{cycle}\",\"before\":{before:?},\"wrote\":{wrote:?},\"read_back\":{back:?},\"start_error\":\"{e}\""
+        ));
     }
     // 2. Clean: no control traffic.
     let t = Instant::now();
     let mut clean: Vec<Iq> = Vec::new();
     let mut timeouts = 0usize;
     while t.elapsed() < CLEAN {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         timeouts += info.timed_out as usize;
         ph.feed(&buf[..info.n_samples]);
         if clean.len() < FFT_N * SEGMENTS {
@@ -137,11 +173,15 @@ fn one(src: &mut Source, value: u8, polls: u32, rate: f64) -> Result<String, Str
     let mut next = POLL;
     let mut done = 0u32;
     while done < polls {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         timeouts += info.timed_out as usize;
         ph.feed(&buf[..info.n_samples]);
         if t.elapsed() >= next {
-            rtl.link().usb_read8(BLK_DROP_COUNTER).map_err(|e| e.to_string())?;
+            rtl.link()
+                .usb_read8(BLK_DROP_COUNTER)
+                .map_err(|e| e.to_string())?;
             ph.last_poll = Some(ph.n);
             done += 1;
             next += POLL;
@@ -150,7 +190,9 @@ fn one(src: &mut Source, value: u8, polls: u32, rate: f64) -> Result<String, Str
     // Read on for one more poll interval so the last read's loss is in.
     let t_end = t.elapsed() + POLL;
     while t.elapsed() < t_end {
-        let info = s.recv_into(&mut buf, RECV_TIMEOUT_S).map_err(|e| e.to_string())?;
+        let info = s
+            .recv_into(&mut buf, RECV_TIMEOUT_S)
+            .map_err(|e| e.to_string())?;
         ph.feed(&buf[..info.n_samples]);
     }
     let polled_s = t.elapsed().as_secs_f64();
@@ -176,12 +218,29 @@ fn take(s: &mut RtlStream) -> Result<(u8, bool), String> {
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let values: Vec<u8> = match args.iter().position(|a| a == "--values").and_then(|i| args.get(i + 1)) {
-        Some(list) => list.split(',').filter_map(|v| u8::from_str_radix(v.trim_start_matches("0x"), 16).ok()).collect(),
+    let values: Vec<u8> = match args
+        .iter()
+        .position(|a| a == "--values")
+        .and_then(|i| args.get(i + 1))
+    {
+        Some(list) => list
+            .split(',')
+            .filter_map(|v| u8::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+            .collect(),
         None => CANDIDATES.to_vec(),
     };
-    let polls: u32 = args.iter().position(|a| a == "--polls").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(50);
-    let rate: f64 = args.iter().position(|a| a == "--rate").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_RATE_SPS);
+    let polls: u32 = args
+        .iter()
+        .position(|a| a == "--polls")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    let rate: f64 = args
+        .iter()
+        .position(|a| a == "--rate")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_RATE_SPS);
     let mut src = Source::spawn(SOURCE_CMD, 0, -15)?;
     for v in values {
         eprintln!("candidate 0x{v:02X}");

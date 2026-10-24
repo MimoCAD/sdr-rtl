@@ -68,7 +68,9 @@ fn predict(path: &str, fs: f64, narrow: f64) {
     let mut inband: BTreeMap<(i64, String), BTreeMap<i64, f64>> = BTreeMap::new();
     let mut rows = Vec::new();
     for l in data.lines() {
-        let (Some(set), Some(rate)) = (text(l, "set"), num(l, "rate")) else { continue };
+        let (Some(set), Some(rate)) = (text(l, "set"), num(l, "rate")) else {
+            continue;
+        };
         if l.contains("\"kind\":\"sweep_head\"") {
             let Some(h) = text(l, "hex") else { continue };
             let mut r = [0u8; 20];
@@ -78,11 +80,25 @@ fn predict(path: &str, fs: f64, narrow: f64) {
             fields_of.insert(set, sdr_rtl::taps::unpack(&r));
             continue;
         }
-        let (Some(d), Some(st), Some(sd)) = (num(l, "delta"), num(l, "staged_hz"), num(l, "staged_dbfs")) else { continue };
+        let (Some(d), Some(st), Some(sd)) =
+            (num(l, "delta"), num(l, "staged_hz"), num(l, "staged_dbfs"))
+        else {
+            continue;
+        };
         if d.abs() < rate / 2.0 - 25e3 {
-            inband.entry((rate as i64, set.clone())).or_default().insert(d as i64, num(l, "plain_dbfs").unwrap_or(f64::NAN));
+            inband
+                .entry((rate as i64, set.clone()))
+                .or_default()
+                .insert(d as i64, num(l, "plain_dbfs").unwrap_or(f64::NAN));
         } else if d.abs() > 1.25e6 {
-            rows.push((rate, set, d, st, sd, num(l, "median_dbfs").unwrap_or(f64::NAN)));
+            rows.push((
+                rate,
+                set,
+                d,
+                st,
+                sd,
+                num(l, "median_dbfs").unwrap_or(f64::NAN),
+            ));
         }
     }
     // Model A (the FIR, then a 2.4 MHz fold): the in-band level at the
@@ -92,8 +108,14 @@ fn predict(path: &str, fs: f64, narrow: f64) {
     let mut a: BTreeMap<(i64, String, bool), Vec<f64>> = BTreeMap::new();
     let mut b: BTreeMap<(i64, String, bool), Vec<f64>> = BTreeMap::new();
     for (rate, set, d, land, measured, floor) in rows {
-        let (Some(fields), Some(ib)) = (fields_of.get(&set), inband.get(&(rate as i64, set.clone()))) else { continue };
-        let Some((_, l_land)) = ib.iter().min_by_key(|(k, _)| (**k - land as i64).abs()) else { continue };
+        let (Some(fields), Some(ib)) =
+            (fields_of.get(&set), inband.get(&(rate as i64, set.clone())))
+        else {
+            continue;
+        };
+        let Some((_, l_land)) = ib.iter().min_by_key(|(k, _)| (**k - land as i64).abs()) else {
+            continue;
+        };
         let predicted = l_land + fir_db(fields, d, fs, narrow) - fir_db(fields, land, fs, narrow);
         let key = (rate as i64, set, d > 0.0);
         if measured > floor + 10.0 && predicted > floor + 10.0 {
@@ -105,9 +127,14 @@ fn predict(path: &str, fs: f64, narrow: f64) {
     }
     let stats = |v: &[f64]| {
         let mean = v.iter().sum::<f64>() / v.len() as f64;
-        (mean, (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64).sqrt())
+        (
+            mean,
+            (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64).sqrt(),
+        )
     };
-    println!("aliases beyond ±1.25 MHz; A: FIR then fold (narrow weight {narrow:.3}), B: shift ahead of the FIR — mean and spread of measured − model (dB):");
+    println!(
+        "aliases beyond ±1.25 MHz; A: FIR then fold (narrow weight {narrow:.3}), B: shift ahead of the FIR — mean and spread of measured − model (dB):"
+    );
     for (key, va) in &a {
         let (ma, sa) = stats(va);
         let (mb, sb) = b.get(key).map(|v| stats(v)).unwrap_or((f64::NAN, f64::NAN));
@@ -134,7 +161,9 @@ fn residual(path: &str, fs: f64, narrow: f64, grid: f64) {
     // (rate, set) → Δ → (dBFS, floor)
     let mut pts: BTreeMap<(i64, String), BTreeMap<i64, (f64, f64)>> = BTreeMap::new();
     for l in data.lines() {
-        let (Some(set), Some(rate)) = (text(l, "set"), num(l, "rate")) else { continue };
+        let (Some(set), Some(rate)) = (text(l, "set"), num(l, "rate")) else {
+            continue;
+        };
         if l.contains("\"kind\":\"sweep_head\"") {
             let Some(h) = text(l, "hex") else { continue };
             let mut r = [0u8; 20];
@@ -144,20 +173,47 @@ fn residual(path: &str, fs: f64, narrow: f64, grid: f64) {
             fields_of.insert(set, sdr_rtl::taps::unpack(&r));
             continue;
         }
-        let (Some(d), Some(p), Some(s), Some(fl)) = (num(l, "delta"), num(l, "plain_dbfs"), num(l, "staged_dbfs"), num(l, "median_dbfs")) else { continue };
-        pts.entry((rate as i64, set)).or_default().insert(d as i64, (p.max(s), fl));
+        let (Some(d), Some(p), Some(s), Some(fl)) = (
+            num(l, "delta"),
+            num(l, "plain_dbfs"),
+            num(l, "staged_dbfs"),
+            num(l, "median_dbfs"),
+        ) else {
+            continue;
+        };
+        pts.entry((rate as i64, set))
+            .or_default()
+            .insert(d as i64, (p.max(s), fl));
     }
-    let rates: Vec<i64> = pts.keys().map(|k| k.0).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let rates: Vec<i64> = pts
+        .keys()
+        .map(|k| k.0)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     for rate in rates {
         let sets: Vec<&String> = pts.keys().filter(|k| k.0 == rate).map(|k| &k.1).collect();
-        println!("## {:.3} Msps: rest of the chain (dB re 0 Hz), measured − FIR model", rate as f64 / 1e6);
-        println!("| Δ MHz | {} |", sets.iter().map(|s| s.chars().take(12).collect::<String>()).collect::<Vec<_>>().join(" | "));
+        println!(
+            "## {:.3} Msps: rest of the chain (dB re 0 Hz), measured − FIR model",
+            rate as f64 / 1e6
+        );
+        println!(
+            "| Δ MHz | {} |",
+            sets.iter()
+                .map(|s| s.chars().take(12).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
         println!("|---|{}", "---|".repeat(sets.len()));
         let refs: Vec<f64> = sets
             .iter()
             .map(|s| {
                 let m = &pts[&(rate, (*s).clone())];
-                let v: Vec<f64> = m.iter().filter(|(d, _)| d.abs() <= 300_000).map(|(_, (x, _))| *x).collect();
+                let v: Vec<f64> = m
+                    .iter()
+                    .filter(|(d, _)| d.abs() <= 300_000)
+                    .map(|(_, (x, _))| *x)
+                    .collect();
                 v.iter().sum::<f64>() / v.len().max(1) as f64
             })
             .collect();
@@ -171,11 +227,17 @@ fn residual(path: &str, fs: f64, narrow: f64, grid: f64) {
             let cells: Vec<String> = sets
                 .iter()
                 .zip(&refs)
-                .map(|(s, r)| match (pts[&(rate, (*s).clone())].get(&d), fields_of.get(*s)) {
-                    (Some((x, fl)), Some(f)) if *x > fl + 6.0 => format!("{:+.1}", (x - r) - (fir_db(f, d as f64, fs, narrow) - fir_db(f, 0.0, fs, narrow))),
-                    (Some(_), _) => ".".into(),
-                    _ => "".into(),
-                })
+                .map(
+                    |(s, r)| match (pts[&(rate, (*s).clone())].get(&d), fields_of.get(*s)) {
+                        (Some((x, fl)), Some(f)) if *x > fl + 6.0 => format!(
+                            "{:+.1}",
+                            (x - r)
+                                - (fir_db(f, d as f64, fs, narrow) - fir_db(f, 0.0, fs, narrow))
+                        ),
+                        (Some(_), _) => ".".into(),
+                        _ => "".into(),
+                    },
+                )
                 .collect();
             println!("| {:+.3} | {} |", d as f64 / 1e6, cells.join(" | "));
         }
@@ -186,23 +248,62 @@ fn residual(path: &str, fs: f64, narrow: f64, grid: f64) {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(i) = args.iter().position(|a| a == "--residual") {
-        let fs: f64 = args.iter().position(|a| a == "--fs").and_then(|j| args.get(j + 1)).and_then(|v| v.parse().ok()).unwrap_or(28.8e6);
-        let narrow: f64 = args.iter().position(|a| a == "--narrow").and_then(|j| args.get(j + 1)).and_then(|v| v.parse().ok()).unwrap_or(1.0);
-        let grid: f64 = args.iter().position(|a| a == "--grid").and_then(|j| args.get(j + 1)).and_then(|v| v.parse().ok()).unwrap_or(200e3);
-        residual(args.get(i + 1).map(String::as_str).unwrap_or(""), fs, narrow, grid);
+        let fs: f64 = args
+            .iter()
+            .position(|a| a == "--fs")
+            .and_then(|j| args.get(j + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(28.8e6);
+        let narrow: f64 = args
+            .iter()
+            .position(|a| a == "--narrow")
+            .and_then(|j| args.get(j + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        let grid: f64 = args
+            .iter()
+            .position(|a| a == "--grid")
+            .and_then(|j| args.get(j + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200e3);
+        residual(
+            args.get(i + 1).map(String::as_str).unwrap_or(""),
+            fs,
+            narrow,
+            grid,
+        );
         return;
     }
     if let Some(i) = args.iter().position(|a| a == "--predict") {
-        let fs: f64 = args.iter().position(|a| a == "--fs").and_then(|j| args.get(j + 1)).and_then(|v| v.parse().ok()).unwrap_or(28.8e6);
-        let narrow: f64 = args.iter().position(|a| a == "--narrow").and_then(|j| args.get(j + 1)).and_then(|v| v.parse().ok()).unwrap_or(1.0);
-        predict(args.get(i + 1).map(String::as_str).unwrap_or(""), fs, narrow);
+        let fs: f64 = args
+            .iter()
+            .position(|a| a == "--fs")
+            .and_then(|j| args.get(j + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(28.8e6);
+        let narrow: f64 = args
+            .iter()
+            .position(|a| a == "--narrow")
+            .and_then(|j| args.get(j + 1))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        predict(
+            args.get(i + 1).map(String::as_str).unwrap_or(""),
+            fs,
+            narrow,
+        );
         return;
     }
     let Some(path) = args.first() else {
         eprintln!("usage: tapfit FILE.jsonl [--max-hz HZ]");
         std::process::exit(2);
     };
-    let max_hz: f64 = args.iter().position(|a| a == "--max-hz").and_then(|i| args.get(i + 1)).and_then(|v| v.parse().ok()).unwrap_or(1.15e6);
+    let max_hz: f64 = args
+        .iter()
+        .position(|a| a == "--max-hz")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1.15e6);
     let data = std::fs::read_to_string(path).unwrap_or_else(|e| {
         eprintln!("{path}: {e}");
         std::process::exit(1);
@@ -213,8 +314,15 @@ fn main() {
     for l in data.lines().filter(|l| l.contains("\"kind\":\"sweep\"")) {
         let Some(set) = text(l, "set") else { continue };
         let parts: Vec<&str> = set.split(':').collect();
-        let (Some(k), Some(v)) = (parts.get(1).and_then(|s| s.parse::<usize>().ok()), parts.get(2).and_then(|s| s.parse::<f64>().ok())) else { continue };
-        let (Some(d), Some(db)) = (num(l, "delta"), num(l, "plain_dbfs")) else { continue };
+        let (Some(k), Some(v)) = (
+            parts.get(1).and_then(|s| s.parse::<usize>().ok()),
+            parts.get(2).and_then(|s| s.parse::<f64>().ok()),
+        ) else {
+            continue;
+        };
+        let (Some(d), Some(db)) = (num(l, "delta"), num(l, "plain_dbfs")) else {
+            continue;
+        };
         if d.abs() <= max_hz && k < FIELDS {
             level[k].insert(d as i64, db);
             value[k] = v;
@@ -231,9 +339,12 @@ fn main() {
             for k in 0..FIELDS {
                 let mut resid = Vec::new();
                 for &d in &deltas {
-                    let (Some(a), Some(r)) = (level[k].get(&d), level[reference].get(&d)) else { continue };
+                    let (Some(a), Some(r)) = (level[k].get(&d), level[reference].get(&d)) else {
+                        continue;
+                    };
                     let f = d as f64;
-                    let model = pair_db(f, spacing(len, k), fs) - pair_db(f, spacing(len, reference), fs);
+                    let model =
+                        pair_db(f, spacing(len, k), fs) - pair_db(f, spacing(len, reference), fs);
                     if pair_db(f, spacing(len, k), fs) < NEAR_NULL_DB {
                         continue;
                     }
@@ -256,7 +367,11 @@ fn main() {
         if let Some(b) = &best
             && b.1 == len
         {
-            println!("L {len}: best Fs {:.2} MHz, residual {:.2} dB rms", b.2 / 1e6, b.0);
+            println!(
+                "L {len}: best Fs {:.2} MHz, residual {:.2} dB rms",
+                b.2 / 1e6,
+                b.0
+            );
         }
     }
     // The per-length bests, each re-searched (the loop above keeps only
@@ -269,12 +384,18 @@ fn main() {
             for k in 0..FIELDS {
                 let mut resid = Vec::new();
                 for &d in &deltas {
-                    let (Some(a), Some(r)) = (level[k].get(&d), level[reference].get(&d)) else { continue };
+                    let (Some(a), Some(r)) = (level[k].get(&d), level[reference].get(&d)) else {
+                        continue;
+                    };
                     let f = d as f64;
                     if pair_db(f, spacing(len, k), fs) < NEAR_NULL_DB {
                         continue;
                     }
-                    resid.push((a - r) - (pair_db(f, spacing(len, k), fs) - pair_db(f, spacing(len, reference), fs)));
+                    resid.push(
+                        (a - r)
+                            - (pair_db(f, spacing(len, k), fs)
+                                - pair_db(f, spacing(len, reference), fs)),
+                    );
                 }
                 if resid.is_empty() {
                     continue;
@@ -290,21 +411,37 @@ fn main() {
             fs += 0.05e6;
         }
         if let Some((rms, fs)) = b {
-            println!("length {len}: Fs {:.2} MHz, residual {rms:.2} dB rms", fs / 1e6);
+            println!(
+                "length {len}: Fs {:.2} MHz, residual {rms:.2} dB rms",
+                fs / 1e6
+            );
         }
     }
-    let Some((rms, len, fs, scales)) = best else { return };
-    println!("best: L {len}, Fs {:.2} MHz, residual {rms:.2} dB rms", fs / 1e6);
+    let Some((rms, len, fs, scales)) = best else {
+        return;
+    };
+    println!(
+        "best: L {len}, Fs {:.2} MHz, residual {rms:.2} dB rms",
+        fs / 1e6
+    );
     println!("field weights (dB re field 15, per unit value; 0 = the same LSB weight):");
     for k in 0..FIELDS {
         let per_unit = scales[k] - 20.0 * (value[k] / value[reference]).log10();
-        println!("  c{k}: value {} spacing {} → {per_unit:+.2} dB", value[k], spacing(len, k));
+        println!(
+            "  c{k}: value {} spacing {} → {per_unit:+.2} dB",
+            value[k],
+            spacing(len, k)
+        );
     }
     println!("G(f), the shared response (dB re 0 Hz), from field 15 over its pair term:");
     let g0 = level[reference].get(&0).copied().unwrap_or(0.0);
     for (&d, &a) in &level[reference] {
         if d % 100_000 == 0 {
-            println!("  {:+.2} MHz: {:+.2}", d as f64 / 1e6, a - g0 - pair_db(d as f64, spacing(len, reference), fs));
+            println!(
+                "  {:+.2} MHz: {:+.2}",
+                d as f64 / 1e6,
+                a - g0 - pair_db(d as f64, spacing(len, reference), fs)
+            );
         }
     }
 }

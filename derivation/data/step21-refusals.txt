@@ -1,0 +1,270 @@
+== pass 1: refusalcheck --trials 4 --no-wake --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.65,"window_ms_max":1.65}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.66,"window_ms_max":1.66}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":187,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.21,"window_ms_max":2.21}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.71,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":187,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 1: refusalcheck --trials 4 --no-wake --before usb --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.38,"window_ms_max":3.38}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.35,"window_ms_max":3.39}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.83,"window_ms_max":3.85}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.24}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.82,"window_ms_max":3.83}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.07,"window_ms_max":4.07}
+{"wake_reads":0,"no_wake":true}
+== pass 1: refusalcheck --trials 4 --no-wake --before usb --gap-us 250000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.49,"window_ms_max":253.53}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.42,"window_ms_max":253.43}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.88,"window_ms_max":253.89}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.24}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.90,"window_ms_max":253.91}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":254.08,"window_ms_max":254.08}
+{"wake_reads":0,"no_wake":true}
+== pass 1: refusalcheck --trials 4 --no-wake --before usb --gap-us 280000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.48,"window_ms_max":283.52}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.45,"window_ms_max":283.46}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.90,"window_ms_max":283.92}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.87,"window_ms_max":283.90}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.09,"window_ms_max":284.09}
+{"wake_reads":0,"no_wake":true}
+== pass 1: refusalcheck --trials 4 --no-wake --before usb --gap-us 320000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.41,"window_ms_max":323.41}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.38,"window_ms_max":323.38}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.22,"window_ms_max":2.22}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.69}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 1: refusalcheck --trials 4 --no-wake --before usb --gap-us 400000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":403.45,"window_ms_max":403.45}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":403.43,"window_ms_max":403.43}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.20,"window_ms_max":2.20}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.65,"window_ms_max":1.65}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 1: refusalcheck --trials 4 --no-wake --before demod --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.95,"window_ms_max":4.03}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.98,"window_ms_max":4.02}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.35,"window_ms_max":4.36}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.22,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.35,"window_ms_max":4.37}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.57,"window_ms_max":4.57}
+{"wake_reads":0,"no_wake":true}
+== pass 1: refusalcheck --trials 4 --no-wake --before sys --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.41,"window_ms_max":3.42}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.44,"window_ms_max":3.53}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.85,"window_ms_max":3.90}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.25,"window_ms_max":2.26}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.83,"window_ms_max":3.84}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.33,"window_ms_max":2.33}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.83}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.07,"window_ms_max":4.07}
+{"wake_reads":0,"no_wake":true}
+== pass 1: refusalcheck --trials 4 --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.77}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.69}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.79,"window_ms_max":3.89}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.25,"window_ms_max":2.26}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.68,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.81,"window_ms_max":3.85}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.19,"window_ms_max":2.19}
+{"wake_reads":8,"no_wake":false}
+== pass 2: refusalcheck --trials 4 --no-wake --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.64,"window_ms_max":1.64}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.73,"window_ms_max":1.73}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":187,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.23,"window_ms_max":2.23}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.68,"window_ms_max":1.68}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":187,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 2: refusalcheck --trials 4 --no-wake --before usb --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.38,"window_ms_max":3.39}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.40,"window_ms_max":3.41}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.87,"window_ms_max":3.89}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.21,"window_ms_max":2.24}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.71,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.78,"window_ms_max":3.80}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.33}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.07,"window_ms_max":4.07}
+{"wake_reads":0,"no_wake":true}
+== pass 2: refusalcheck --trials 4 --no-wake --before usb --gap-us 250000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.43,"window_ms_max":253.46}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.47,"window_ms_max":253.47}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.87,"window_ms_max":253.94}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.20,"window_ms_max":2.21}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.86,"window_ms_max":253.87}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.33}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":254.08,"window_ms_max":254.09}
+{"wake_reads":0,"no_wake":true}
+== pass 2: refusalcheck --trials 4 --no-wake --before usb --gap-us 280000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.43,"window_ms_max":283.43}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.45,"window_ms_max":283.51}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.86,"window_ms_max":283.91}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.68,"window_ms_max":1.68}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.83,"window_ms_max":283.84}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.09,"window_ms_max":284.09}
+{"wake_reads":0,"no_wake":true}
+== pass 2: refusalcheck --trials 4 --no-wake --before usb --gap-us 320000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.45,"window_ms_max":323.45}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.43,"window_ms_max":323.43}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.26,"window_ms_max":2.26}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 2: refusalcheck --trials 4 --no-wake --before usb --gap-us 400000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":403.43,"window_ms_max":403.43}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":403.51,"window_ms_max":403.51}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.25,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.66,"window_ms_max":1.66}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 2: refusalcheck --trials 4 --no-wake --before demod --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.96,"window_ms_max":4.03}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.94,"window_ms_max":3.95}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.39,"window_ms_max":4.40}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.22,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.39,"window_ms_max":4.39}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.33}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.57,"window_ms_max":4.57}
+{"wake_reads":0,"no_wake":true}
+== pass 2: refusalcheck --trials 4 --no-wake --before sys --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.43,"window_ms_max":3.43}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.39,"window_ms_max":3.44}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.80,"window_ms_max":3.90}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.25,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.67,"window_ms_max":1.69}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.82,"window_ms_max":3.83}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.33}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.07,"window_ms_max":4.07}
+{"wake_reads":0,"no_wake":true}
+== pass 2: refusalcheck --trials 4 --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.70}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.69}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.79,"window_ms_max":3.91}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.25,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.68,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.86,"window_ms_max":3.86}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.20,"window_ms_max":2.20}
+{"wake_reads":8,"no_wake":false}
+== pass 3: refusalcheck --trials 4 --no-wake --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.66,"window_ms_max":1.66}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.65,"window_ms_max":1.65}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":187,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.24}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.65,"window_ms_max":1.65}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":183,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 3: refusalcheck --trials 4 --no-wake --before usb --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.40,"window_ms_max":3.51}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.39,"window_ms_max":3.42}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.81,"window_ms_max":3.83}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.22,"window_ms_max":2.24}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.80,"window_ms_max":3.82}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.07,"window_ms_max":4.07}
+{"wake_reads":0,"no_wake":true}
+== pass 3: refusalcheck --trials 4 --no-wake --before usb --gap-us 250000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.46,"window_ms_max":253.49}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.46,"window_ms_max":253.51}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.86,"window_ms_max":253.90}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":253.85,"window_ms_max":253.89}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":254.09,"window_ms_max":254.09}
+{"wake_reads":0,"no_wake":true}
+== pass 3: refusalcheck --trials 4 --no-wake --before usb --gap-us 280000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.45,"window_ms_max":283.46}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.48,"window_ms_max":283.48}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.88,"window_ms_max":283.90}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":283.87,"window_ms_max":283.90}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":284.09,"window_ms_max":284.09}
+{"wake_reads":0,"no_wake":true}
+== pass 3: refusalcheck --trials 4 --no-wake --before usb --gap-us 320000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.45,"window_ms_max":323.45}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":323.39,"window_ms_max":323.39}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.25,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.69}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 3: refusalcheck --trials 4 --no-wake --before usb --gap-us 400000
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":403.39,"window_ms_max":403.39}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":403.37,"window_ms_max":403.37}
+{"state":"streaming","probe":"start_rewrite","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"state":"streaming","probe":"start_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.25,"window_ms_max":2.25}
+{"state":"streaming","probe":"counter_read","probes":1,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.71,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":1,"refused_probes":1,"refusals":7,"never_accepted":1,"window_ms_median":0.00,"window_ms_max":0.00}
+{"error":"the restart after a halt was never accepted"}
+== pass 3: refusalcheck --trials 4 --no-wake --before demod --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.95,"window_ms_max":4.04}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.94,"window_ms_max":4.02}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.35,"window_ms_max":4.38}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.24,"window_ms_max":2.26}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.69,"window_ms_max":1.70}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.33,"window_ms_max":4.36}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.57,"window_ms_max":4.57}
+{"wake_reads":0,"no_wake":true}
+== pass 3: refusalcheck --trials 4 --no-wake --before sys --gap-us 0
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.41,"window_ms_max":3.51}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.38,"window_ms_max":3.41}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.88,"window_ms_max":3.88}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.22,"window_ms_max":2.24}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.70,"window_ms_max":1.71}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.81,"window_ms_max":3.87}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.83}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":4.07,"window_ms_max":4.07}
+{"wake_reads":0,"no_wake":true}
+== pass 3: refusalcheck --trials 4 --before none
+{"state":"streaming","probe":"usb_sysctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.65,"window_ms_max":1.67}
+{"state":"streaming","probe":"demod_ctl_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.74,"window_ms_max":1.75}
+{"state":"streaming","probe":"start_rewrite","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.84,"window_ms_max":3.87}
+{"state":"streaming","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.26,"window_ms_max":2.26}
+{"state":"streaming","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.73,"window_ms_max":1.74}
+{"state":"streaming","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":3.83,"window_ms_max":3.86}
+{"state":"stopped","probe":"start_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.32,"window_ms_max":2.32}
+{"state":"stopped","probe":"counter_read","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":1.82,"window_ms_max":1.82}
+{"state":"stopped","probe":"halt","probes":4,"refused_probes":0,"refusals":0,"never_accepted":0,"window_ms_median":2.20,"window_ms_max":2.20}
+{"wake_reads":8,"no_wake":false}

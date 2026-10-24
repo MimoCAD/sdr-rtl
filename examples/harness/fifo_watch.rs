@@ -50,7 +50,17 @@ fn align(prev: &[u8], new: &[u8]) -> (usize, usize) {
 /// best column and its count.
 fn ts_columns(p: &[u8]) -> (usize, usize) {
     let rows = p.len() / step3::BLOCK;
-    (0..step3::BLOCK).map(|c| (c, (0..rows).filter(|r| p[r * step3::BLOCK + c] == TS_SYNC).count())).max_by_key(|x| x.1).unwrap_or((0, 0))
+    (0..step3::BLOCK)
+        .map(|c| {
+            (
+                c,
+                (0..rows)
+                    .filter(|r| p[r * step3::BLOCK + c] == TS_SYNC)
+                    .count(),
+            )
+        })
+        .max_by_key(|x| x.1)
+        .unwrap_or((0, 0))
 }
 
 /// The differing positions grouped into spans (start, len), gaps under
@@ -67,7 +77,11 @@ fn spans(a: &[u8], b: &[u8]) -> Vec<(usize, usize)> {
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
-    let (mut baseline, mut secs, mut record) = (Baseline::ZeroIfOpen, 10u64, "step8-fifo-watch.json".to_string());
+    let (mut baseline, mut secs, mut record) = (
+        Baseline::ZeroIfOpen,
+        10u64,
+        "step8-fifo-watch.json".to_string(),
+    );
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).ok_or(USAGE)?;
@@ -128,13 +142,18 @@ pub fn run(args: &[String]) -> Result<(), String> {
             let mut data = Vec::new();
             let w = bulk.measure(step3::WINDOW, Some(&mut data));
             let c = Content::of(&data, w.elapsed.as_secs_f64());
-            let mut line = J::obj().with("t_s", (start.elapsed().as_secs_f64() * 1e3).round() / 1e3).with("c", c.compact());
+            let mut line = J::obj()
+                .with("t_s", (start.elapsed().as_secs_f64() * 1e3).round() / 1e3)
+                .with("c", c.compact());
             if data.len() >= 2 * n {
                 let q = &data[..n];
                 match &prev {
                     None => {
                         let (col, rows) = ts_columns(q);
-                        first_pattern = J::obj().with("bytes_0x47", q.iter().filter(|b| **b == TS_SYNC).count()).with("best_0x47_column", col).with("rows_with_0x47_there", rows);
+                        first_pattern = J::obj()
+                            .with("bytes_0x47", q.iter().filter(|b| **b == TS_SYNC).count())
+                            .with("best_0x47_column", col)
+                            .with("rows_with_0x47_there", rows);
                         prev = Some(q.to_vec());
                     }
                     Some(p) => {
@@ -153,13 +172,30 @@ pub fn run(args: &[String]) -> Result<(), String> {
                                     sp.iter()
                                         .map(|&(s, l)| {
                                             let b = &norm[s..s + l];
-                                            J::obj().with("start", s).with("len", l).with("bytes_0x47", b.iter().filter(|x| **x == TS_SYNC).count()).with("new_bytes", hex_bytes(&b[..l.min(SPAN_KEEP)]))
+                                            J::obj()
+                                                .with("start", s)
+                                                .with("len", l)
+                                                .with(
+                                                    "bytes_0x47",
+                                                    b.iter().filter(|x| **x == TS_SYNC).count(),
+                                                )
+                                                .with(
+                                                    "new_bytes",
+                                                    hex_bytes(&b[..l.min(SPAN_KEEP)]),
+                                                )
                                         })
                                         .collect(),
                                 ),
                             );
-                            line.set("pattern_best_0x47_column_after", J::Arr(vec![J::from(col), J::from(rows)]));
-                            println!("{name} t={:.1}s: {diff} bytes differ in {} spans; 0x47 column {col}: {rows}/20", start.elapsed().as_secs_f64(), sp.len());
+                            line.set(
+                                "pattern_best_0x47_column_after",
+                                J::Arr(vec![J::from(col), J::from(rows)]),
+                            );
+                            println!(
+                                "{name} t={:.1}s: {diff} bytes differ in {} spans; 0x47 column {col}: {rows}/20",
+                                start.elapsed().as_secs_f64(),
+                                sp.len()
+                            );
                         }
                         prev = Some(norm);
                     }
@@ -168,7 +204,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
             windows.push(line);
         }
         println!("{name}: {events} windows with a changed pattern, {changed_bytes} bytes");
-        states.push(J::obj().with("state", name.as_str()).with("rf_hz", *hz).with("source", s).with("windows_with_change", events).with("changed_bytes", changed_bytes).with("windows", windows));
+        states.push(
+            J::obj()
+                .with("state", name.as_str())
+                .with("rf_hz", *hz)
+                .with("source", s)
+                .with("windows_with_change", events)
+                .with("changed_bytes", changed_bytes)
+                .with("windows", windows),
+        );
     }
     if let Some(s) = src {
         s.quit();

@@ -1,7 +1,10 @@
 //! `floor` and `round` for `no_std` (the `f64` methods are std's), exact:
 //! the same value as std's for every finite value below 2^52 in
 //! magnitude (a zero's sign aside), the range the synthesizer's and the
-//! resampler's arithmetic stays far inside.
+//! resampler's arithmetic stays far inside. `core` has no `f64::floor` or
+//! `round` on stable Rust (1.99, 2026-10-11: they are the unstable
+//! `core_float_math`); once it does, this file goes and the callers use
+//! the methods.
 
 /// The integer part, toward zero (exact below 2^52: the cast drops only
 /// the fraction).
@@ -35,7 +38,20 @@ mod tests {
 
     #[test]
     fn they_are_stds() {
-        let mut v = vec![0.0, -0.0, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5, 0.49999999999999994, -0.49999999999999994, 4503599627370495.5, -4503599627370495.5];
+        let mut v = vec![
+            0.0,
+            -0.0,
+            0.5,
+            -0.5,
+            1.5,
+            -1.5,
+            2.5,
+            -2.5,
+            0.49999999999999994,
+            -0.49999999999999994,
+            4503599627370495.5,
+            -4503599627370495.5,
+        ];
         // The synthesizer's and the resampler's values: N in 13..130 with
         // fractions, ratios up to ~2^29.
         let mut x = -1.0e9;

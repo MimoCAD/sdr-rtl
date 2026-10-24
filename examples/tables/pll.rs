@@ -70,7 +70,11 @@ fn longest_run(flags: &[bool]) -> (usize, usize) {
     let (mut best, mut cur) = ((0usize, 0usize), (0usize, 0usize));
     for (i, &r) in flags.iter().enumerate() {
         if r {
-            cur = if cur.1 == 0 { (i, 1) } else { (cur.0, cur.1 + 1) };
+            cur = if cur.1 == 0 {
+                (i, 1)
+            } else {
+                (cur.0, cur.1 + 1)
+            };
             if cur.1 > best.1 {
                 best = cur;
             }
@@ -89,14 +93,24 @@ fn sweep_run(sweep: &PllSweep, sel_div: u8, div: u32) -> Option<Run> {
         .lines
         .iter()
         .filter(|l| l.sel_div == sel_div)
-        .filter_map(|l| l.on.iter().find(|h| h.div == div).map(|h| (l.nint, h.reading)))
+        .filter_map(|l| {
+            l.on.iter()
+                .find(|h| h.div == div)
+                .map(|h| (l.nint, h.reading))
+        })
         .collect();
     lines.sort_by_key(|l| l.0);
     if lines.is_empty() {
         return None;
     }
-    let full: Vec<bool> = lines.iter().map(|l| l.1.is_some_and(|r| r <= RECEIVED_MAX_COUNTS)).collect();
-    let partial: Vec<bool> = lines.iter().map(|l| l.1.is_some_and(|r| r <= PARTIAL_MAX_COUNTS)).collect();
+    let full: Vec<bool> = lines
+        .iter()
+        .map(|l| l.1.is_some_and(|r| r <= RECEIVED_MAX_COUNTS))
+        .collect();
+    let partial: Vec<bool> = lines
+        .iter()
+        .map(|l| l.1.is_some_and(|r| r <= PARTIAL_MAX_COUNTS))
+        .collect();
     let skipped = lines.iter().filter(|l| l.1.is_none()).count();
     // Every stretch of partial-or-better settings, scored by the
     // full-strength settings it holds; the best stretch wins.
@@ -120,8 +134,22 @@ fn sweep_run(sweep: &PllSweep, sel_div: u8, div: u32) -> Option<Run> {
     }
     let total = full.iter().filter(|&&r| r).count();
     match best {
-        Some((a, b, n)) => Some(Run { sel_div, divider: div, nint: (lines[a].0, lines[b].0), settings: n, isolated: total - n, skipped }),
-        None => Some(Run { sel_div, divider: div, nint: (lines[0].0, lines[0].0), settings: 0, isolated: 0, skipped }),
+        Some((a, b, n)) => Some(Run {
+            sel_div,
+            divider: div,
+            nint: (lines[a].0, lines[b].0),
+            settings: n,
+            isolated: total - n,
+            skipped,
+        }),
+        None => Some(Run {
+            sel_div,
+            divider: div,
+            nint: (lines[0].0, lines[0].0),
+            settings: 0,
+            isolated: 0,
+            skipped,
+        }),
     }
 }
 
@@ -137,12 +165,22 @@ pub struct LoFindResult {
 
 fn lo_find_result(lf: &LoFind) -> Result<LoFindResult, String> {
     if lf.off_reading < RAIL_COUNTS {
-        return Err(format!("lo-find SEL_DIV {:03b}: the tone-off reading ({}) is not on the rail", lf.sel_div, lf.off_reading));
+        return Err(format!(
+            "lo-find SEL_DIV {:03b}: the tone-off reading ({}) is not on the rail",
+            lf.sel_div, lf.off_reading
+        ));
     }
-    let received: Vec<bool> = lf.points.iter().map(|p| p.1 <= RECEIVED_MAX_COUNTS).collect();
+    let received: Vec<bool> = lf
+        .points
+        .iter()
+        .map(|p| p.1 <= RECEIVED_MAX_COUNTS)
+        .collect();
     let best = longest_run(&received);
     if best.1 < MIN_LO_FIND_RUN_POINTS {
-        return Err(format!("lo-find SEL_DIV {:03b}: no run of {MIN_LO_FIND_RUN_POINTS} received points", lf.sel_div));
+        return Err(format!(
+            "lo-find SEL_DIV {:03b}: no run of {MIN_LO_FIND_RUN_POINTS} received points",
+            lf.sel_div
+        ));
     }
     let run = (lf.points[best.0].0, lf.points[best.0 + best.1 - 1].0);
     // The wanted sideband is below the LO (findings.md step 4h), so the
@@ -151,17 +189,29 @@ fn lo_find_result(lf: &LoFind) -> Result<LoFindResult, String> {
     let ratio = lf.vco_hz / lo_hz;
     let divider = 2f64.powf(ratio.log2().round()) as u32;
     if (ratio / divider as f64 - 1.0).abs() > DIVIDER_TOLERANCE {
-        return Err(format!("lo-find SEL_DIV {:03b}: f_VCO / LO = {ratio:.2} is not a power of two within {DIVIDER_TOLERANCE}", lf.sel_div));
+        return Err(format!(
+            "lo-find SEL_DIV {:03b}: f_VCO / LO = {ratio:.2} is not a power of two within {DIVIDER_TOLERANCE}",
+            lf.sel_div
+        ));
     }
     let total = received.iter().filter(|&&r| r).count();
-    Ok(LoFindResult { run_rf_hz: run, run_points: best.1, lo_hz, divider, isolated: total - best.1 })
+    Ok(LoFindResult {
+        run_rf_hz: run,
+        run_points: best.1,
+        lo_hz,
+        divider,
+        isolated: total - best.1,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
     DocumentedConfirmed(Run),
     DocumentedUntested(String),
-    Measured { lf: LoFindResult, sweep: Option<Run> },
+    Measured {
+        lf: LoFindResult,
+        sweep: Option<Run>,
+    },
     Unusable(String),
 }
 
@@ -195,27 +245,50 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
     let mut entries = Vec::new();
     let mut sweep_runs = Vec::new();
     for code in 0..8u8 {
-        let documented = DOCUMENTED_DIVIDERS.iter().find(|(c, _)| *c == code).map(|(_, d)| *d);
+        let documented = DOCUMENTED_DIVIDERS
+            .iter()
+            .find(|(c, _)| *c == code)
+            .map(|(_, d)| *d);
         let entry = match documented {
             Some(div) => {
-                let run = sweep_run(sweep, code, div).ok_or_else(|| format!("sweep: no lines for SEL_DIV {code:03b}"))?;
+                let run = sweep_run(sweep, code, div)
+                    .ok_or_else(|| format!("sweep: no lines for SEL_DIV {code:03b}"))?;
                 if run.settings >= MIN_RUN_SETTINGS {
                     sweep_runs.push(run.clone());
-                    Entry { code, divider: Some(div), status: Status::DocumentedConfirmed(run) }
+                    Entry {
+                        code,
+                        divider: Some(div),
+                        status: Status::DocumentedConfirmed(run),
+                    }
                 } else {
                     let reason = format!(
                         "the tone was received at no {MIN_RUN_SETTINGS} consecutive Nint settings under /{div} ({} received in all, {} settings skipped with the tone above the source's range)",
                         run.settings + run.isolated,
                         run.skipped
                     );
-                    Entry { code, divider: Some(div), status: Status::DocumentedUntested(reason) }
+                    Entry {
+                        code,
+                        divider: Some(div),
+                        status: Status::DocumentedUntested(reason),
+                    }
                 }
             }
             None => {
-                let lf = lo_finds.iter().find(|l| l.sel_div == code).ok_or_else(|| format!("no lo-find record for SEL_DIV {code:03b}"))?;
+                let lf = lo_finds
+                    .iter()
+                    .find(|l| l.sel_div == code)
+                    .ok_or_else(|| format!("no lo-find record for SEL_DIV {code:03b}"))?;
                 let r = lo_find_result(lf)?;
-                let tested = sweep.lines.iter().filter(|l| l.sel_div == code).any(|l| l.on.iter().any(|h| h.div == r.divider));
-                let run = if tested { sweep_run(sweep, code, r.divider) } else { None };
+                let tested = sweep
+                    .lines
+                    .iter()
+                    .filter(|l| l.sel_div == code)
+                    .any(|l| l.on.iter().any(|h| h.div == r.divider));
+                let run = if tested {
+                    sweep_run(sweep, code, r.divider)
+                } else {
+                    None
+                };
                 match run {
                     Some(run) if run.settings < MIN_RUN_SETTINGS => {
                         let reason = format!(
@@ -228,13 +301,21 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
                             run.settings,
                             run.settings + run.isolated
                         );
-                        Entry { code, divider: None, status: Status::Unusable(reason) }
+                        Entry {
+                            code,
+                            divider: None,
+                            status: Status::Unusable(reason),
+                        }
                     }
                     run => {
                         if let Some(run) = &run {
                             sweep_runs.push(run.clone());
                         }
-                        Entry { code, divider: Some(r.divider), status: Status::Measured { lf: r, sweep: run } }
+                        Entry {
+                            code,
+                            divider: Some(r.divider),
+                            status: Status::Measured { lf: r, sweep: run },
+                        }
                     }
                 }
             }
@@ -243,7 +324,16 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
     }
 
     // The VCO range from the documented codes' runs: f_VCO = f_ref * 2 * Nint.
-    let runs: Vec<&Run> = entries.iter().filter_map(|e| if let Status::DocumentedConfirmed(r) = &e.status { Some(r) } else { None }).collect();
+    let runs: Vec<&Run> = entries
+        .iter()
+        .filter_map(|e| {
+            if let Status::DocumentedConfirmed(r) = &e.status {
+                Some(r)
+            } else {
+                None
+            }
+        })
+        .collect();
     if runs.is_empty() {
         return Err("no documented divider confirmed: no VCO range".into());
     }
@@ -252,12 +342,26 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
     let vco = |nint: u16| sweep.f_ref_hz * 2.0 * nint as f64;
     let vco_received_hz = (vco(nint_lo), vco(nint_hi));
     let vco_range_hz = (
-        ((vco_received_hz.0 + VCO_RANGE_MARGIN_HZ) / VCO_RANGE_ROUND_HZ).ceil() * VCO_RANGE_ROUND_HZ,
-        ((vco_received_hz.1 - VCO_RANGE_MARGIN_HZ) / VCO_RANGE_ROUND_HZ).floor() * VCO_RANGE_ROUND_HZ,
+        ((vco_received_hz.0 + VCO_RANGE_MARGIN_HZ) / VCO_RANGE_ROUND_HZ).ceil()
+            * VCO_RANGE_ROUND_HZ,
+        ((vco_received_hz.1 - VCO_RANGE_MARGIN_HZ) / VCO_RANGE_ROUND_HZ).floor()
+            * VCO_RANGE_ROUND_HZ,
     );
 
     // LO reach per usable code, and the gaps between the spans.
-    let mut reach: Vec<(u8, u32, f64, f64)> = entries.iter().filter_map(|e| e.divider.map(|d| (e.code, d, vco_range_hz.0 / d as f64, vco_range_hz.1 / d as f64))).collect();
+    let mut reach: Vec<(u8, u32, f64, f64)> = entries
+        .iter()
+        .filter_map(|e| {
+            e.divider.map(|d| {
+                (
+                    e.code,
+                    d,
+                    vco_range_hz.0 / d as f64,
+                    vco_range_hz.1 / d as f64,
+                )
+            })
+        })
+        .collect();
     reach.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
     let mut unreachable = Vec::new();
     let mut covered_to = reach[0].3;
@@ -277,7 +381,11 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
     for &nint in &nints {
         let mut row = [0u8; 8];
         for code in 0..8u8 {
-            let l = sweep.lines.iter().find(|l| l.nint == nint && l.sel_div == code).ok_or_else(|| format!("sweep: SEL_DIV {code:03b} has no line at Nint {nint}"))?;
+            let l = sweep
+                .lines
+                .iter()
+                .find(|l| l.nint == nint && l.sel_div == code)
+                .ok_or_else(|| format!("sweep: SEL_DIV {code:03b} has no line at Nint {nint}"))?;
             row[code as usize] = l.r2_at_60ms;
             if l.r2_at_10ms != l.r2_at_60ms {
                 r2_10ms_differs += 1;
@@ -292,10 +400,17 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
     let mut r2_by_value: Vec<(u8, usize, usize, usize)> = Vec::new();
     let mut r2_settings_counted = 0;
     for e in &entries {
-        let usable = matches!(e.status, Status::DocumentedConfirmed(_) | Status::Measured { .. });
-        let Some(div) = e.divider.filter(|_| usable) else { continue };
+        let usable = matches!(
+            e.status,
+            Status::DocumentedConfirmed(_) | Status::Measured { .. }
+        );
+        let Some(div) = e.divider.filter(|_| usable) else {
+            continue;
+        };
         for l in sweep.lines.iter().filter(|l| l.sel_div == e.code) {
-            let Some(h) = l.on.iter().find(|h| h.div == div) else { continue };
+            let Some(h) = l.on.iter().find(|h| h.div == div) else {
+                continue;
+            };
             let Some(r) = h.reading else { continue };
             if h.rf_hz < TUNER_RANGE_HZ.0 || h.rf_hz > TUNER_RANGE_HZ.1 {
                 continue;
@@ -320,7 +435,11 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
     // Step 14 (the VCO's ends at 1 MHz RF steps, through the stream)
     // counted into the same table, classified by its own measure.
     let mut r2_edge_counted = 0;
-    for l in edge.lines.iter().filter(|l| l.rf_hz >= TUNER_RANGE_HZ.0 && l.rf_hz <= TUNER_RANGE_HZ.1) {
+    for l in edge
+        .lines
+        .iter()
+        .filter(|l| l.rf_hz >= TUNER_RANGE_HZ.0 && l.rf_hz <= TUNER_RANGE_HZ.1)
+    {
         r2_edge_counted += 1;
         let i = match r2_by_value.iter().position(|v| v.0 == l.r2) {
             Some(i) => i,
@@ -339,7 +458,21 @@ pub fn analyse(sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> Result<
     }
     r2_by_value.sort_by_key(|v| v.0);
 
-    Ok(PllTables { entries, vco_received_hz, vco_received_nint: (nint_lo, nint_hi), vco_range_hz, reach, unreachable, r2_rows, r2_10ms_differs, r2_by_value, r2_settings_counted, r2_edge_counted, sweep_runs, nint_step })
+    Ok(PllTables {
+        entries,
+        vco_received_hz,
+        vco_received_nint: (nint_lo, nint_hi),
+        vco_range_hz,
+        reach,
+        unreachable,
+        r2_rows,
+        r2_10ms_differs,
+        r2_by_value,
+        r2_settings_counted,
+        r2_edge_counted,
+        sweep_runs,
+        nint_step,
+    })
 }
 
 pub fn emit(t: &PllTables, sweep: &PllSweep, lo_finds: &[LoFind], edge: &VcoEdge) -> String {
@@ -383,8 +516,16 @@ voltages, PW_SDM, CAPX) is an open search, not assumed either way.",
         sweep.if_hz / 1e6,
         RECEIVED_MAX_COUNTS,
         lo_finds.first().map(|l| l.nint).unwrap_or(0),
-        lo_finds.first().and_then(|l| l.points.first()).map(|p| p.0 / 1e6).unwrap_or(0.0),
-        lo_finds.first().and_then(|l| l.points.last()).map(|p| p.0 / 1e6).unwrap_or(0.0),
+        lo_finds
+            .first()
+            .and_then(|l| l.points.first())
+            .map(|p| p.0 / 1e6)
+            .unwrap_or(0.0),
+        lo_finds
+            .first()
+            .and_then(|l| l.points.last())
+            .map(|p| p.0 / 1e6)
+            .unwrap_or(0.0),
         lo_finds.first().map(|l| l.rf_step_hz / 1e6).unwrap_or(0.0),
         PARTIAL_MAX_COUNTS,
         t.nint_step,
@@ -405,16 +546,24 @@ here holds for that setting.",
         sweep.f_ref_hz / 1e6,
         sweep.ref_div2 as u8
     ));
-    s.line(&format!("pub const XTAL_HZ: f64 = {};", f(sweep.f_ref_hz * if sweep.ref_div2 { 2.0 } else { 1.0 }, 1)));
+    s.line(&format!(
+        "pub const XTAL_HZ: f64 = {};",
+        f(sweep.f_ref_hz * if sweep.ref_div2 { 2.0 } else { 1.0 }, 1)
+    ));
     s.line(&format!("pub const REF_DIV2: bool = {};", sweep.ref_div2));
-    s.line(&format!("pub const F_REF_HZ: f64 = {};", f(sweep.f_ref_hz, 1)));
+    s.line(&format!(
+        "pub const F_REF_HZ: f64 = {};",
+        f(sweep.f_ref_hz, 1)
+    ));
     s.blank();
     s.doc(&format!(
         "Nint = 4 * Ni2c + Si2c + 13 (R20, [R820T2] p. 9): {}..={}. The sweep
 covered it in steps of {}.",
         NINT_MIN, NINT_MAX, t.nint_step
     ));
-    s.line(&format!("pub const NINT_RANGE: (u16, u16) = ({NINT_MIN}, {NINT_MAX});"));
+    s.line(&format!(
+        "pub const NINT_RANGE: (u16, u16) = ({NINT_MIN}, {NINT_MAX});"
+    ));
     s.blank();
     s.doc(&format!(
         "The VCO span over which the documented dividers received the tone:
@@ -422,8 +571,15 @@ Nint {}..={} (f_VCO = f_ref * 2 * Nint), with no reception one sweep step
 outside either end.",
         t.vco_received_nint.0, t.vco_received_nint.1
     ));
-    s.line(&format!("pub const VCO_RECEIVED_NINT: (u16, u16) = ({}, {});", t.vco_received_nint.0, t.vco_received_nint.1));
-    s.line(&format!("pub const VCO_RECEIVED_HZ: (f64, f64) = ({}, {});", f(t.vco_received_hz.0, 1), f(t.vco_received_hz.1, 1)));
+    s.line(&format!(
+        "pub const VCO_RECEIVED_NINT: (u16, u16) = ({}, {});",
+        t.vco_received_nint.0, t.vco_received_nint.1
+    ));
+    s.line(&format!(
+        "pub const VCO_RECEIVED_HZ: (f64, f64) = ({}, {});",
+        f(t.vco_received_hz.0, 1),
+        f(t.vco_received_hz.1, 1)
+    ));
     s.blank();
     s.doc(&format!(
         "The VCO range the driver programs within: `VCO_RECEIVED_HZ` moved
@@ -432,7 +588,11 @@ step 4c).",
         VCO_RANGE_MARGIN_HZ / 1e6,
         VCO_RANGE_ROUND_HZ / 1e6
     ));
-    s.line(&format!("pub const VCO_RANGE_HZ: (f64, f64) = ({}, {});", f(t.vco_range_hz.0, 1), f(t.vco_range_hz.1, 1)));
+    s.line(&format!(
+        "pub const VCO_RANGE_HZ: (f64, f64) = ({}, {});",
+        f(t.vco_range_hz.0, 1),
+        f(t.vco_range_hz.1, 1)
+    ));
     s.blank();
 
     s.doc(&format!(
@@ -445,28 +605,50 @@ than {} consecutive Nint settings).",
     s.line("pub const SEL_DIV: [SelDivEntry; 8] = [");
     for e in &t.entries {
         let status = match &e.status {
-            Status::DocumentedConfirmed(r) => format!("DividerStatus::DocumentedConfirmed {{ nint_received: ({}, {}) }}", r.nint.0, r.nint.1),
-            Status::DocumentedUntested(reason) => format!("DividerStatus::DocumentedUntested {{ reason: {} }}", emit::s(reason)),
+            Status::DocumentedConfirmed(r) => format!(
+                "DividerStatus::DocumentedConfirmed {{ nint_received: ({}, {}) }}",
+                r.nint.0, r.nint.1
+            ),
+            Status::DocumentedUntested(reason) => format!(
+                "DividerStatus::DocumentedUntested {{ reason: {} }}",
+                emit::s(reason)
+            ),
             Status::Measured { lf, sweep } => format!(
                 "DividerStatus::Measured {{ lo_find_run_rf_hz: ({}, {}), lo_hz: {}, sweep_nint_received: {}, lo_find_isolated_hits: {} }}",
                 f(lf.run_rf_hz.0, 1),
                 f(lf.run_rf_hz.1, 1),
                 f(lf.lo_hz, 1),
-                sweep.as_ref().map(|r| format!("Some(({}, {}))", r.nint.0, r.nint.1)).unwrap_or_else(|| "None".into()),
+                sweep
+                    .as_ref()
+                    .map(|r| format!("Some(({}, {}))", r.nint.0, r.nint.1))
+                    .unwrap_or_else(|| "None".into()),
                 lf.isolated
             ),
-            Status::Unusable(reason) => format!("DividerStatus::Unusable {{ reason: {} }}", emit::s(reason)),
+            Status::Unusable(reason) => {
+                format!("DividerStatus::Unusable {{ reason: {} }}", emit::s(reason))
+            }
         };
-        let div = e.divider.map(|d| format!("Some({d})")).unwrap_or_else(|| "None".into());
-        s.line(&format!("    SelDivEntry {{ code: 0b{:03b}, divider: {div}, status: {status} }},", e.code));
+        let div = e
+            .divider
+            .map(|d| format!("Some({d})"))
+            .unwrap_or_else(|| "None".into());
+        s.line(&format!(
+            "    SelDivEntry {{ code: 0b{:03b}, divider: {div}, status: {status} }},",
+            e.code
+        ));
     }
     s.line("];");
     s.blank();
 
-    s.doc("The sweep's contiguous run of received Nint settings per confirmed
+    s.doc(
+        "The sweep's contiguous run of received Nint settings per confirmed
 code under its divider; `isolated_hits` are received settings outside
-the run (single hits of a harmonic or an image, not a lock range).");
-    s.line(&format!("pub const SWEEP_RUNS: [SweepRun; {}] = [", t.sweep_runs.len()));
+the run (single hits of a harmonic or an image, not a lock range).",
+    );
+    s.line(&format!(
+        "pub const SWEEP_RUNS: [SweepRun; {}] = [",
+        t.sweep_runs.len()
+    ));
     for r in &t.sweep_runs {
         s.line(&format!(
             "    SweepRun {{ sel_div: 0b{:03b}, divider: {}, nint_received: ({}, {}), settings_received: {}, isolated_hits: {} }},",
@@ -476,17 +658,27 @@ the run (single hits of a harmonic or an image, not a lock range).");
     s.line("];");
     s.blank();
 
-    s.doc("The LO span each usable code reaches with the VCO inside
-`VCO_RANGE_HZ` (LO = VCO / divider), ascending.");
-    s.line(&format!("pub const LO_REACH: [LoReach; {}] = [", t.reach.len()));
+    s.doc(
+        "The LO span each usable code reaches with the VCO inside
+`VCO_RANGE_HZ` (LO = VCO / divider), ascending.",
+    );
+    s.line(&format!(
+        "pub const LO_REACH: [LoReach; {}] = [",
+        t.reach.len()
+    ));
     for (code, div, lo, hi) in &t.reach {
         s.line(&format!("    LoReach {{ sel_div: 0b{code:03b}, divider: {div}, lo_min_hz: {}, lo_max_hz: {} }},", f(*lo, 1), f(*hi, 1)));
     }
     s.line("];");
     s.blank();
-    s.doc("LO spans between the lowest and the highest reachable LO that no
-usable code covers.");
-    s.line(&format!("pub const LO_UNREACHABLE_HZ: [(f64, f64); {}] = [", t.unreachable.len()));
+    s.doc(
+        "LO spans between the lowest and the highest reachable LO that no
+usable code covers.",
+    );
+    s.line(&format!(
+        "pub const LO_UNREACHABLE_HZ: [(f64, f64); {}] = [",
+        t.unreachable.len()
+    ));
     for (lo, hi) in &t.unreachable {
         s.line(&format!("    ({}, {}),", f(*lo, 1), f(*hi, 1)));
     }
@@ -501,10 +693,17 @@ after the PLL words were written, per sweep Nint and SEL_DIV code
         t.r2_10ms_differs,
         t.r2_rows.len() * 8
     ));
-    s.line(&format!("pub const R2_VCO_INDICATOR: [R2Row; {}] = [", t.r2_rows.len()));
+    s.line(&format!(
+        "pub const R2_VCO_INDICATOR: [R2Row; {}] = [",
+        t.r2_rows.len()
+    ));
     for (nint, vco, row) in &t.r2_rows {
         let cells: Vec<String> = row.iter().map(|v| v.to_string()).collect();
-        s.line(&format!("    R2Row {{ nint: {nint}, vco_hz: {}, r2_by_sel_div: [{}] }},", f(*vco, 1), cells.join(", ")));
+        s.line(&format!(
+            "    R2Row {{ nint: {nint}, vco_hz: {}, r2_by_sel_div: [{}] }},",
+            f(*vco, 1),
+            cells.join(", ")
+        ));
     }
     s.line("];");
     s.blank();
@@ -530,7 +729,10 @@ reads them, received, at the bottom 90 MHz of the VCO. 0 and
         TUNER_RANGE_HZ.0 / 1e6,
         TUNER_RANGE_HZ.1 / 1e6
     ));
-    s.line(&format!("pub const R2_BY_LOCK_STATE: [R2LockCount; {}] = [", t.r2_by_value.len()));
+    s.line(&format!(
+        "pub const R2_BY_LOCK_STATE: [R2LockCount; {}] = [",
+        t.r2_by_value.len()
+    ));
     for (r2, full, partial, none) in &t.r2_by_value {
         s.line(&format!("    R2LockCount {{ r2: {r2}, full_strength: {full}, partial: {partial}, not_received: {none} }},"));
     }

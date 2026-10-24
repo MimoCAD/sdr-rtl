@@ -5,7 +5,8 @@
 //! readings),
 //! and the segments of neighbours sharing one setting.
 //!
-//! Method (findings.md step 4f): at each frequency the LO was programmed
+//! Method (findings.md step 4f; superseded for the driver by step 4f2's
+//! every-path table, `band_paths`): at each frequency the LO was programmed
 //! (IF 4.57 MHz above the RF), the source re-levelled once at the bypass
 //! path (RFFILT 00, RFMUX 01, TF 0000/0000) and then held — it stayed
 //! at +10 dB relative at every frequency — and `if_agc_val` (MSB-first,
@@ -44,7 +45,9 @@
 //! the band code matters even with the tracking filter bypassed; image
 //! rejection is uncalibrated (findings.md step 4h: 10-20 dB with
 //! IMR_G = IMR_P = 32); and no setting is measured between the grid
-//! frequencies 112 and 202 MHz, where no SEL_DIV code reaches the LO.
+//! frequencies 112 and 202 MHz: no SEL_DIV code reached the LO when the
+//! table was taken (011 was read as the document's /1; findings 10.5
+//! measured /16, and findings 4f2 measures the span).
 
 use super::types::*;
 
@@ -170,13 +173,17 @@ pub const BAND_GRID: [BandPoint; 97] = [
 ];
 
 /// Neighbouring grid frequencies merged by (RFFILT, RFMUX) alone, from
-/// the lowest up (corner codes left at 0000/0000): the robust part of the
-/// measurement, since paths differ by tens of dB and the corner codes by a
-/// median 1.7 dB. Unmeasured frequencies form their own segments (`path`
-/// None). `from_hz` and `to_hz` are the first and last grid frequencies in
-/// the segment; the true boundary lies between a segment's `to_hz` and the
-/// next segment's `from_hz`.
-pub const BAND_PATH_SEGMENTS: [BandSegment; 54] = [
+/// the lowest up (corner codes left at 0000/0000), as the staged search
+/// ranked them. Superseded for the driver by
+/// `band_paths::BAND_PATH_SEGMENTS` (findings.md step 4f2): stage A's 20 ms
+/// single snapshot read inside a path change's transient, so it could leave
+/// the best path unstaged, and a single stage-B snapshot could win on an
+/// outlier. The corner codes moved the best path's reading by a median
+/// 1.7 dB. Unmeasured frequencies form their own segments (`path` None).
+/// `from_hz` and `to_hz` are the first and last grid frequencies in the
+/// segment; the true boundary lies between a segment's `to_hz` and the next
+/// segment's `from_hz`.
+pub const STAGED_PATH_SEGMENTS: [BandSegment; 54] = [
     BandSegment { from_hz: 42000000.0, to_hz: 62000000.0, path: Some(FrontPath { rffilt: 0b10, rfmux: 0b01, tf_nch: 0b0000, tf_lp: 0b0000 }), grid_points: 3 },
     BandSegment { from_hz: 72000000.0, to_hz: 82000000.0, path: Some(FrontPath { rffilt: 0b00, rfmux: 0b00, tf_nch: 0b0000, tf_lp: 0b0000 }), grid_points: 2 },
     BandSegment { from_hz: 92000000.0, to_hz: 102000000.0, path: Some(FrontPath { rffilt: 0b10, rfmux: 0b01, tf_nch: 0b0000, tf_lp: 0b0000 }), grid_points: 2 },
