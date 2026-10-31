@@ -156,9 +156,13 @@ impl Transport for NusbTransport {
             index,
             length: len,
         };
+        // Natively on the claimed interface: WinUSB has no device-level
+        // control transfers (nusb's `Device::control_in` doesn't exist on
+        // Windows); Linux and macOS take a Device-recipient request on the
+        // interface the same.
         #[cfg(not(target_arch = "wasm32"))]
         return Box::pin(core::future::ready(nusb::MaybeFuture::wait(
-            self.dev.control_in(req, CONTROL_TIMEOUT),
+            self.iface.control_in(req, CONTROL_TIMEOUT),
         )));
         #[cfg(target_arch = "wasm32")]
         return Box::pin(async move { self.dev.control_in(req, CONTROL_TIMEOUT).await });
@@ -178,9 +182,10 @@ impl Transport for NusbTransport {
             index,
             data,
         };
+        // (On the claimed interface natively, as `control_in`.)
         #[cfg(not(target_arch = "wasm32"))]
         return Box::pin(core::future::ready(nusb::MaybeFuture::wait(
-            self.dev.control_out(req, CONTROL_TIMEOUT),
+            self.iface.control_out(req, CONTROL_TIMEOUT),
         )));
         #[cfg(target_arch = "wasm32")]
         return Box::pin(async move { self.dev.control_out(req, CONTROL_TIMEOUT).await });
