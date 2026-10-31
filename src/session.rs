@@ -1071,14 +1071,18 @@ impl Stream {
                     handout: Handout::Undecided,
                 };
                 let snapshot = Mutex::new(core.snapshot());
-                Ok(Stream {
-                    shared: Arc::new(Shared {
-                        core: Lock::new(Some(core)),
-                        snapshot,
-                        link,
-                        control_waiting: AtomicBool::new(false),
-                    }),
-                })
+                // In a browser the page is one thread and nusb's device is
+                // not Send, so clippy sees an Arc that could be an Rc; the
+                // handles share it the same way on every target, by one
+                // code path.
+                #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+                let shared = Arc::new(Shared {
+                    core: Lock::new(Some(core)),
+                    snapshot,
+                    link,
+                    control_waiting: AtomicBool::new(false),
+                });
+                Ok(Stream { shared })
             }
             Err(error) => Err(StreamError {
                 rtl: Box::new(rtl),
